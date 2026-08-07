@@ -1,1 +1,1 @@
-{"root":["./src/main.tsx","./src/app/AppShell.tsx"],"version":"5.9.3"}
+{"root":["./src/main.tsx","./src/api/client.ts","./src/api/hooks.ts","./src/api/types.ts","./src/app/AppShell.tsx","./src/components/ui.tsx","./src/features/auth/LoginPage.tsx","./src/features/auth/store.ts","./src/features/inventory/InventoryPage.tsx"],"version":"5.9.3"}

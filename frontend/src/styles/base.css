@@ -1,36 +1,33 @@
-/* Minimal Sprint-1 styling; Tailwind + design tokens arrive in Sprint 11 (doc 30 §0). */
+@import "tailwindcss";
+
+/* Status colors are the product's grammar (doc 30 §0) — identical everywhere. */
 :root {
-  color-scheme: dark light;
-  --bg: #f8fafc;
-  --panel: #ffffff;
-  --text: #0f172a;
-  --muted: #64748b;
-  --accent: #0ea5e9;
+  --status-ok: #22c55e;
+  --status-warning: #f59e0b;
+  --status-critical: #ef4444;
+  --status-unreachable: #94a3b8;
+  --status-muted: #475569;
+  --status-info: #0ea5e9;
 }
-html.dark {
-  --bg: #0b1220;
-  --panel: #111a2c;
-  --text: #e2e8f0;
-  --muted: #94a3b8;
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+html,
+body,
+#root {
+  height: 100%;
 }
-* { box-sizing: border-box; }
+
 body {
-  margin: 0;
   font-family: Inter, system-ui, sans-serif;
-  background: var(--bg);
-  color: var(--text);
+  @apply bg-slate-100 text-slate-900;
 }
-.shell { display: flex; min-height: 100vh; }
-.sidebar {
-  width: 220px;
-  background: var(--panel);
-  padding: 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 24px;
+
+.dark body {
+  @apply bg-slate-950 text-slate-200;
 }
-.brand { font-weight: 700; font-size: 18px; color: var(--accent); }
-nav { display: flex; flex-direction: column; gap: 8px; }
-.navitem { color: var(--muted); padding: 6px 8px; border-radius: 6px; }
-.content { flex: 1; padding: 32px; }
-code { color: var(--accent); }
+
+code,
+.mono {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+}
