@@ -7,6 +7,9 @@ import { LoginPage } from "./features/auth/LoginPage";
 import { InventoryPage } from "./features/inventory/InventoryPage";
 import { DashboardPage } from "./features/dashboard/DashboardPage";
 import { DeviceDetailPage } from "./features/devices/DeviceDetailPage";
+import { MapsListPage } from "./features/maps/MapsListPage";
+import { MapViewPage } from "./features/maps/MapViewPage";
+import { MapEditorPage } from "./features/maps/MapEditorPage";
 import { ApiError } from "./api/client";
 import "./styles/base.css";
 
@@ -41,7 +44,9 @@ const router = createBrowserRouter([
       { index: true, element: <DashboardPage /> },
       { path: "inventory", element: <InventoryPage /> },
       { path: "alerts", element: <Placeholder title="Alerts" /> },
-      { path: "maps", element: <Placeholder title="Weathermaps" /> },
+      { path: "maps", element: <MapsListPage /> },
+      { path: "maps/:id", element: <MapViewPage /> },
+      { path: "maps/:id/edit", element: <MapEditorPage /> },
       { path: "platform", element: <Placeholder title="Platform" /> },
       { path: "devices/:id", element: <DeviceDetailPage /> },
     ],

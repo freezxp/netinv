@@ -33,6 +33,7 @@ import (
 	"github.com/freezxp/netinv/backend/internal/inventory/adapters/snmptest"
 	invapp "github.com/freezxp/netinv/backend/internal/inventory/app"
 	invdomain "github.com/freezxp/netinv/backend/internal/inventory/domain"
+	"github.com/freezxp/netinv/backend/internal/maps"
 	metrichttp "github.com/freezxp/netinv/backend/internal/metrics/adapters/httpapi"
 	notifhttp "github.com/freezxp/netinv/backend/internal/notify/adapters/httpapi"
 	notifpg "github.com/freezxp/netinv/backend/internal/notify/adapters/postgres"
@@ -234,8 +235,16 @@ func main() {
 					Pool: pool, VM: alertvm.New(vmURL), Redis: redisClient,
 					Checker: checker,
 				}).Register(g)
+				mapStore := &maps.Store{Pool: pool}
+				(&maps.Handler{
+					Store: mapStore,
+					Live: &maps.LiveAssembler{
+						Store: mapStore, VM: alertvm.New(vmURL), Redis: redisClient,
+					},
+					Checker: checker,
+				}).Register(g)
 			} else {
-				rt.Log.Warn("NETINV_VM_URL not set — metrics proxy and dashboard disabled")
+				rt.Log.Warn("NETINV_VM_URL not set — metrics proxy, dashboard, maps disabled")
 			}
 		})
 		root := chi.NewRouter()
