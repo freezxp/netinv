@@ -96,7 +96,7 @@ Cardinality rules (enforced in ingester): label values bounded (no timestamps/er
 ## 7. Query path & caching strategy
 
 - **Raw graph queries:** UI → API `/metrics/query(_range)` → MetricsQL proxy to VM. The API injects scope guards (tenant label, doc 20) and enforces range/step limits; per-user query cache in Redis (15 s TTL) collapses duplicate NOC-wall queries.
-- **Dashboard aggregates:** a background refresher in the API (leader-elected loop, every 15–30 s) computes each panel's payload once (status counts from PG, top-N and throughput from VM, watchlist from rollups) into Redis keys `dash:<panel>`; all viewers read the same cached JSON (FR-DASH-01..08, NFR-12). Cache invalidation on relevant `events.domain` messages, TTL as backstop.
+- **Dashboard aggregates:** each panel's payload is computed once and shared by all viewers via Redis keys `dash:<panel>` (FR-DASH-01..08, NFR-12). v1 implements this cache-aside (compute on miss, 15 s TTL) — same shared-payload property with less machinery; the background leader-elected refresher variant is the upgrade path when viewer counts make even cache-miss recomputes contended.
 - **Weathermap live data:** same pattern per map: `map:<id>:live` assembled every ≤30 s only while any client is subscribed (presence via Redis key with TTL heartbeat).
 - **Inventory queries:** straight PG with indexes (doc 08); list responses cached briefly (5 s) keyed by filter hash — correctness over cleverness.
 

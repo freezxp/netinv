@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"sync/atomic"
 	"time"
+
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 // HealthServer serves liveness/readiness for one service. Readiness starts
@@ -35,6 +37,10 @@ func NewHealthServer(addr string, log *slog.Logger) *HealthServer {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		_, _ = w.Write([]byte("not ready"))
 	})
+	// Prometheus self-metrics (NFR-52, doc 22): Go runtime + process
+	// collectors now; per-service business metrics register into the default
+	// registry as they are instrumented.
+	mux.Handle("GET /metrics", promhttp.Handler())
 	h.mux = mux
 	h.srv = &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 	return h

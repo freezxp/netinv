@@ -16,7 +16,9 @@ import (
 
 	alerthttp "github.com/freezxp/netinv/backend/internal/alerting/adapters/httpapi"
 	alertpg "github.com/freezxp/netinv/backend/internal/alerting/adapters/postgres"
+	alertvm "github.com/freezxp/netinv/backend/internal/alerting/adapters/vm"
 	"github.com/freezxp/netinv/backend/internal/audit"
+	"github.com/freezxp/netinv/backend/internal/dashboard"
 	colamqp "github.com/freezxp/netinv/backend/internal/collection/adapters/amqp"
 	colhttp "github.com/freezxp/netinv/backend/internal/collection/adapters/httpapi"
 	colpg "github.com/freezxp/netinv/backend/internal/collection/adapters/postgres"
@@ -31,6 +33,7 @@ import (
 	"github.com/freezxp/netinv/backend/internal/inventory/adapters/snmptest"
 	invapp "github.com/freezxp/netinv/backend/internal/inventory/app"
 	invdomain "github.com/freezxp/netinv/backend/internal/inventory/domain"
+	metrichttp "github.com/freezxp/netinv/backend/internal/metrics/adapters/httpapi"
 	notifhttp "github.com/freezxp/netinv/backend/internal/notify/adapters/httpapi"
 	notifpg "github.com/freezxp/netinv/backend/internal/notify/adapters/postgres"
 	"github.com/freezxp/netinv/backend/internal/notify/adapters/senders"
@@ -223,6 +226,15 @@ func main() {
 			pollerH.RegisterAuthed(g)
 			alertH.Register(g)
 			channelH.Register(g)
+			if vmURL := os.Getenv("NETINV_VM_URL"); vmURL != "" {
+				(&metrichttp.QueryProxy{VMURL: vmURL, Checker: checker}).Register(g)
+				(&dashboard.Service{
+					Pool: pool, VM: alertvm.New(vmURL), Redis: redisClient,
+					Checker: checker,
+				}).Register(g)
+			} else {
+				rt.Log.Warn("NETINV_VM_URL not set — metrics proxy and dashboard disabled")
+			}
 		})
 		root := chi.NewRouter()
 		root.Use(httpx.TraceMiddleware)
