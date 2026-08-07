@@ -1,0 +1,200 @@
+package httpapi
+
+import (
+	"encoding/json"
+	"net/http"
+	"strings"
+
+	"github.com/go-chi/chi/v5"
+
+	"github.com/freezxp/netinv/backend/internal/inventory/app"
+	"github.com/freezxp/netinv/backend/internal/inventory/domain"
+	"github.com/freezxp/netinv/backend/internal/platform/authz"
+	"github.com/freezxp/netinv/backend/internal/platform/errx"
+	"github.com/freezxp/netinv/backend/internal/platform/httpx"
+)
+
+type DeviceHandler struct {
+	Svc     *app.DeviceService
+	Checker authz.Checker
+}
+
+// Register adds /devices routes (doc 09 §6) to an authenticated router.
+func (h *DeviceHandler) Register(r chi.Router) {
+	r.Group(func(pr chi.Router) {
+		pr.Use(httpx.RequirePerm(h.Checker, authz.DevicesRead))
+		pr.Get("/devices", h.list)
+		pr.Get("/devices/{id}", h.get)
+	})
+	r.Group(func(pw chi.Router) {
+		pw.Use(httpx.RequirePerm(h.Checker, authz.DevicesWrite))
+		pw.Post("/devices", h.create)
+		pw.Patch("/devices/{id}", h.update)
+		pw.Post("/devices/import", h.importCSV)
+		pw.Post("/devices/{id}/retire", h.status(domain.DeviceRetired))
+		pw.Post("/devices/{id}/enable", h.status(domain.DeviceActive))
+		pw.Post("/devices/{id}/disable", h.status(domain.DeviceDisabled))
+	})
+}
+
+type deviceView struct {
+	ID           string   `json:"id"`
+	Name         string   `json:"name"`
+	MgmtIP       string   `json:"mgmt_ip"`
+	SiteID       string   `json:"site_id"`
+	ConnectorID  string   `json:"connector_id"`
+	CredentialID string   `json:"credential_id"`
+	ProfileID    string   `json:"profile_id"`
+	Status       string   `json:"status"`
+	SysName      string   `json:"sys_name,omitempty"`
+	Vendor       string   `json:"vendor,omitempty"`
+	Model        string   `json:"model,omitempty"`
+	SerialNumber string   `json:"serial_number,omitempty"`
+	OSVersion    string   `json:"os_version,omitempty"`
+	Tags         []string `json:"tags"`
+	Notes        string   `json:"notes,omitempty"`
+	CreatedAt    string   `json:"created_at"`
+	UpdatedAt    string   `json:"updated_at"`
+}
+
+func toDeviceView(d *domain.Device) deviceView {
+	const rfc = "2006-01-02T15:04:05Z"
+	return deviceView{
+		ID: d.ID, Name: d.Name, MgmtIP: d.MgmtIP, SiteID: d.SiteID,
+		ConnectorID: d.ConnectorID, CredentialID: d.CredentialID,
+		ProfileID: d.ProfileID, Status: string(d.Status), SysName: d.SysName,
+		Vendor: d.Vendor, Model: d.Model, SerialNumber: d.SerialNumber,
+		OSVersion: d.OSVersion, Tags: d.Tags, Notes: d.Notes,
+		CreatedAt: d.CreatedAt.UTC().Format(rfc), UpdatedAt: d.UpdatedAt.UTC().Format(rfc),
+	}
+}
+
+func (h *DeviceHandler) list(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	f := app.DeviceFilter{
+		Query:  q.Get("q"),
+		Cursor: q.Get("cursor"),
+	}
+	// Minimal filter grammar subset (FR-DEV-04): site:eq:X,status:in:a|b
+	for part := range strings.SplitSeq(q.Get("filter"), ",") {
+		bits := strings.SplitN(part, ":", 3)
+		if len(bits) != 3 {
+			continue
+		}
+		switch bits[0] + ":" + bits[1] {
+		case "site:eq":
+			f.SiteID = bits[2]
+		case "status:in":
+			f.Status = strings.Split(bits[2], "|")
+		case "status:eq":
+			f.Status = []string{bits[2]}
+		}
+	}
+	items, next, err := h.Svc.Repo.List(r.Context(), f)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	out := make([]deviceView, 0, len(items))
+	for _, d := range items {
+		out = append(out, toDeviceView(d))
+	}
+	var cursor any
+	if next != "" {
+		cursor = next
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"data": out, "next_cursor": cursor})
+}
+
+func (h *DeviceHandler) get(w http.ResponseWriter, r *http.Request) {
+	d, err := h.Svc.Repo.Get(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, toDeviceView(d))
+}
+
+func (h *DeviceHandler) create(w http.ResponseWriter, r *http.Request) {
+	var in app.DeviceInput
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		httpx.WriteError(w, r, errx.New(errx.KindInvalid, "malformed JSON body"))
+		return
+	}
+	d, err := h.Svc.Create(r.Context(), in, h.meta(r))
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	w.Header().Set("Location", "/api/v1/devices/"+d.ID)
+	httpx.WriteJSON(w, http.StatusCreated, toDeviceView(d))
+}
+
+func (h *DeviceHandler) update(w http.ResponseWriter, r *http.Request) {
+	var in app.DeviceInput
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		httpx.WriteError(w, r, errx.New(errx.KindInvalid, "malformed JSON body"))
+		return
+	}
+	d, err := h.Svc.Update(r.Context(), chi.URLParam(r, "id"), in, h.meta(r))
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, toDeviceView(d))
+}
+
+func (h *DeviceHandler) status(target domain.DeviceStatus) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if err := h.Svc.SetStatus(r.Context(), chi.URLParam(r, "id"), target, h.meta(r)); err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
+		d, err := h.Svc.Repo.Get(r.Context(), chi.URLParam(r, "id"))
+		if err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
+		httpx.WriteJSON(w, http.StatusOK, toDeviceView(d))
+	}
+}
+
+func (h *DeviceHandler) importCSV(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseMultipartForm(8 << 20); err != nil {
+		httpx.WriteError(w, r, errx.New(errx.KindInvalid, "multipart form with a 'file' field is required"))
+		return
+	}
+	file, _, err := r.FormFile("file")
+	if err != nil {
+		httpx.WriteError(w, r, errx.New(errx.KindInvalid, "missing 'file' field"))
+		return
+	}
+	defer file.Close()
+	results, err := h.Svc.ImportCSV(r.Context(), file, h.meta(r))
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	created := 0
+	for _, res := range results {
+		if res.Error == "" {
+			created++
+		}
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"rows": len(results), "created": created, "results": results,
+	})
+}
+
+func (h *DeviceHandler) meta(r *http.Request) app.Meta {
+	ip := r.RemoteAddr
+	if i := strings.LastIndex(ip, ":"); i > 0 {
+		ip = ip[:i]
+	}
+	return app.Meta{
+		Actor:     httpx.ClaimsFrom(r.Context()).Subject,
+		SourceIP:  ip,
+		UserAgent: r.UserAgent(),
+		TraceID:   httpx.TraceID(r.Context()),
+	}
+}

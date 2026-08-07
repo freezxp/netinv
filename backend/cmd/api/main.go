@@ -117,6 +117,16 @@ func main() {
 			Users: userRepo, Tokens: tokenRepo, Audit: auditor,
 			Argon: authn.DefaultArgon2, Log: rt.Log,
 		}
+		// Temporary connector-catalog seed until the compiled registry lands in
+		// Sprint 6 (doc 08: catalog is app-seeded; devices FK requires a row).
+		if _, err := pool.Exec(ctx, `
+			INSERT INTO platform.connectors (id, vendor, display_name, version, capabilities)
+			VALUES ('generic', 'Generic', 'Generic SNMP (IF-MIB)', '0.1.0',
+			        '["inventory","interfaces","icmp"]')
+			ON CONFLICT (id) DO NOTHING`); err != nil {
+			return err
+		}
+
 		siteSvc := &invapp.SiteService{Repo: &invpg.SiteRepo{Pool: pool}, Audit: auditor}
 		credSvc := &invapp.CredentialService{
 			Vault: &invpg.EnvelopeVault{Pool: pool, Keys: keys},
@@ -129,6 +139,8 @@ func main() {
 		}
 		userH := &httpapi.UserHandler{Svc: userSvc, Repo: userRepo, Checker: checker}
 		invH := &invhttp.Handler{Sites: siteSvc, Creds: credSvc, Checker: checker}
+		devSvc := &invapp.DeviceService{Repo: &invpg.DeviceRepo{Pool: pool}, Audit: auditor}
+		devH := &invhttp.DeviceHandler{Svc: devSvc, Checker: checker}
 
 		api := chi.NewRouter()
 		authH.Register(api)
@@ -136,6 +148,7 @@ func main() {
 			g.Use(httpx.RequireAuth(issuer))
 			userH.Register(g)
 			invH.Register(g)
+			devH.Register(g)
 		})
 		root := chi.NewRouter()
 		root.Use(httpx.TraceMiddleware)
