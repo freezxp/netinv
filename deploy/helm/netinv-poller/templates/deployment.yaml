@@ -1,0 +1,56 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: netinv-poller
+  labels: { app.kubernetes.io/name: netinv-poller }
+spec:
+  replicas: 1
+  strategy: { type: Recreate } # state PVC is RWO
+  selector:
+    matchLabels: { app.kubernetes.io/name: netinv-poller }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: netinv-poller }
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: poller
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- if .Values.icmpPrivileged }}
+          securityContext:
+            capabilities: { add: [NET_RAW] }
+          {{- end }}
+          env:
+            - { name: NETINV_AMQP_URL, value: {{ .Values.core.amqpURL | quote }} }
+            - { name: NETINV_API_URL, value: {{ .Values.core.apiURL | quote }} }
+            - { name: NETINV_STATE_DIR, value: /var/lib/netinv-poller }
+            {{- if .Values.icmpPrivileged }}
+            - { name: NETINV_ICMP_PRIVILEGED, value: "1" }
+            {{- end }}
+          envFrom:
+            - secretRef: { name: {{ .Values.enrollSecret }} }
+          volumeMounts:
+            - { name: state, mountPath: /var/lib/netinv-poller }
+          readinessProbe:
+            httpGet: { path: /readyz, port: 8082 }
+          livenessProbe:
+            httpGet: { path: /healthz, port: 8082 }
+          resources: {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: state
+          persistentVolumeClaim: { claimName: netinv-poller-state }
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: netinv-poller-state
+spec:
+  accessModes: [ReadWriteOnce]
+  {{- if .Values.state.storageClass }}
+  storageClassName: {{ .Values.state.storageClass }}
+  {{- end }}
+  resources:
+    requests: { storage: {{ .Values.state.size }} }

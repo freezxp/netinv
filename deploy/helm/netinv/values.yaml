@@ -1,0 +1,64 @@
+# NetInv core-site chart (doc 19). Every option documented per NFR-54.
+# NOTE: data tier (PostgreSQL/VictoriaMetrics/Redis/RabbitMQ) is
+# bring-your-own in this chart version — set the connection values below.
+# CNPG/VM/RabbitMQ subcharts are the doc-19 §3 follow-up.
+
+image:
+  repository: ghcr.io/freezxp/netinv
+  tag: latest # pin a digest in production
+  pullPolicy: IfNotPresent
+
+# Connection endpoints (in-cluster service DNS or external).
+data:
+  pgDSN: "" # e.g. postgres://netinv:pass@postgres:5432/netinv — required
+  redisAddr: "redis:6379"
+  amqpURL: "" # e.g. amqp://netinv:pass@rabbitmq:5672/ — required
+  vmURL: "http://victoriametrics:8428"
+
+# Secrets are referenced, never templated (doc 19 §4).
+secrets:
+  # Kubernetes Secret with keys: NETINV_MASTER_KEY, NETINV_JWT_SIGNING_KEY
+  existingSecret: netinv-keys
+
+ingress:
+  enabled: true
+  className: nginx
+  host: netinv.example.internal
+  tlsSecret: "" # cert-manager or corporate PKI (doc 20 §3)
+
+# Per-service topology (doc 05 §2). Poller here is the core-site poller;
+# remote sites use the netinv-poller chart.
+services:
+  api:
+    replicas: 2
+    port: 8080
+    needs: [pg, redis, amqp, vm]
+  scheduler:
+    replicas: 2 # leader-elected
+    port: 8081
+    needs: [pg, redis, amqp]
+  poller:
+    replicas: 1
+    port: 8082
+    needs: [amqp]
+    env:
+      NETINV_SITE_ID: "" # set to the core site id after first boot
+  ingester:
+    replicas: 2
+    port: 8083
+    needs: [pg, amqp, vm]
+  alerter:
+    replicas: 2 # leader-elected
+    port: 8084
+    needs: [pg, redis, amqp, vm]
+  notifier:
+    replicas: 1
+    port: 8085
+    needs: [pg, amqp]
+
+resources:
+  requests: { cpu: 100m, memory: 128Mi }
+  limits: { cpu: "1", memory: 512Mi }
+
+logLevel: info
+uiURL: "" # external URL used in alert deep links

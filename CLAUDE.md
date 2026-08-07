@@ -4,7 +4,9 @@ You are working on **NetInv**, a network asset monitoring platform. This file te
 
 ## Current state (update this section whenever it changes)
 
-- **Phase: BUILD.** Design package (docs 01–30) is complete; implementation is underway following `docs/27-sprint-planning.md` sprint by sprint. Check `git log` for the last completed sprint — commits are tagged `feat: sprint N — …`.
+- **Phase: BUILD — Sprints 1–19 of 20 complete** (commits tagged `feat: sprint N — …`; every sprint has a verified live exit demo recorded in its commit message). M1–M4 all achieved.
+- **What remains for v1.0 (Sprint 19 tail + 20):** real-hardware validation of vendor connectors (risk R-07), 72h soak + chaos-lite on a staging k8s cluster, security checklist (doc 20 §12), backup/restore drill, and the pilot deployment across the owner's 4–5 sites. These need real infrastructure/time — do not fake them.
+- Dev loop: `make dev` boots infra (PG/Redis/RabbitMQ/VM/snmpsim/mailhog); run services with `make run-<svc>`; api+scheduler+notifier need the same `NETINV_MASTER_KEY`; snmpsim devices use `snmp_port: 1161` and communities `public` (generic) / `cisco` (cisco-ios fixture). `scripts/seed-demo.sh` seeds a demo fleet.
 - Code must follow the design docs; divergence requires updating the doc in the same commit (NFR-70).
 - Owner: solo developer (GitHub `freezxp`), pairing with AI. Assume the AI does most of the writing; keep everything reproducible from the repo alone.
 

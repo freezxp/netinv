@@ -2,7 +2,7 @@
 
 Centralized, vendor-neutral network monitoring: SNMP (v2c/v3) collection from Cisco, Juniper, Huawei, ZTE, and Ubiquiti devices into a modern time-series stack, with a live topology **weathermap** as the flagship view. The spiritual successor to Cacti + Weathermap, rebuilt on VictoriaMetrics instead of MRTG/RRD.
 
-> **Status: Design phase.** No application code yet — this repository currently contains the complete technical design package. Implementation begins per [docs/26-development-roadmap.md](docs/26-development-roadmap.md).
+> **Status: Build phase — Sprints 1–19 of 20 complete.** Milestones M1 (collection pipeline), M2 (alerting), M3 (usable product), and M4 (weathermap flagship) are all achieved and verified against the simulated fleet. Remaining before v1.0: real-hardware connector validation, soak/chaos runs on a staging cluster, and the Sprint-20 pilot deployment (needs the production sites). Sprint log: `git log --oneline`.
 
 ## What it does (v1)
 

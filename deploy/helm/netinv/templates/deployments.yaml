@@ -1,0 +1,54 @@
+{{- range $name, $svc := .Values.services }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: netinv-{{ $name }}
+  labels: { app.kubernetes.io/name: netinv, app.kubernetes.io/component: {{ $name }} }
+spec:
+  replicas: {{ $svc.replicas }}
+  selector:
+    matchLabels: { app.kubernetes.io/name: netinv, app.kubernetes.io/component: {{ $name }} }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: netinv, app.kubernetes.io/component: {{ $name }} }
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: {{ $name }}
+          image: "{{ $.Values.image.repository }}-{{ $name }}:{{ $.Values.image.tag }}"
+          imagePullPolicy: {{ $.Values.image.pullPolicy }}
+          ports: [{ containerPort: {{ $svc.port }}, name: ops }]
+          env:
+            - { name: NETINV_LOG_LEVEL, value: {{ $.Values.logLevel | quote }} }
+            - { name: NETINV_HTTP_ADDR, value: ":{{ $svc.port }}" }
+            {{- if has "pg" $svc.needs }}
+            - { name: NETINV_PG_DSN, value: {{ $.Values.data.pgDSN | quote }} }
+            {{- end }}
+            {{- if has "redis" $svc.needs }}
+            - { name: NETINV_REDIS_ADDR, value: {{ $.Values.data.redisAddr | quote }} }
+            {{- end }}
+            {{- if has "amqp" $svc.needs }}
+            - { name: NETINV_AMQP_URL, value: {{ $.Values.data.amqpURL | quote }} }
+            {{- end }}
+            {{- if has "vm" $svc.needs }}
+            - { name: NETINV_VM_URL, value: {{ $.Values.data.vmURL | quote }} }
+            {{- end }}
+            {{- if $.Values.uiURL }}
+            - { name: NETINV_UI_URL, value: {{ $.Values.uiURL | quote }} }
+            {{- end }}
+            {{- range $k, $v := $svc.env }}
+            - { name: {{ $k }}, value: {{ $v | quote }} }
+            {{- end }}
+          envFrom:
+            - secretRef: { name: {{ $.Values.secrets.existingSecret }} }
+          readinessProbe:
+            httpGet: { path: /readyz, port: ops }
+            initialDelaySeconds: 5
+          livenessProbe:
+            httpGet: { path: /healthz, port: ops }
+            initialDelaySeconds: 10
+          resources: {{- toYaml $.Values.resources | nindent 12 }}
+---
+{{- end }}

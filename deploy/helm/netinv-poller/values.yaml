@@ -1,0 +1,25 @@
+# Remote-site poller (doc 18): connects OUTBOUND to the core's AMQPS endpoint
+# and API; no inbound ports required at the site.
+image:
+  repository: ghcr.io/freezxp/netinv-poller
+  tag: latest
+  pullPolicy: IfNotPresent
+
+core:
+  amqpURL: "" # amqps://<site-user>:<pass>@core.example:5671/ — required
+  apiURL: ""  # https://netinv.example — required for enrollment + heartbeats
+
+# One-time enrollment token issued by an admin (POST /pollers/enroll-tokens),
+# provided via an existing Secret with key NETINV_ENROLL_TOKEN. After first
+# boot the poller persists its identity in the state PVC and the token is void.
+enrollSecret: netinv-poller-enroll
+
+state:
+  size: 2Gi # identity + metric overflow buffer (FR-COLL-08)
+  storageClass: ""
+
+icmpPrivileged: false # true requires CAP_NET_RAW; false needs ping_group_range
+
+resources:
+  requests: { cpu: 250m, memory: 256Mi }
+  limits: { cpu: "1", memory: 512Mi }
