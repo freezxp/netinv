@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync"
 	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
@@ -25,6 +26,28 @@ func SiteRouting(siteID string) string { return "site." + siteID }
 type Client struct {
 	conn *amqp.Connection
 	ch   *amqp.Channel
+	mu   sync.Mutex
+}
+
+// channel returns a live channel, reopening it if a previous channel-level
+// exception (e.g. a 406 precondition failure) closed it. AMQP closes the
+// channel on such errors; without recovery every later operation 504s.
+func (c *Client) channel() (*amqp.Channel, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.ch != nil && !c.ch.IsClosed() {
+		return c.ch, nil
+	}
+	ch, err := c.conn.Channel()
+	if err != nil {
+		return nil, errx.Wrap(errx.KindTransient, err, "amqpx: reopen channel")
+	}
+	if err := ch.Confirm(false); err != nil {
+		_ = ch.Close()
+		return nil, errx.Wrap(errx.KindTransient, err, "amqpx: confirm mode")
+	}
+	c.ch = ch
+	return ch, nil
 }
 
 // Connect dials AMQP, dependency-patient (doc 23 §7).
@@ -62,20 +85,52 @@ func (c *Client) Close() {
 
 // DeclareJobTopology declares the jobs exchange; queues are per site.
 func (c *Client) DeclareJobTopology() error {
-	return c.ch.ExchangeDeclare(JobsExchange, "direct", true, false, false, false, nil)
+	ch, err := c.channel()
+	if err != nil {
+		return err
+	}
+	return ch.ExchangeDeclare(JobsExchange, "direct", true, false, false, false, nil)
 }
 
-// EnsureSiteQueue declares poll.site.<id> (quorum, job-TTL per doc 05 §4)
-// and binds it to the jobs exchange.
-func (c *Client) EnsureSiteQueue(siteID string, msgTTL time.Duration) error {
+// EnsureSiteQueue declares poll.site.<id> (quorum, fixed 15-minute stale-job
+// TTL — one policy for all sites so every declarer agrees on queue args) and
+// binds it to the jobs exchange.
+func (c *Client) EnsureSiteQueue(siteID string) error {
+	ch, err := c.channel()
+	if err != nil {
+		return err
+	}
 	args := amqp.Table{
 		"x-queue-type":  "quorum",
-		"x-message-ttl": int32(msgTTL.Milliseconds()),
+		"x-message-ttl": int32((15 * time.Minute).Milliseconds()),
 	}
-	if _, err := c.ch.QueueDeclare(SiteQueue(siteID), true, false, false, false, args); err != nil {
+	if _, err := ch.QueueDeclare(SiteQueue(siteID), true, false, false, false, args); err != nil {
 		return fmt.Errorf("amqpx: declare %s: %w", SiteQueue(siteID), err)
 	}
-	return c.ch.QueueBind(SiteQueue(siteID), SiteRouting(siteID), JobsExchange, false, nil)
+	return ch.QueueBind(SiteQueue(siteID), SiteRouting(siteID), JobsExchange, false, nil)
+}
+
+// EnsureMetricsQueue declares metrics.raw (quorum — doc 05 §4).
+func (c *Client) EnsureMetricsQueue() error {
+	ch, err := c.channel()
+	if err != nil {
+		return err
+	}
+	_, err = ch.QueueDeclare(MetricsQueue, true, false, false, false,
+		amqp.Table{"x-queue-type": "quorum"})
+	return err
+}
+
+// Consume starts delivering from a queue with manual acks.
+func (c *Client) Consume(queue string, prefetch int) (<-chan amqp.Delivery, error) {
+	ch, err := c.channel()
+	if err != nil {
+		return nil, err
+	}
+	if err := ch.Qos(prefetch, 0, false); err != nil {
+		return nil, errx.Wrap(errx.KindTransient, err, "amqpx: qos")
+	}
+	return ch.Consume(queue, "", false, false, false, false, nil)
 }
 
 // PublishJSON publishes with a confirm; returns once the broker accepts it.
@@ -84,7 +139,11 @@ func (c *Client) PublishJSON(ctx context.Context, exchange, routingKey string, v
 	if err != nil {
 		return errx.Wrap(errx.KindInternal, err, "amqpx: marshal")
 	}
-	conf, err := c.ch.PublishWithDeferredConfirmWithContext(ctx, exchange, routingKey,
+	ch, err := c.channel()
+	if err != nil {
+		return err
+	}
+	conf, err := ch.PublishWithDeferredConfirmWithContext(ctx, exchange, routingKey,
 		false, false, amqp.Publishing{
 			ContentType:  "application/json",
 			DeliveryMode: amqp.Persistent,

@@ -9,6 +9,7 @@ import (
 
 	"github.com/freezxp/netinv/backend/internal/collection/domain"
 	"github.com/freezxp/netinv/backend/internal/platform/id"
+	"github.com/freezxp/netinv/backend/internal/platform/wire"
 )
 
 type ScheduleRepo interface {
@@ -19,8 +20,15 @@ type ScheduleRepo interface {
 }
 
 type JobPublisher interface {
-	EnsureSiteQueue(siteID string, msgTTL time.Duration) error
-	Publish(ctx context.Context, siteID string, job domain.PollJob) error
+	EnsureSiteQueue(siteID string) error
+	Publish(ctx context.Context, siteID string, job wire.PollJob) error
+}
+
+// SecretResolver turns a credential reference into the wire credential the
+// poller needs — decrypted at dispatch time (doc 20 §6). Implemented by the
+// inventory vault, wired in cmd (cross-context via interface, doc 13 rule 3).
+type SecretResolver interface {
+	Resolve(ctx context.Context, credentialID string) (wire.SNMPCred, error)
 }
 
 // Leader gates the loop to a single active scheduler (doc 05 §9).
@@ -32,6 +40,7 @@ type Leader interface {
 type Scheduler struct {
 	Repo      ScheduleRepo
 	Publisher JobPublisher
+	Secrets   SecretResolver
 	Leader    Leader
 	Log       *slog.Logger
 	Tick      time.Duration // default 10s
@@ -66,19 +75,24 @@ func (s *Scheduler) Run(ctx context.Context) error {
 		published, failed := 0, 0
 		for _, d := range due {
 			if !knownQueues[d.SiteID] {
-				ttl := 2 * time.Duration(d.IntervalS) * time.Second // stale-job TTL (doc 05 §4)
-				if err := s.Publisher.EnsureSiteQueue(d.SiteID, ttl); err != nil {
+				if err := s.Publisher.EnsureSiteQueue(d.SiteID); err != nil {
 					s.Log.Error("queue declare failed", "site", d.SiteID, "err", err)
 					failed++
 					continue
 				}
 				knownQueues[d.SiteID] = true
 			}
-			job := domain.PollJob{
+			cred, err := s.Secrets.Resolve(ctx, d.CredentialID)
+			if err != nil {
+				s.Log.Warn("credential resolve failed", "device", d.DeviceID, "err", err)
+				failed++
+				continue
+			}
+			job := wire.PollJob{
 				JobID: id.New("job"), DeviceID: d.DeviceID, SiteID: d.SiteID,
-				Family: d.Family, MgmtIP: d.MgmtIP, ConnectorID: d.ConnectorID,
-				CredentialID: d.CredentialID, ScheduledAt: start.UTC(),
-				IntervalS: d.IntervalS,
+				Family: string(d.Family), MgmtIP: d.MgmtIP, Port: d.Port,
+				ConnectorID: d.ConnectorID, Cred: cred, ScheduledAt: start.UTC(),
+				IntervalS: d.IntervalS, TimeoutMS: d.TimeoutMS, Retries: d.Retries,
 			}
 			if err := s.Publisher.Publish(ctx, d.SiteID, job); err != nil {
 				// next_due_at already advanced; the missed poll is skipped, not

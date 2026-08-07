@@ -8,8 +8,11 @@ import (
 	amqpadapter "github.com/freezxp/netinv/backend/internal/collection/adapters/amqp"
 	"github.com/freezxp/netinv/backend/internal/collection/adapters/leader"
 	colpg "github.com/freezxp/netinv/backend/internal/collection/adapters/postgres"
+	"github.com/freezxp/netinv/backend/internal/collection/adapters/secrets"
 	"github.com/freezxp/netinv/backend/internal/collection/app"
+	invpg "github.com/freezxp/netinv/backend/internal/inventory/adapters/postgres"
 	"github.com/freezxp/netinv/backend/internal/platform/amqpx"
+	"github.com/freezxp/netinv/backend/internal/platform/cryptox"
 	"github.com/freezxp/netinv/backend/internal/platform/pgx"
 	"github.com/freezxp/netinv/backend/internal/platform/redisx"
 	"github.com/freezxp/netinv/backend/internal/platform/service"
@@ -45,12 +48,18 @@ func main() {
 			return err
 		}
 
+		keys, err := cryptox.LoadEnvMasterKey()
+		if err != nil {
+			return err // scheduler must decrypt credentials for dispatch (doc 20 §6)
+		}
+
 		lease := &leader.Lease{Client: rc, Key: "leader:scheduler", Log: rt.Log}
 		defer lease.Release(context.WithoutCancel(ctx))
 
 		sched := &app.Scheduler{
 			Repo:      &colpg.ScheduleRepo{Pool: pool},
 			Publisher: &amqpadapter.JobPublisher{Client: mq},
+			Secrets:   &secrets.Resolver{Vault: &invpg.EnvelopeVault{Pool: pool, Keys: keys}},
 			Leader:    lease,
 			Log:       rt.Log,
 		}

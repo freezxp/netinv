@@ -3,18 +3,17 @@ package amqp
 
 import (
 	"context"
-	"time"
 
-	"github.com/freezxp/netinv/backend/internal/collection/domain"
 	"github.com/freezxp/netinv/backend/internal/platform/amqpx"
+	"github.com/freezxp/netinv/backend/internal/platform/wire"
 )
 
 type JobPublisher struct{ Client *amqpx.Client }
 
-func (p *JobPublisher) EnsureSiteQueue(siteID string, msgTTL time.Duration) error {
-	return p.Client.EnsureSiteQueue(siteID, msgTTL)
+func (p *JobPublisher) EnsureSiteQueue(siteID string) error {
+	return p.Client.EnsureSiteQueue(siteID)
 }
 
-func (p *JobPublisher) Publish(ctx context.Context, siteID string, job domain.PollJob) error {
+func (p *JobPublisher) Publish(ctx context.Context, siteID string, job wire.PollJob) error {
 	return p.Client.PublishJSON(ctx, amqpx.JobsExchange, amqpx.SiteRouting(siteID), job)
 }

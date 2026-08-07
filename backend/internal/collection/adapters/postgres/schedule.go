@@ -35,9 +35,12 @@ func (r *ScheduleRepo) Due(ctx context.Context, now time.Time, limit int) ([]dom
 				+ make_interval(secs => (random() - 0.5) * ps.interval_s * 0.1),
 			last_run_at = $1
 		FROM due, inventory.devices d
+		JOIN platform.polling_profiles pp ON pp.id = d.profile_id
 		WHERE ps.id = due.id AND d.id = ps.device_id
 		RETURNING ps.id, d.id, d.site_id, ps.family::text, host(d.mgmt_ip),
-		          d.connector_id, d.credential_id, ps.interval_s`,
+		          coalesce((d.attrs->>'snmp_port')::int, 161),
+		          d.connector_id, d.credential_id, ps.interval_s,
+		          pp.snmp_timeout_ms, pp.snmp_retries`,
 		now, limit)
 	if err != nil {
 		return nil, errx.Wrap(errx.KindTransient, err, "claim due schedules")
@@ -48,7 +51,8 @@ func (r *ScheduleRepo) Due(ctx context.Context, now time.Time, limit int) ([]dom
 		var d domain.DueSchedule
 		var family string
 		if err := rows.Scan(&d.ScheduleID, &d.DeviceID, &d.SiteID, &family,
-			&d.MgmtIP, &d.ConnectorID, &d.CredentialID, &d.IntervalS); err != nil {
+			&d.MgmtIP, &d.Port, &d.ConnectorID, &d.CredentialID, &d.IntervalS,
+			&d.TimeoutMS, &d.Retries); err != nil {
 			return nil, err
 		}
 		d.Family = domain.PollFamily(family)

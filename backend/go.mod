@@ -3,6 +3,7 @@ module github.com/freezxp/netinv/backend
 go 1.26
 
 require (
+	github.com/freezxp/netinv/connectors v0.0.0-00010101000000-000000000000
 	github.com/go-chi/chi/v5 v5.3.1
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/gosnmp/gosnmp v1.44.0
@@ -27,3 +28,5 @@ require (
 	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/text v0.40.0 // indirect
 )
+
+replace github.com/freezxp/netinv/connectors => ../connectors

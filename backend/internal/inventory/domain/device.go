@@ -30,6 +30,7 @@ type Device struct {
 	OSVersion    string
 	Tags         []string
 	Notes        string
+	Attrs        map[string]any // connector/transport extras, e.g. snmp_port
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
 }

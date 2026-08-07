@@ -123,10 +123,10 @@ func (r *DeviceRepo) Create(ctx context.Context, d *domain.Device) error {
 		_, err := tx.Exec(ctx, `
 			INSERT INTO inventory.devices
 				(id, tenant_id, site_id, connector_id, credential_id, profile_id,
-				 name, mgmt_ip, status, tags, notes)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8::inet,$9,$10,nullif($11,''))`,
+				 name, mgmt_ip, status, tags, notes, attrs)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8::inet,$9,$10,nullif($11,''),coalesce($12,'{}'::jsonb))`,
 			d.ID, d.TenantID, d.SiteID, d.ConnectorID, d.CredentialID, d.ProfileID,
-			d.Name, d.MgmtIP, string(d.Status), d.Tags, d.Notes)
+			d.Name, d.MgmtIP, string(d.Status), d.Tags, d.Notes, d.Attrs)
 		if isUnique(err) {
 			return errx.New(errx.KindConflict, "a device with that management IP already exists")
 		}

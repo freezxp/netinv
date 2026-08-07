@@ -46,6 +46,7 @@ type DeviceInput struct {
 	ProfileID    string   `json:"profile_id"`
 	Tags         []string `json:"tags"`
 	Notes        string   `json:"notes"`
+	SNMPPort     int      `json:"snmp_port"` // default 161
 }
 
 func (s *DeviceService) validate(ctx context.Context, in DeviceInput) error {
@@ -78,6 +79,10 @@ func (s *DeviceService) Create(ctx context.Context, in DeviceInput, m Meta) (*do
 	}
 	if d.Tags == nil {
 		d.Tags = []string{}
+	}
+	d.Attrs = map[string]any{}
+	if in.SNMPPort > 0 && in.SNMPPort != 161 {
+		d.Attrs["snmp_port"] = in.SNMPPort
 	}
 	if err := s.Repo.Create(ctx, d); err != nil {
 		return nil, err
