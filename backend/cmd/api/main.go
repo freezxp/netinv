@@ -16,7 +16,13 @@ import (
 	"github.com/freezxp/netinv/backend/internal/iam/adapters/lockout"
 	iampg "github.com/freezxp/netinv/backend/internal/iam/adapters/postgres"
 	"github.com/freezxp/netinv/backend/internal/iam/app"
+	invhttp "github.com/freezxp/netinv/backend/internal/inventory/adapters/httpapi"
+	invpg "github.com/freezxp/netinv/backend/internal/inventory/adapters/postgres"
+	"github.com/freezxp/netinv/backend/internal/inventory/adapters/snmptest"
+	invapp "github.com/freezxp/netinv/backend/internal/inventory/app"
 	"github.com/freezxp/netinv/backend/internal/platform/authn"
+	"github.com/freezxp/netinv/backend/internal/platform/authz"
+	"github.com/freezxp/netinv/backend/internal/platform/cryptox"
 	"github.com/freezxp/netinv/backend/internal/platform/httpx"
 	"github.com/freezxp/netinv/backend/internal/platform/pgx"
 	"github.com/freezxp/netinv/backend/internal/platform/redisx"
@@ -88,13 +94,52 @@ func main() {
 				"username", "admin", "password", generated)
 		}
 
-		h := &httpapi.Handler{
+		// Master key for the credential vault (ADR-011).
+		var keys cryptox.KeyProvider
+		if kp, err := cryptox.LoadEnvMasterKey(); err == nil {
+			keys = kp
+		} else {
+			raw := make([]byte, 32)
+			if _, err := rand.Read(raw); err != nil {
+				return err
+			}
+			keys, _ = cryptox.NewEnvMasterKey(map[int][]byte{1: raw}, 1)
+			rt.Log.Warn("NETINV_MASTER_KEY not set — ephemeral vault key; stored credentials won't survive restarts")
+		}
+
+		checker, err := authz.NewPGChecker(ctx, pool, rt.Log)
+		if err != nil {
+			return err
+		}
+		userRepo := &iampg.UserRepo{Pool: pool}
+		tokenRepo := &iampg.RefreshTokenRepo{Pool: pool}
+		userSvc := &app.UserService{
+			Users: userRepo, Tokens: tokenRepo, Audit: auditor,
+			Argon: authn.DefaultArgon2, Log: rt.Log,
+		}
+		siteSvc := &invapp.SiteService{Repo: &invpg.SiteRepo{Pool: pool}, Audit: auditor}
+		credSvc := &invapp.CredentialService{
+			Vault: &invpg.EnvelopeVault{Pool: pool, Keys: keys},
+			Tester: snmptest.Tester{}, Audit: auditor,
+		}
+
+		authH := &httpapi.Handler{
 			Auth: authSvc, Verifier: issuer,
 			SecureCookies: os.Getenv("NETINV_INSECURE_COOKIES") != "1",
 		}
+		userH := &httpapi.UserHandler{Svc: userSvc, Repo: userRepo, Checker: checker}
+		invH := &invhttp.Handler{Sites: siteSvc, Creds: credSvc, Checker: checker}
+
+		api := chi.NewRouter()
+		authH.Register(api)
+		api.Group(func(g chi.Router) {
+			g.Use(httpx.RequireAuth(issuer))
+			userH.Register(g)
+			invH.Register(g)
+		})
 		root := chi.NewRouter()
 		root.Use(httpx.TraceMiddleware)
-		root.Mount("/api/v1", h.Routes())
+		root.Mount("/api/v1", api)
 		rt.Health.Handle("/api/v1/", root)
 
 		rt.Health.SetReady(true)

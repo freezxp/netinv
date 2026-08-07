@@ -3,7 +3,6 @@
 package httpapi
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"net"
@@ -28,24 +27,27 @@ type Handler struct {
 	SecureCookies bool
 }
 
-func (h *Handler) Routes() chi.Router {
-	r := chi.NewRouter()
+// Register adds the auth routes to the shared /api/v1 router.
+func (h *Handler) Register(r chi.Router) {
 	r.Post("/auth/login", h.login)
 	r.Post("/auth/refresh", h.refresh)
 	r.Post("/auth/logout", h.logout)
 	r.Group(func(pr chi.Router) {
-		pr.Use(h.RequireAuth)
+		pr.Use(httpx.RequireAuth(h.Verifier))
 		pr.Get("/auth/me", h.me)
 	})
-	return r
 }
 
-func (h *Handler) meta(r *http.Request) app.ClientMeta {
+func clientIP(r *http.Request) string {
 	ip, _, _ := net.SplitHostPort(r.RemoteAddr)
 	if fwd := r.Header.Get("X-Forwarded-For"); fwd != "" {
 		ip = strings.TrimSpace(strings.Split(fwd, ",")[0])
 	}
-	return app.ClientMeta{SourceIP: ip, UserAgent: r.UserAgent(), TraceID: httpx.TraceID(r.Context())}
+	return ip
+}
+
+func (h *Handler) meta(r *http.Request) app.ClientMeta {
+	return app.ClientMeta{SourceIP: clientIP(r), UserAgent: r.UserAgent(), TraceID: httpx.TraceID(r.Context())}
 }
 
 type loginRequest struct {
@@ -133,7 +135,7 @@ func (h *Handler) logout(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) me(w http.ResponseWriter, r *http.Request) {
-	claims := ClaimsFrom(r.Context())
+	claims := httpx.ClaimsFrom(r.Context())
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"id": claims.Subject, "username": claims.Username,
 		"roles": claims.Roles, "tenant": claims.Tenant,
@@ -156,30 +158,3 @@ func (h *Handler) clearRefreshCookie(w http.ResponseWriter) {
 	})
 }
 
-type claimsKey struct{}
-
-// RequireAuth verifies the Bearer token and stores claims in context. RBAC
-// permission checks layer on top in Sprint 4 (doc 20 §5).
-func (h *Handler) RequireAuth(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		raw, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
-		if !ok || raw == "" {
-			httpx.WriteError(w, r, errx.New(errx.KindUnauthorized, "missing bearer token"))
-			return
-		}
-		claims, err := h.Verifier.Verify(raw)
-		if err != nil {
-			httpx.WriteError(w, r, err)
-			return
-		}
-		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), claimsKey{}, claims)))
-	})
-}
-
-// ClaimsFrom returns the verified claims stored by RequireAuth.
-func ClaimsFrom(ctx context.Context) *authn.Claims {
-	if c, ok := ctx.Value(claimsKey{}).(*authn.Claims); ok {
-		return c
-	}
-	return &authn.Claims{}
-}
