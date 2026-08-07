@@ -52,7 +52,7 @@ Secrets (SNMP credentials, SMTP/webhook/Slack secrets, tokens) are: write-only t
 
 ## 7. Envelope encryption (ADR-011)
 
-Per secret: random 256-bit DEK → AES-256-GCM(secret JSON, random 96-bit nonce) → DEK wrapped by master KEK (AES-KWP) → store ciphertext + wrapped DEK + `key_version`. KEK from k8s Secret (env), 32 bytes. **Rotation:** new KEK as version n+1 → background job re-wraps DEKs (cheap; no payload re-encryption) → old KEK retired after full re-wrap; `key_version` makes this resumable. `KeyProvider` interface (doc 17 §5) is the Vault/KMS seam. KEK custody runbook: generation (`openssl rand`), storage in team password manager + k8s Secret, break-glass recovery, annual rotation.
+Per secret: random 256-bit DEK → AES-256-GCM(secret JSON, random 96-bit nonce) → DEK wrapped by master KEK (also AES-256-GCM with its own random nonce — authenticated wrapping without a separate KWP implementation) → store ciphertext + wrapped DEK + `key_version`. KEK from k8s Secret (env), 32 bytes. **Rotation:** new KEK as version n+1 → background job re-wraps DEKs (cheap; no payload re-encryption) → old KEK retired after full re-wrap; `key_version` makes this resumable. `KeyProvider` interface (doc 17 §5) is the Vault/KMS seam. KEK custody runbook: generation (`openssl rand`), storage in team password manager + k8s Secret, break-glass recovery, annual rotation.
 
 ## 8. Poller & connector authentication ("secure connector authentication")
 
