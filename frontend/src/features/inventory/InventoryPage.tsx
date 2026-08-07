@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useDevices, useSites } from "../../api/hooks";
+import { useAuthStore } from "../auth/store";
 import {
   Button,
   Card,
@@ -11,10 +12,30 @@ import {
   Select,
   StatusBadge,
 } from "../../components/ui";
+import { DeviceFormModal } from "./DeviceForm";
+
+// Export uses a token-authorized fetch so the download carries auth.
+async function download(format: "csv" | "xlsx", filter: string, q: string) {
+  const params = new URLSearchParams({ format });
+  if (filter) params.set("filter", filter);
+  if (q) params.set("q", q);
+  const token = useAuthStore.getState().accessToken;
+  const res = await fetch(`/api/v1/exports/inventory?${params}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) return;
+  const blob = await res.blob();
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `netinv-inventory.${format}`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
 
 export function InventoryPage() {
   const [params, setParams] = useSearchParams();
   const [cursors, setCursors] = useState<string[]>([]);
+  const [showForm, setShowForm] = useState(false);
   const filters = {
     q: params.get("q") ?? "",
     site: params.get("site") ?? "",
@@ -57,10 +78,48 @@ export function InventoryPage() {
     <div className="mx-auto max-w-6xl">
       <div className="mb-4 flex items-center justify-between">
         <h1 className="text-xl font-semibold">Inventory</h1>
-        <div className="text-sm text-slate-500">
-          {devices.data ? `${devices.data.data.length} shown` : ""}
+        <div className="flex items-center gap-2">
+          <span className="text-sm text-slate-500">
+            {devices.data ? `${devices.data.data.length} shown` : ""}
+          </span>
+          <Button
+            variant="ghost"
+            onClick={() =>
+              download(
+                "csv",
+                [
+                  filters.site && `site:eq:${filters.site}`,
+                  filters.status && `status:eq:${filters.status}`,
+                ]
+                  .filter(Boolean)
+                  .join(","),
+                filters.q,
+              )
+            }
+          >
+            CSV
+          </Button>
+          <Button
+            variant="ghost"
+            onClick={() =>
+              download(
+                "xlsx",
+                [
+                  filters.site && `site:eq:${filters.site}`,
+                  filters.status && `status:eq:${filters.status}`,
+                ]
+                  .filter(Boolean)
+                  .join(","),
+                filters.q,
+              )
+            }
+          >
+            Excel
+          </Button>
+          <Button onClick={() => setShowForm(true)}>Add device</Button>
         </div>
       </div>
+      {showForm && <DeviceFormModal onClose={() => setShowForm(false)} />}
 
       <div className="mb-4 flex flex-wrap gap-2">
         <Input

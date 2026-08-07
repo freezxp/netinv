@@ -166,6 +166,7 @@ func main() {
 		userH := &httpapi.UserHandler{Svc: userSvc, Repo: userRepo, Checker: checker}
 		invH := &invhttp.Handler{Sites: siteSvc, Creds: credSvc, Checker: checker}
 		devH := &invhttp.DeviceHandler{Svc: devSvc, Checker: checker}
+		exportH := &invhttp.ExportHandler{Repo: devSvc.Repo, Audit: auditor, Checker: checker}
 		pollerH := &colhttp.PollerHandler{Svc: pollerSvc, Checker: checker}
 		alertH := &alerthttp.Handler{Store: &alertpg.Store{Pool: pool}, Pool: pool, Checker: checker}
 		channelH := &notifhttp.Handler{
@@ -226,6 +227,7 @@ func main() {
 			pollerH.RegisterAuthed(g)
 			alertH.Register(g)
 			channelH.Register(g)
+			exportH.Register(g)
 			if vmURL := os.Getenv("NETINV_VM_URL"); vmURL != "" {
 				(&metrichttp.QueryProxy{VMURL: vmURL, Checker: checker}).Register(g)
 				(&dashboard.Service{
