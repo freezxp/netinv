@@ -79,3 +79,44 @@ export function useDashboardSummary() {
     refetchInterval: 30_000,
   });
 }
+
+export function useAckAlert() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, comment }: { id: string; comment: string }) =>
+      api<Alert>(`/alerts/${id}/ack`, {
+        method: "POST",
+        body: JSON.stringify({ comment }),
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["alerts"] }),
+  });
+}
+
+interface RangeMatrix {
+  data: {
+    result: Array<{
+      metric: Record<string, string>;
+      values: Array<[number, string]>;
+    }>;
+  };
+}
+
+// useQueryRange fetches a MetricsQL range through the scope-guarded proxy.
+export function useQueryRange(expr: string, rangeHours: number, stepS = 60) {
+  return useQuery({
+    queryKey: ["range", expr, rangeHours, stepS],
+    queryFn: async () => {
+      const end = Math.floor(Date.now() / 1000);
+      const start = end - rangeHours * 3600;
+      const params = new URLSearchParams({
+        query: expr,
+        start: String(start),
+        end: String(end),
+        step: `${stepS}s`,
+      });
+      const res = await api<RangeMatrix>(`/metrics/query_range?${params}`);
+      return res.data.result;
+    },
+    refetchInterval: 30_000,
+  });
+}

@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { AppShell } from "./app/AppShell";
 import { LoginPage } from "./features/auth/LoginPage";
 import { InventoryPage } from "./features/inventory/InventoryPage";
+import { DashboardPage } from "./features/dashboard/DashboardPage";
 import { ApiError } from "./api/client";
 import "./styles/base.css";
 
@@ -36,7 +37,7 @@ const router = createBrowserRouter([
     path: "/",
     element: <AppShell />,
     children: [
-      { index: true, element: <Placeholder title="Dashboard" /> },
+      { index: true, element: <DashboardPage /> },
       { path: "inventory", element: <InventoryPage /> },
       { path: "alerts", element: <Placeholder title="Alerts" /> },
       { path: "maps", element: <Placeholder title="Weathermaps" /> },
