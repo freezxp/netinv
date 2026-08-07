@@ -12,6 +12,9 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/freezxp/netinv/backend/internal/audit"
+	colhttp "github.com/freezxp/netinv/backend/internal/collection/adapters/httpapi"
+	colpg "github.com/freezxp/netinv/backend/internal/collection/adapters/postgres"
+	colapp "github.com/freezxp/netinv/backend/internal/collection/app"
 	"github.com/freezxp/netinv/backend/internal/iam/adapters/httpapi"
 	"github.com/freezxp/netinv/backend/internal/iam/adapters/lockout"
 	iampg "github.com/freezxp/netinv/backend/internal/iam/adapters/postgres"
@@ -141,14 +144,18 @@ func main() {
 		invH := &invhttp.Handler{Sites: siteSvc, Creds: credSvc, Checker: checker}
 		devSvc := &invapp.DeviceService{Repo: &invpg.DeviceRepo{Pool: pool}, Audit: auditor}
 		devH := &invhttp.DeviceHandler{Svc: devSvc, Checker: checker}
+		pollerSvc := &colapp.PollerService{Repo: &colpg.PollerRepo{Pool: pool}, Audit: auditor}
+		pollerH := &colhttp.PollerHandler{Svc: pollerSvc, Checker: checker}
 
 		api := chi.NewRouter()
 		authH.Register(api)
+		pollerH.RegisterPublic(api) // token-authenticated, not JWT
 		api.Group(func(g chi.Router) {
 			g.Use(httpx.RequireAuth(issuer))
 			userH.Register(g)
 			invH.Register(g)
 			devH.Register(g)
+			pollerH.RegisterAuthed(g)
 		})
 		root := chi.NewRouter()
 		root.Use(httpx.TraceMiddleware)

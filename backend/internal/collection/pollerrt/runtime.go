@@ -20,11 +20,14 @@ import (
 )
 
 type Runtime struct {
-	PollerID string
-	SiteID   string
-	Client   *amqpx.Client
-	Log      *slog.Logger
-	Workers  int // default 50
+	PollerID       string
+	SiteID         string
+	Client         *amqpx.Client
+	Log            *slog.Logger
+	Workers        int // default 50
+	Buffer         *DiskBuffer
+	ICMPPrivileged bool
+	Counters       Counters
 
 	batchMu sync.Mutex
 	batch   []wire.Sample
@@ -72,9 +75,11 @@ func (r *Runtime) Run(ctx context.Context) error {
 			}
 		}()
 	}
-	// Periodic flusher: age-based batch flush (FR-COLL-08).
+	// Periodic flusher (age-based) + buffer drain loop (FR-COLL-08).
 	flushT := time.NewTicker(batchFlushAge)
 	defer flushT.Stop()
+	drainT := time.NewTicker(15 * time.Second)
+	defer drainT.Stop()
 	for {
 		select {
 		case <-ctx.Done():
@@ -83,8 +88,27 @@ func (r *Runtime) Run(ctx context.Context) error {
 			return nil
 		case <-flushT.C:
 			r.flush(ctx)
+		case <-drainT.C:
+			if r.Buffer != nil {
+				if n := r.Buffer.Drain(ctx, func(b wire.MetricBatch) error {
+					return r.Client.PublishJSON(ctx, "", amqpx.MetricsQueue, b)
+				}); n > 0 {
+					r.Log.Info("buffer drained", "batches", n)
+				}
+			}
 		}
 	}
+}
+
+// Stats snapshots runtime counters for the heartbeat (FR-PLT-02).
+func (r *Runtime) Stats() (ok, failed, batches int64, bufDepth int, bufBytes int64) {
+	ok = r.Counters.PollsOK.Load()
+	failed = r.Counters.PollsFailed.Load()
+	batches = r.Counters.Batches.Load()
+	if r.Buffer != nil {
+		bufDepth, bufBytes = r.Buffer.Depth()
+	}
+	return
 }
 
 func (r *Runtime) handle(ctx context.Context, d amqp.Delivery) {
@@ -101,9 +125,12 @@ func (r *Runtime) handle(ctx context.Context, d amqp.Delivery) {
 	success := 1.0
 	if err != nil {
 		success = 0
+		r.Counters.PollsFailed.Add(1)
 		// Rate-limited logging happens at slog handler level later; keep warn.
 		r.Log.Warn("poll failed", "device", job.DeviceID, "family", job.Family,
 			"dur_ms", dur.Milliseconds(), "err", err)
+	} else {
+		r.Counters.PollsOK.Add(1)
 	}
 	now := time.Now().UTC().UnixMilli()
 	samples = append(samples,
@@ -149,8 +176,10 @@ func (r *Runtime) execute(ctx context.Context, job wire.PollJob) ([]wire.Sample,
 			})
 		}
 		return out, nil
-	case "icmp", "health", "sync":
-		// Implemented in Sprints 7 (icmp), 8 (sync), 17 (vendor health).
+	case "icmp":
+		return probeICMP(jctx, job, r.ICMPPrivileged)
+	case "health", "sync":
+		// Implemented in Sprints 8 (sync) and 17 (vendor health).
 		return nil, nil
 	default:
 		return nil, nil
@@ -182,12 +211,19 @@ func (r *Runtime) flush(ctx context.Context) {
 
 	batch := wire.MetricBatch{PollerID: r.PollerID, SiteID: r.SiteID, Samples: out}
 	if err := r.Client.PublishJSON(ctx, "", amqpx.MetricsQueue, batch); err != nil {
-		// Disk overflow buffer lands in Sprint 7 (FR-COLL-08); v0 behavior:
-		// requeue in memory and count.
+		if r.Buffer != nil {
+			if berr := r.Buffer.Put(batch); berr == nil {
+				r.Log.Warn("batch publish failed — spilled to disk buffer",
+					"samples", len(out), "err", err)
+				return
+			}
+		}
 		r.Log.Error("batch publish failed — requeued in memory",
 			"samples", len(out), "err", err)
 		r.batchMu.Lock()
 		r.batch = append(out, r.batch...)
 		r.batchMu.Unlock()
+		return
 	}
+	r.Counters.Batches.Add(1)
 }
