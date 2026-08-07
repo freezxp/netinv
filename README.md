@@ -1,0 +1,52 @@
+# NetInv — Network Asset Monitoring Platform
+
+Centralized, vendor-neutral network monitoring: SNMP (v2c/v3) collection from Cisco, Juniper, Huawei, ZTE, and Ubiquiti devices into a modern time-series stack, with a live topology **weathermap** as the flagship view. The spiritual successor to Cacti + Weathermap, rebuilt on VictoriaMetrics instead of MRTG/RRD.
+
+> **Status: Design phase.** No application code yet — this repository currently contains the complete technical design package. Implementation begins per [docs/26-development-roadmap.md](docs/26-development-roadmap.md).
+
+## What it does (v1)
+
+- **Collects** interface traffic, errors/discards, device health (CPU/memory/temp/PSU/optics), ICMP availability/latency, and inventory metadata from network devices over SNMP v2c/v3.
+- **Stores** metrics in VictoriaMetrics, inventory/config/audit in PostgreSQL.
+- **Shows** a single dashboard: status summary, active alerts, Top-N lists, capacity watchlist, and an editable utilization-colored weathermap.
+- **Alerts** via Email, Webhook, and Slack with severity-based routing, ack/silence workflow.
+- **Scales** from a single site to 100k devices across multiple datacenters via site-local pollers phoning home over RabbitMQ.
+
+## Stack (decided — see [DECISIONS.md](DECISIONS.md))
+
+| Layer | Choice |
+|---|---|
+| Backend | Go (modular monolith, microservice-ready) |
+| Frontend | React + TypeScript + Vite, custom visualization (no Grafana) |
+| Metrics | VictoriaMetrics (PromQL/MetricsQL) |
+| Relational | PostgreSQL 16 |
+| Cache | Redis |
+| Queue | RabbitMQ |
+| Auth | Local accounts + JWT (OIDC-shaped; Keycloak later) |
+| Deploy | Docker → on-prem Kubernetes, Helm |
+| CI/CD | GitHub Actions → GHCR |
+
+## Repository map
+
+```
+netinv/
+├── README.md          ← you are here
+├── CLAUDE.md          ← AI onboarding: read this first if you are an AI agent
+├── DECISIONS.md       ← architecture decision log (ADR-lite); the "why" behind everything
+├── docs/              ← the 30-document design package (numbered, see docs/README.md)
+├── backend/           ← (future) Go services: api, scheduler, poller, ingester, alerter, notifier
+├── connectors/        ← (future) vendor connector packages (cisco, juniper, huawei, zte, ubiquiti)
+├── frontend/          ← (future) React + TypeScript app
+└── deploy/            ← (future) Helm charts, k8s manifests, docker-compose for dev
+```
+
+## Reading order
+
+1. [docs/01-executive-summary.md](docs/01-executive-summary.md) — 5-minute overview
+2. [docs/05-system-architecture.md](docs/05-system-architecture.md) — how it works
+3. [docs/26-development-roadmap.md](docs/26-development-roadmap.md) — what gets built when
+4. Full index: [docs/README.md](docs/README.md)
+
+## Project context
+
+Solo developer + AI pair (Claude). Launch target under 500 devices across 4–5 on-prem datacenters, single organization, self-hosted; multi-tenancy and SaaS are designed-in but dormant. 20 two-week sprints, backend first.

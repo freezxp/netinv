@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(sudo chown ubuntu:ubuntu /home/ubuntu/netinv)",
+      "Bash(git init *)",
+      "Bash(git remote *)",
+      "Bash(git config *)",
+      "Bash(git add *)",
+      "Bash(git commit -m 'docs: scaffold AI-native repo — README, CLAUDE.md, decision log, doc index *)",
+      "Bash(git push *)"
+    ]
+  }
+}
