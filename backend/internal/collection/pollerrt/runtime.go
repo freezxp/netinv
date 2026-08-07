@@ -181,8 +181,27 @@ func (r *Runtime) execute(ctx context.Context, job wire.PollJob) ([]wire.Sample,
 	case "sync":
 		return nil, r.executeSync(jctx, conn, job)
 	case "health":
-		// Vendor health MIBs land in Sprint 17.
-		return nil, nil
+		hc, ok := conn.(sdk.HealthCollector)
+		if !ok {
+			return nil, nil // connector without health capability
+		}
+		sess, err := NewSNMPSession(job)
+		if err != nil {
+			return nil, err
+		}
+		defer sess.Close()
+		sdkSamples, err := hc.CollectHealth(jctx, sess)
+		if err != nil {
+			return nil, err
+		}
+		out := make([]wire.Sample, 0, len(sdkSamples))
+		for _, s := range sdkSamples {
+			out = append(out, wire.Sample{
+				DeviceID: job.DeviceID, Name: s.Name, Labels: s.Labels,
+				TSMillis: s.At.UnixMilli(), Value: s.Value,
+			})
+		}
+		return out, nil
 	default:
 		return nil, nil
 	}

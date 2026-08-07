@@ -142,15 +142,24 @@ func main() {
 			Users: userRepo, Tokens: tokenRepo, Audit: auditor,
 			Argon: authn.DefaultArgon2, Log: rt.Log,
 		}
-		// Temporary connector-catalog seed until the registry-driven seeding
-		// lands with the vendor connectors (Sprint 17).
-		if _, err := pool.Exec(ctx, `
-			INSERT INTO platform.connectors (id, vendor, display_name, version, capabilities)
-			VALUES ('generic', 'Generic', 'Generic SNMP (IF-MIB)', '0.2.0',
-			        '["inventory","interfaces","topology","icmp"]')
-			ON CONFLICT (id) DO UPDATE SET version = excluded.version,
-				capabilities = excluded.capabilities`); err != nil {
-			return err
+		// Connector catalog (doc 08): static mirror of the compiled registry —
+		// the API deliberately does not import connectors (doc 13 rule 5).
+		for _, c := range [][4]string{
+			{"generic", "Generic", "Generic SNMP (IF-MIB)", `["inventory","interfaces","topology","icmp"]`},
+			{"cisco-ios", "Cisco", "Cisco IOS / IOS-XE", `["inventory","interfaces","topology","icmp","health"]`},
+			{"juniper-junos", "Juniper", "Juniper JunOS", `["inventory","interfaces","topology","icmp","health"]`},
+			{"huawei-vrp", "Huawei", "Huawei VRP", `["inventory","interfaces","topology","icmp","health"]`},
+			{"zte-zxr", "ZTE", "ZTE ZXR10 (best-effort)", `["inventory","interfaces","topology","icmp"]`},
+			{"ubiquiti", "Ubiquiti", "Ubiquiti (SNMP)", `["inventory","interfaces","topology","icmp"]`},
+		} {
+			if _, err := pool.Exec(ctx, `
+				INSERT INTO platform.connectors (id, vendor, display_name, version, capabilities)
+				VALUES ($1,$2,$3,'0.2.0',$4::jsonb)
+				ON CONFLICT (id) DO UPDATE SET display_name = excluded.display_name,
+					capabilities = excluded.capabilities`,
+				c[0], c[1], c[2], c[3]); err != nil {
+				return err
+			}
 		}
 
 		siteSvc := &invapp.SiteService{Repo: &invpg.SiteRepo{Pool: pool}, Audit: auditor}
