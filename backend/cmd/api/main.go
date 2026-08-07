@@ -238,6 +238,7 @@ func main() {
 			alertH.Register(g)
 			channelH.Register(g)
 			exportH.Register(g)
+			(&audit.Handler{Pool: pool, Checker: checker}).Register(g)
 			if vmURL := os.Getenv("NETINV_VM_URL"); vmURL != "" {
 				(&metrichttp.QueryProxy{VMURL: vmURL, Checker: checker}).Register(g)
 				(&dashboard.Service{

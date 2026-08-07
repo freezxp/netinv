@@ -12,6 +12,9 @@ const nav = [
   { to: "/alerts", label: "Alerts" },
   { to: "/maps", label: "Weathermaps" },
   { to: "/platform", label: "Platform" },
+  { to: "/audit", label: "Audit", roles: ["admin", "auditor"] },
+  { to: "/users", label: "Users", roles: ["admin"] },
+  { to: "/settings", label: "Settings", roles: ["admin"] },
 ];
 
 export function useTheme() {
@@ -42,7 +45,15 @@ export function AppShell() {
       <aside className="flex w-52 shrink-0 flex-col border-r border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
         <div className="px-4 py-4 text-lg font-bold text-sky-500">NetInv</div>
         <nav className="flex flex-1 flex-col gap-0.5 px-2">
-          {nav.map((item) => (
+          {nav
+            .filter(
+              (item) =>
+                !item.roles ||
+                user.roles.some(
+                  (r) => r === "admin" || item.roles.includes(r),
+                ),
+            )
+            .map((item) => (
             <NavLink
               key={item.to}
               to={item.to}
@@ -57,7 +68,7 @@ export function AppShell() {
             >
               {item.label}
             </NavLink>
-          ))}
+            ))}
         </nav>
         <div className="border-t border-slate-200 p-3 text-xs dark:border-slate-800">
           <div className="mb-2 flex items-center justify-between">

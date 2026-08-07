@@ -10,6 +10,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	colpg "github.com/freezxp/netinv/backend/internal/collection/adapters/postgres"
 	"github.com/freezxp/netinv/backend/internal/collection/app"
 	"github.com/freezxp/netinv/backend/internal/collection/domain"
 	"github.com/freezxp/netinv/backend/internal/platform/authz"
@@ -34,6 +35,7 @@ func (h *PollerHandler) RegisterAuthed(r chi.Router) {
 		pr.Use(httpx.RequirePerm(h.Checker, authz.PlatformRead))
 		pr.Get("/pollers", h.list)
 		pr.Get("/pollers/{id}", h.get)
+		pr.Get("/connectors", h.connectors)
 	})
 	r.Group(func(pw chi.Router) {
 		pw.Use(httpx.RequirePerm(h.Checker, authz.PlatformWrite))
@@ -99,6 +101,36 @@ func (h *PollerHandler) get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, toPollerView(p))
+}
+
+// connectors serves the catalog (FR-PLT-03).
+func (h *PollerHandler) connectors(w http.ResponseWriter, r *http.Request) {
+	rows, err := h.Svc.Repo.(*colpg.PollerRepo).Pool.Query(r.Context(), `
+		SELECT id, vendor, display_name, version, capabilities, enabled,
+			(SELECT count(*) FROM inventory.devices d
+			 WHERE d.connector_id = c.id AND d.status != 'retired')
+		FROM platform.connectors c ORDER BY vendor`)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	defer rows.Close()
+	out := []map[string]any{}
+	for rows.Next() {
+		var id, vendor, name, version string
+		var caps []string
+		var enabled bool
+		var devices int
+		if err := rows.Scan(&id, &vendor, &name, &version, &caps, &enabled, &devices); err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
+		out = append(out, map[string]any{
+			"id": id, "vendor": vendor, "display_name": name, "version": version,
+			"capabilities": caps, "enabled": enabled, "device_count": devices,
+		})
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"data": out})
 }
 
 func (h *PollerHandler) issueToken(w http.ResponseWriter, r *http.Request) {
