@@ -45,17 +45,23 @@ func TestMigrateUpDownUp(t *testing.T) {
 		t.Errorf("builtin alert rules = %d, want >= 8", n)
 	}
 
-	// Roll back the seed migration and reapply — both directions must work.
-	if err := MigrateDown(ctx, dsn, log); err != nil {
-		t.Fatalf("down: %v", err)
+	// Roll all the way down and back up — every Down must work, and the
+	// schema must be fully reconstructable (NFR-51).
+	if err := MigrateDownTo(ctx, dsn, 0, log); err != nil {
+		t.Fatalf("down-to-zero: %v", err)
 	}
-	if err := pool.QueryRow(ctx, "SELECT count(*) FROM iam.roles").Scan(&n); err != nil {
+	if err := pool.QueryRow(ctx,
+		"SELECT count(*) FROM information_schema.schemata WHERE schema_name = 'iam'").Scan(&n); err != nil {
 		t.Fatalf("query after down: %v", err)
 	}
 	if n != 0 {
-		t.Errorf("roles after down = %d, want 0", n)
+		t.Errorf("iam schema still present after full down")
 	}
 	if err := Migrate(ctx, dsn, log); err != nil {
 		t.Fatalf("re-up: %v", err)
+	}
+	if err := pool.QueryRow(ctx,
+		"SELECT count(*) FROM iam.roles WHERE is_builtin").Scan(&n); err != nil || n != 4 {
+		t.Fatalf("roles after re-up = %d err=%v, want 4", n, err)
 	}
 }

@@ -62,6 +62,22 @@ func MigrateDown(ctx context.Context, dsn string, log *slog.Logger) error {
 	return goose.DownContext(ctx, db, ".")
 }
 
+// MigrateDownTo rolls back to the given version (0 = empty schema). Tests use
+// it to prove every Down migration works, not just the latest.
+func MigrateDownTo(ctx context.Context, dsn string, version int64, log *slog.Logger) error {
+	db, err := sql.Open("pgx", dsn)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	goose.SetBaseFS(migrations.FS)
+	goose.SetLogger(gooseLogger{log})
+	if err := goose.SetDialect("postgres"); err != nil {
+		return err
+	}
+	return goose.DownToContext(ctx, db, ".", version)
+}
+
 type gooseLogger struct{ log *slog.Logger }
 
 func (g gooseLogger) Printf(format string, v ...any) {

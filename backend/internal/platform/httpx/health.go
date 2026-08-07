@@ -14,6 +14,7 @@ import (
 // false and is flipped by the composition root once dependencies are wired.
 type HealthServer struct {
 	srv   *http.Server
+	mux   *http.ServeMux
 	ready atomic.Bool
 	log   *slog.Logger
 }
@@ -34,8 +35,15 @@ func NewHealthServer(addr string, log *slog.Logger) *HealthServer {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		_, _ = w.Write([]byte("not ready"))
 	})
+	h.mux = mux
 	h.srv = &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 	return h
+}
+
+// Handle mounts an application handler on the service's HTTP server (the API
+// serves /api/v1/ alongside its operational endpoints).
+func (h *HealthServer) Handle(pattern string, handler http.Handler) {
+	h.mux.Handle(pattern, handler)
 }
 
 func (h *HealthServer) SetReady(ready bool) { h.ready.Store(ready) }
