@@ -178,12 +178,67 @@ func (r *Runtime) execute(ctx context.Context, job wire.PollJob) ([]wire.Sample,
 		return out, nil
 	case "icmp":
 		return probeICMP(jctx, job, r.ICMPPrivileged)
-	case "health", "sync":
-		// Implemented in Sprints 8 (sync) and 17 (vendor health).
+	case "sync":
+		return nil, r.executeSync(jctx, conn, job)
+	case "health":
+		// Vendor health MIBs land in Sprint 17.
 		return nil, nil
 	default:
 		return nil, nil
 	}
+}
+
+// executeSync collects the inventory snapshot (+ topology when the connector
+// is capable) and publishes a SyncResult for the core's sync consumer (doc 11).
+func (r *Runtime) executeSync(ctx context.Context, conn sdk.Connector, job wire.PollJob) error {
+	res := wire.SyncResult{
+		JobID: job.JobID, DeviceID: job.DeviceID, PollerID: r.PollerID,
+		Trigger: job.Trigger, CollectedAt: time.Now().UTC(),
+	}
+	inv, ok := conn.(sdk.InventoryCollector)
+	if !ok {
+		return nil // connector without inventory capability: nothing to sync
+	}
+	sess, err := NewSNMPSession(job)
+	if err == nil {
+		defer sess.Close()
+		var snap *sdk.InventorySnapshot
+		snap, err = inv.CollectInventory(ctx, sess)
+		if err == nil {
+			ws := &wire.SyncSnapshot{
+				SysName: snap.SysName, SysDescr: snap.SysDescr,
+				SysObjectID: snap.SysObjectID, SysLocation: snap.SysLocation,
+				SysContact: snap.SysContact, UptimeS: snap.UptimeS,
+			}
+			for _, i := range snap.Interfaces {
+				ws.Interfaces = append(ws.Interfaces, wire.SyncInterface{
+					IfIndex: i.IfIndex, Name: i.Name, Alias: i.Alias, Descr: i.Descr,
+					IfType: i.IfType, MTU: i.MTU, SpeedBPS: i.SpeedBPS,
+					PhysAddress: i.PhysAddress, AdminStatus: i.AdminStatus,
+					OperStatus: i.OperStatus,
+				})
+			}
+			if topo, tok := conn.(sdk.TopologyCollector); tok {
+				if adjs, terr := topo.CollectTopology(ctx, sess); terr == nil {
+					for _, a := range adjs {
+						ws.Adjacencies = append(ws.Adjacencies, wire.SyncAdjacency{
+							LocalIfIndex: a.LocalIfIndex, RemoteSysName: a.RemoteSysName,
+							RemotePortID: a.RemotePortID, RemoteChassis: a.RemoteChassis,
+							Protocol: a.Protocol,
+						})
+					}
+				}
+			}
+			res.Snapshot = ws
+		}
+	}
+	if err != nil {
+		res.Error = err.Error()
+	}
+	if perr := r.Client.PublishJSON(ctx, "", amqpx.SyncResultsQueue, res); perr != nil {
+		return perr
+	}
+	return err // original collect error drives poll_success
 }
 
 func (r *Runtime) append(ctx context.Context, samples []wire.Sample) {

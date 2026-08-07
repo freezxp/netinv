@@ -20,7 +20,7 @@ type DeviceRepo struct{ Pool *pgxpool.Pool }
 const deviceCols = `id, tenant_id, site_id, connector_id, credential_id, profile_id,
 	name, host(mgmt_ip), status, coalesce(sys_name,''), coalesce(sys_descr,''),
 	coalesce(vendor,''), coalesce(model,''), coalesce(serial_number,''),
-	coalesce(os_version,''), tags, coalesce(notes,''), created_at, updated_at`
+	coalesce(os_version,''), tags, coalesce(notes,''), attrs, created_at, updated_at`
 
 func scanDevice(row pgx.Row) (*domain.Device, error) {
 	d := &domain.Device{}
@@ -28,7 +28,7 @@ func scanDevice(row pgx.Row) (*domain.Device, error) {
 	err := row.Scan(&d.ID, &d.TenantID, &d.SiteID, &d.ConnectorID, &d.CredentialID,
 		&d.ProfileID, &d.Name, &d.MgmtIP, &status, &d.SysName, &d.SysDescr,
 		&d.Vendor, &d.Model, &d.SerialNumber, &d.OSVersion, &d.Tags, &d.Notes,
-		&d.CreatedAt, &d.UpdatedAt)
+		&d.Attrs, &d.CreatedAt, &d.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, errx.New(errx.KindNotFound, "device not found")
 	}

@@ -6,14 +6,19 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/json"
 	"os"
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	amqp091 "github.com/rabbitmq/amqp091-go"
+	"github.com/redis/go-redis/v9"
 
 	"github.com/freezxp/netinv/backend/internal/audit"
+	colamqp "github.com/freezxp/netinv/backend/internal/collection/adapters/amqp"
 	colhttp "github.com/freezxp/netinv/backend/internal/collection/adapters/httpapi"
 	colpg "github.com/freezxp/netinv/backend/internal/collection/adapters/postgres"
+	"github.com/freezxp/netinv/backend/internal/collection/adapters/secrets"
 	colapp "github.com/freezxp/netinv/backend/internal/collection/app"
 	"github.com/freezxp/netinv/backend/internal/iam/adapters/httpapi"
 	"github.com/freezxp/netinv/backend/internal/iam/adapters/lockout"
@@ -23,13 +28,18 @@ import (
 	invpg "github.com/freezxp/netinv/backend/internal/inventory/adapters/postgres"
 	"github.com/freezxp/netinv/backend/internal/inventory/adapters/snmptest"
 	invapp "github.com/freezxp/netinv/backend/internal/inventory/app"
+	invdomain "github.com/freezxp/netinv/backend/internal/inventory/domain"
+	"github.com/freezxp/netinv/backend/internal/platform/amqpx"
 	"github.com/freezxp/netinv/backend/internal/platform/authn"
 	"github.com/freezxp/netinv/backend/internal/platform/authz"
 	"github.com/freezxp/netinv/backend/internal/platform/cryptox"
+	"github.com/freezxp/netinv/backend/internal/platform/errx"
 	"github.com/freezxp/netinv/backend/internal/platform/httpx"
+	"github.com/freezxp/netinv/backend/internal/platform/id"
 	"github.com/freezxp/netinv/backend/internal/platform/pgx"
 	"github.com/freezxp/netinv/backend/internal/platform/redisx"
 	"github.com/freezxp/netinv/backend/internal/platform/service"
+	"github.com/freezxp/netinv/backend/internal/platform/wire"
 )
 
 func main() {
@@ -68,14 +78,15 @@ func main() {
 			return err
 		}
 
+		var redisClient *redis.Client
 		var lock app.Lockout
 		if addr := os.Getenv("NETINV_REDIS_ADDR"); addr != "" {
-			rc, err := redisx.Connect(ctx, addr)
+			redisClient, err = redisx.Connect(ctx, addr)
 			if err != nil {
 				return err
 			}
-			defer rc.Close()
-			lock = &lockout.Redis{Client: rc}
+			defer redisClient.Close()
+			lock = &lockout.Redis{Client: redisClient}
 			rt.Log.Info("redis connected", "addr", addr)
 		} else {
 			lock = lockout.NewMemory()
@@ -109,6 +120,7 @@ func main() {
 			keys, _ = cryptox.NewEnvMasterKey(map[int][]byte{1: raw}, 1)
 			rt.Log.Warn("NETINV_MASTER_KEY not set — ephemeral vault key; stored credentials won't survive restarts")
 		}
+		vault := &invpg.EnvelopeVault{Pool: pool, Keys: keys}
 
 		checker, err := authz.NewPGChecker(ctx, pool, rt.Log)
 		if err != nil {
@@ -120,21 +132,23 @@ func main() {
 			Users: userRepo, Tokens: tokenRepo, Audit: auditor,
 			Argon: authn.DefaultArgon2, Log: rt.Log,
 		}
-		// Temporary connector-catalog seed until the compiled registry lands in
-		// Sprint 6 (doc 08: catalog is app-seeded; devices FK requires a row).
+		// Temporary connector-catalog seed until the registry-driven seeding
+		// lands with the vendor connectors (Sprint 17).
 		if _, err := pool.Exec(ctx, `
 			INSERT INTO platform.connectors (id, vendor, display_name, version, capabilities)
-			VALUES ('generic', 'Generic', 'Generic SNMP (IF-MIB)', '0.1.0',
-			        '["inventory","interfaces","icmp"]')
-			ON CONFLICT (id) DO NOTHING`); err != nil {
+			VALUES ('generic', 'Generic', 'Generic SNMP (IF-MIB)', '0.2.0',
+			        '["inventory","interfaces","topology","icmp"]')
+			ON CONFLICT (id) DO UPDATE SET version = excluded.version,
+				capabilities = excluded.capabilities`); err != nil {
 			return err
 		}
 
 		siteSvc := &invapp.SiteService{Repo: &invpg.SiteRepo{Pool: pool}, Audit: auditor}
 		credSvc := &invapp.CredentialService{
-			Vault: &invpg.EnvelopeVault{Pool: pool, Keys: keys},
-			Tester: snmptest.Tester{}, Audit: auditor,
+			Vault: vault, Tester: snmptest.Tester{}, Audit: auditor,
 		}
+		devSvc := &invapp.DeviceService{Repo: &invpg.DeviceRepo{Pool: pool}, Audit: auditor}
+		pollerSvc := &colapp.PollerService{Repo: &colpg.PollerRepo{Pool: pool}, Audit: auditor}
 
 		authH := &httpapi.Handler{
 			Auth: authSvc, Verifier: issuer,
@@ -142,10 +156,47 @@ func main() {
 		}
 		userH := &httpapi.UserHandler{Svc: userSvc, Repo: userRepo, Checker: checker}
 		invH := &invhttp.Handler{Sites: siteSvc, Creds: credSvc, Checker: checker}
-		devSvc := &invapp.DeviceService{Repo: &invpg.DeviceRepo{Pool: pool}, Audit: auditor}
 		devH := &invhttp.DeviceHandler{Svc: devSvc, Checker: checker}
-		pollerSvc := &colapp.PollerService{Repo: &colpg.PollerRepo{Pool: pool}, Audit: auditor}
 		pollerH := &colhttp.PollerHandler{Svc: pollerSvc, Checker: checker}
+
+		// AMQP: sync-result consumer + on-demand sync dispatch (doc 11).
+		if amqpURL := os.Getenv("NETINV_AMQP_URL"); amqpURL != "" && redisClient != nil {
+			mq, err := amqpx.Connect(ctx, amqpURL)
+			if err != nil {
+				return err
+			}
+			defer mq.Close()
+			if err := mq.EnsureSyncResultsQueue(); err != nil {
+				return err
+			}
+			syncSvc := &invapp.SyncService{
+				Repo:  &invpg.SyncRepo{Pool: pool},
+				Locks: redisLocker(redisClient),
+				Audit: auditor, Log: rt.Log,
+			}
+			deliveries, err := mq.Consume(amqpx.SyncResultsQueue, 8)
+			if err != nil {
+				return err
+			}
+			go consumeSyncResults(ctx, deliveries, syncSvc, rt)
+
+			dispatcher := &colamqp.SyncDispatcher{
+				Client: mq, Secrets: &secrets.Resolver{Vault: vault},
+			}
+			devH.DispatchSync = func(dctx context.Context, d *invdomain.Device) (string, error) {
+				port := 0
+				if v, ok := d.Attrs["snmp_port"].(float64); ok {
+					port = int(v)
+				}
+				return dispatcher.DispatchSync(dctx, colamqp.SyncTarget{
+					DeviceID: d.ID, SiteID: d.SiteID, MgmtIP: d.MgmtIP, Port: port,
+					ConnectorID: d.ConnectorID, CredentialID: d.CredentialID,
+				})
+			}
+			rt.Log.Info("sync consumer and dispatch enabled")
+		} else {
+			rt.Log.Warn("NETINV_AMQP_URL or redis missing — sync consumer and on-demand sync disabled")
+		}
 
 		api := chi.NewRouter()
 		authH.Register(api)
@@ -167,4 +218,50 @@ func main() {
 		<-ctx.Done()
 		return nil
 	})
+}
+
+func redisLocker(client *redis.Client) *invpg.RedisLocker {
+	return &invpg.RedisLocker{Try: func(ctx context.Context, key string,
+		ttl time.Duration) (func(), bool, error) {
+		lock, ok, err := redisx.TryLock(ctx, client, key, ttl)
+		if err != nil || !ok {
+			return nil, ok, err
+		}
+		return func() { _ = lock.Release(context.WithoutCancel(ctx)) }, true, nil
+	}}
+}
+
+// consumeSyncResults drives the sync pipeline: at-least-once with per-device
+// locks; lock contention requeues, poison rejects (doc 23 §3).
+func consumeSyncResults(ctx context.Context, deliveries <-chan amqp091.Delivery,
+	svc *invapp.SyncService, rt *service.Runtime) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case d, ok := <-deliveries:
+			if !ok {
+				return
+			}
+			var res wire.SyncResult
+			if err := json.Unmarshal(d.Body, &res); err != nil {
+				rt.Log.Warn("malformed sync result dropped", "err", err)
+				_ = d.Reject(false)
+				continue
+			}
+			err := svc.HandleResult(ctx, res, id.New("sr"))
+			switch {
+			case err == nil:
+				_ = d.Ack(false)
+			case errx.KindOf(err) == errx.KindConflict,
+				errx.KindOf(err) == errx.KindTransient:
+				rt.Log.Warn("sync result requeued", "device", res.DeviceID, "err", err)
+				time.Sleep(time.Second)
+				_ = d.Nack(false, true)
+			default:
+				rt.Log.Error("sync result failed permanently", "device", res.DeviceID, "err", err)
+				_ = d.Reject(false)
+			}
+		}
+	}
 }

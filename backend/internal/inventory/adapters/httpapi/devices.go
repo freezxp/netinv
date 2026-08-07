@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -17,6 +18,8 @@ import (
 type DeviceHandler struct {
 	Svc     *app.DeviceService
 	Checker authz.Checker
+	// DispatchSync publishes an on-demand sync job; wired in cmd (nil = 503).
+	DispatchSync func(ctx context.Context, d *domain.Device) (jobID string, err error)
 }
 
 // Register adds /devices routes (doc 09 §6) to an authenticated router.
@@ -34,6 +37,7 @@ func (h *DeviceHandler) Register(r chi.Router) {
 		pw.Post("/devices/{id}/retire", h.status(domain.DeviceRetired))
 		pw.Post("/devices/{id}/enable", h.status(domain.DeviceActive))
 		pw.Post("/devices/{id}/disable", h.status(domain.DeviceDisabled))
+		pw.Post("/devices/{id}/sync", h.syncNow)
 	})
 }
 
@@ -157,6 +161,24 @@ func (h *DeviceHandler) status(target domain.DeviceStatus) http.HandlerFunc {
 		}
 		httpx.WriteJSON(w, http.StatusOK, toDeviceView(d))
 	}
+}
+
+func (h *DeviceHandler) syncNow(w http.ResponseWriter, r *http.Request) {
+	if h.DispatchSync == nil {
+		httpx.WriteError(w, r, errx.New(errx.KindTransient, "sync dispatch unavailable"))
+		return
+	}
+	d, err := h.Svc.Repo.Get(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	jobID, err := h.DispatchSync(r.Context(), d)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusAccepted, map[string]string{"job_id": jobID})
 }
 
 func (h *DeviceHandler) importCSV(w http.ResponseWriter, r *http.Request) {

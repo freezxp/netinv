@@ -29,7 +29,7 @@ func (b *Base) Info() sdk.Info {
 func (b *Base) Match(sdk.SysInfo) sdk.MatchScore { return 1 }
 
 func (b *Base) Capabilities() []sdk.Capability {
-	return []sdk.Capability{sdk.CapInventory, sdk.CapInterfaces}
+	return []sdk.Capability{sdk.CapInventory, sdk.CapInterfaces, sdk.CapTopology}
 }
 
 // OIDs (IF-MIB, SNMPv2-MIB).
@@ -239,6 +239,55 @@ func (b *Base) CollectInventory(ctx context.Context, s sdk.Session) (*sdk.Invent
 		snap.Interfaces = append(snap.Interfaces, *r)
 	}
 	return snap, nil
+}
+
+// LLDP-MIB remote table (IEEE 802.1AB): index is timeMark.localPortNum.remIndex.
+const oidLldpRemTable = ".1.0.8802.1.1.2.1.4.1.1"
+
+// CollectTopology walks lldpRemTable (best-effort — many devices ship without
+// LLDP enabled; empty result is success).
+func (b *Base) CollectTopology(ctx context.Context, s sdk.Session) ([]sdk.Adjacency, error) {
+	vars, err := s.Walk(ctx, oidLldpRemTable)
+	if err != nil || len(vars) == 0 {
+		return nil, nil // absent LLDP support is not a failure
+	}
+	type key struct{ port, rem int }
+	adj := map[key]*sdk.Adjacency{}
+	get := func(port, rem int) *sdk.Adjacency {
+		k := key{port, rem}
+		if a, ok := adj[k]; ok {
+			return a
+		}
+		a := &sdk.Adjacency{LocalIfIndex: port, Protocol: "lldp"}
+		adj[k] = a
+		return a
+	}
+	for _, v := range vars {
+		rest, found := strings.CutPrefix(v.OID, oidLldpRemTable+".")
+		if !found {
+			continue
+		}
+		parts := strings.Split(rest, ".")
+		if len(parts) != 4 { // col.timeMark.localPort.remIndex
+			continue
+		}
+		col, _ := strconv.Atoi(parts[0])
+		port, _ := strconv.Atoi(parts[2])
+		rem, _ := strconv.Atoi(parts[3])
+		switch col {
+		case 5: // lldpRemChassisId
+			get(port, rem).RemoteChassis = toString(v.Value)
+		case 7: // lldpRemPortId
+			get(port, rem).RemotePortID = toString(v.Value)
+		case 9: // lldpRemSysName
+			get(port, rem).RemoteSysName = toString(v.Value)
+		}
+	}
+	out := make([]sdk.Adjacency, 0, len(adj))
+	for _, a := range adj {
+		out = append(out, *a)
+	}
+	return out, nil
 }
 
 func splitCol(oid, table string) (col, idx int, ok bool) {

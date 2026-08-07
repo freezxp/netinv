@@ -24,6 +24,7 @@ type PollJob struct {
 	DeviceID    string    `json:"device_id"`
 	SiteID      string    `json:"site_id"`
 	Family      string    `json:"family"` // traffic | health | icmp | sync
+	Trigger     string    `json:"trigger,omitempty"` // scheduled | manual | onboarding
 	MgmtIP      string    `json:"mgmt_ip"`
 	Port        int       `json:"port"`
 	ConnectorID string    `json:"connector_id"`
@@ -32,6 +33,50 @@ type PollJob struct {
 	IntervalS   int       `json:"interval_s"`
 	TimeoutMS   int       `json:"timeout_ms"`
 	Retries     int       `json:"retries"`
+}
+
+// ---- sync results (poller → API sync consumer, doc 11) ----
+
+type SyncInterface struct {
+	IfIndex     int    `json:"if_index"`
+	Name        string `json:"name"`
+	Alias       string `json:"alias"`
+	Descr       string `json:"descr"`
+	IfType      int    `json:"if_type"`
+	MTU         int    `json:"mtu"`
+	SpeedBPS    int64  `json:"speed_bps"`
+	PhysAddress string `json:"phys_address"`
+	AdminStatus int    `json:"admin_status"`
+	OperStatus  int    `json:"oper_status"`
+}
+
+type SyncAdjacency struct {
+	LocalIfIndex  int    `json:"local_if_index"`
+	RemoteSysName string `json:"remote_sysname"`
+	RemotePortID  string `json:"remote_port_id"`
+	RemoteChassis string `json:"remote_chassis"`
+	Protocol      string `json:"protocol"`
+}
+
+type SyncSnapshot struct {
+	SysName     string          `json:"sys_name"`
+	SysDescr    string          `json:"sys_descr"`
+	SysObjectID string          `json:"sys_object_id"`
+	SysLocation string          `json:"sys_location"`
+	SysContact  string          `json:"sys_contact"`
+	UptimeS     int64           `json:"uptime_s"`
+	Interfaces  []SyncInterface `json:"interfaces"`
+	Adjacencies []SyncAdjacency `json:"adjacencies,omitempty"`
+}
+
+type SyncResult struct {
+	JobID       string        `json:"job_id"`
+	DeviceID    string        `json:"device_id"`
+	PollerID    string        `json:"poller_id"`
+	Trigger     string        `json:"trigger"`
+	CollectedAt time.Time     `json:"collected_at"`
+	Error       string        `json:"error,omitempty"` // non-empty = failed run
+	Snapshot    *SyncSnapshot `json:"snapshot,omitempty"`
 }
 
 // Sample is one metric observation in a batch.
