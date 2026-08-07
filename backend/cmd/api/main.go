@@ -14,6 +14,8 @@ import (
 	amqp091 "github.com/rabbitmq/amqp091-go"
 	"github.com/redis/go-redis/v9"
 
+	alerthttp "github.com/freezxp/netinv/backend/internal/alerting/adapters/httpapi"
+	alertpg "github.com/freezxp/netinv/backend/internal/alerting/adapters/postgres"
 	"github.com/freezxp/netinv/backend/internal/audit"
 	colamqp "github.com/freezxp/netinv/backend/internal/collection/adapters/amqp"
 	colhttp "github.com/freezxp/netinv/backend/internal/collection/adapters/httpapi"
@@ -29,6 +31,10 @@ import (
 	"github.com/freezxp/netinv/backend/internal/inventory/adapters/snmptest"
 	invapp "github.com/freezxp/netinv/backend/internal/inventory/app"
 	invdomain "github.com/freezxp/netinv/backend/internal/inventory/domain"
+	notifhttp "github.com/freezxp/netinv/backend/internal/notify/adapters/httpapi"
+	notifpg "github.com/freezxp/netinv/backend/internal/notify/adapters/postgres"
+	"github.com/freezxp/netinv/backend/internal/notify/adapters/senders"
+	notifapp "github.com/freezxp/netinv/backend/internal/notify/app"
 	"github.com/freezxp/netinv/backend/internal/platform/amqpx"
 	"github.com/freezxp/netinv/backend/internal/platform/authn"
 	"github.com/freezxp/netinv/backend/internal/platform/authz"
@@ -158,6 +164,14 @@ func main() {
 		invH := &invhttp.Handler{Sites: siteSvc, Creds: credSvc, Checker: checker}
 		devH := &invhttp.DeviceHandler{Svc: devSvc, Checker: checker}
 		pollerH := &colhttp.PollerHandler{Svc: pollerSvc, Checker: checker}
+		alertH := &alerthttp.Handler{Store: &alertpg.Store{Pool: pool}, Pool: pool, Checker: checker}
+		channelH := &notifhttp.Handler{
+			Repo: &notifpg.ChannelRepo{Pool: pool, Keys: keys},
+			Senders: map[string]notifapp.Sender{
+				"email": senders.Email{}, "webhook": senders.Webhook{}, "slack": senders.Slack{},
+			},
+			Checker: checker,
+		}
 
 		// AMQP: sync-result consumer + on-demand sync dispatch (doc 11).
 		if amqpURL := os.Getenv("NETINV_AMQP_URL"); amqpURL != "" && redisClient != nil {
@@ -207,6 +221,8 @@ func main() {
 			invH.Register(g)
 			devH.Register(g)
 			pollerH.RegisterAuthed(g)
+			alertH.Register(g)
+			channelH.Register(g)
 		})
 		root := chi.NewRouter()
 		root.Use(httpx.TraceMiddleware)

@@ -69,6 +69,23 @@ type SyncSnapshot struct {
 	Adjacencies []SyncAdjacency `json:"adjacencies,omitempty"`
 }
 
+// AlertEvent rides events.domain (rk alert.fired / alert.resolved) from the
+// alerter to the notifier — fat event, no callback needed (doc 05 §8).
+type AlertEvent struct {
+	Event    string            `json:"event"` // alert.fired | alert.resolved
+	AlertID  string            `json:"alert_id"`
+	RuleID   string            `json:"rule_id"`
+	RuleName string            `json:"rule_name"`
+	Severity string            `json:"severity"`
+	State    string            `json:"state"`
+	DeviceID string            `json:"device_id,omitempty"`
+	Labels   map[string]string `json:"labels,omitempty"`
+	Value    float64           `json:"value"`
+	FiredAt  time.Time         `json:"fired_at"`
+	Summary  string            `json:"summary"`
+	GraphURL string            `json:"graph_url,omitempty"`
+}
+
 type SyncResult struct {
 	JobID       string        `json:"job_id"`
 	DeviceID    string        `json:"device_id"`

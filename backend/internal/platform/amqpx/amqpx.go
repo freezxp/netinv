@@ -133,6 +133,28 @@ func (c *Client) EnsureSyncResultsQueue() error {
 	return err
 }
 
+// EnsureEventsTopology declares the events.domain topic exchange (doc 05 §4).
+func (c *Client) EnsureEventsTopology() error {
+	ch, err := c.channel()
+	if err != nil {
+		return err
+	}
+	return ch.ExchangeDeclare(EventsExchange, "topic", true, false, false, false, nil)
+}
+
+// EnsureTopicQueue declares a quorum queue bound to events.domain by pattern.
+func (c *Client) EnsureTopicQueue(queue, pattern string) error {
+	ch, err := c.channel()
+	if err != nil {
+		return err
+	}
+	if _, err := ch.QueueDeclare(queue, true, false, false, false,
+		amqp.Table{"x-queue-type": "quorum"}); err != nil {
+		return err
+	}
+	return ch.QueueBind(queue, pattern, EventsExchange, false, nil)
+}
+
 // Consume starts delivering from a queue with manual acks.
 func (c *Client) Consume(queue string, prefetch int) (<-chan amqp.Delivery, error) {
 	ch, err := c.channel()

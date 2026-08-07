@@ -55,6 +55,10 @@ services:
     volumes:
       - ./tools/snmpsim/data:/usr/local/snmpsim/data:ro
 
+  mailhog:
+    image: mailhog/mailhog
+    ports: ["1025:1025", "8025:8025"] # SMTP sink + web UI for email testing
+
   api:
     profiles: [app]
     build: { context: backend, args: { SERVICE: api } }
