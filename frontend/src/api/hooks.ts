@@ -80,6 +80,125 @@ export function useDashboardSummary() {
   });
 }
 
+interface Wrapped<T> {
+  as_of: string;
+  data: T;
+}
+
+export interface TopRow {
+  rank: number;
+  value: number;
+  device_id: string;
+  device: string;
+  site: string;
+  if_index?: string;
+}
+
+export function useTop(list: string) {
+  return useQuery({
+    queryKey: ["dashboard", "top", list],
+    queryFn: () => api<Wrapped<TopRow[]>>(`/dashboard/top?list=${list}`),
+    refetchInterval: 30_000,
+  });
+}
+
+export interface HeatCell {
+  device_id: string;
+  device: string;
+  site: string;
+  class: "ok" | "warning" | "critical" | "unreachable" | "muted";
+}
+
+export function useHeatmap() {
+  return useQuery({
+    queryKey: ["dashboard", "heatmap"],
+    queryFn: () => api<Wrapped<HeatCell[]>>("/dashboard/heatmap"),
+    refetchInterval: 30_000,
+  });
+}
+
+export function useWatchlist() {
+  return useQuery({
+    queryKey: ["dashboard", "watchlist"],
+    queryFn: () =>
+      api<
+        Wrapped<
+          Array<{
+            device_id: string;
+            device: string;
+            if_index: string;
+            site: string;
+            avg_util_24h: number;
+          }>
+        >
+      >("/dashboard/watchlist"),
+    refetchInterval: 60_000,
+  });
+}
+
+export function useDevice(id: string) {
+  return useQuery({
+    queryKey: ["device", id],
+    queryFn: () => api<Device>(`/devices/${id}`),
+  });
+}
+
+export interface InterfaceRow {
+  id: string;
+  if_index: number;
+  name: string;
+  alias: string;
+  speed_bps: number;
+  mtu: number;
+  admin_status: number;
+  oper_status: number;
+  state: string;
+  monitor: boolean;
+}
+
+export function useDeviceInterfaces(id: string) {
+  return useQuery({
+    queryKey: ["device", id, "interfaces"],
+    queryFn: () => api<{ data: InterfaceRow[] }>(`/devices/${id}/interfaces`),
+    refetchInterval: 60_000,
+  });
+}
+
+export interface HistoryRow {
+  object_kind: string;
+  object_id: string;
+  field: string;
+  old_value: string;
+  new_value: string;
+  change_kind: string;
+  detected_at: string;
+}
+
+export function useDeviceHistory(id: string) {
+  return useQuery({
+    queryKey: ["device", id, "history"],
+    queryFn: () => api<{ data: HistoryRow[] }>(`/devices/${id}/history`),
+  });
+}
+
+export function useDeviceAlerts(id: string) {
+  return useQuery({
+    queryKey: ["alerts", "device", id],
+    queryFn: () => api<{ data: Alert[] }>(`/alerts?filter=device:eq:${id}`),
+    refetchInterval: 30_000,
+  });
+}
+
+export function useSyncNow() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      api<{ job_id: string }>(`/devices/${id}/sync`, { method: "POST" }),
+    onSuccess: (_r, id) =>
+      setTimeout(() => qc.invalidateQueries({ queryKey: ["device", id] }), 4000),
+  });
+}
+
 export function useAckAlert() {
   const qc = useQueryClient();
   return useMutation({

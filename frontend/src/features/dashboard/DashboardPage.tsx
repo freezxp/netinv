@@ -10,6 +10,7 @@ import {
 } from "../../api/hooks";
 import { Button, Card, EmptyState, SeverityPill } from "../../components/ui";
 import { TimeSeries } from "../../components/TimeSeries";
+import { HeatmapPanel, TopNPanel, WatchlistPanel } from "./panels";
 import {
   formatBps,
   formatDuration,
@@ -150,6 +151,12 @@ export function DashboardPage() {
             label={(m) => m.device ?? "device"}
           />
         </Card>
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-3">
+        <TopNPanel />
+        <HeatmapPanel />
+        <WatchlistPanel />
       </div>
     </div>
   );

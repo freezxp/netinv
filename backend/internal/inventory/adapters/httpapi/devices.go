@@ -8,6 +8,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/freezxp/netinv/backend/internal/inventory/adapters/postgres"
 	"github.com/freezxp/netinv/backend/internal/inventory/app"
 	"github.com/freezxp/netinv/backend/internal/inventory/domain"
 	"github.com/freezxp/netinv/backend/internal/platform/authz"
@@ -28,6 +29,9 @@ func (h *DeviceHandler) Register(r chi.Router) {
 		pr.Use(httpx.RequirePerm(h.Checker, authz.DevicesRead))
 		pr.Get("/devices", h.list)
 		pr.Get("/devices/{id}", h.get)
+		pr.Get("/devices/{id}/interfaces", h.interfaces)
+		pr.Get("/devices/{id}/history", h.history)
+		pr.Get("/devices/{id}/neighbors", h.neighbors)
 	})
 	r.Group(func(pw chi.Router) {
 		pw.Use(httpx.RequirePerm(h.Checker, authz.DevicesWrite))
@@ -161,6 +165,36 @@ func (h *DeviceHandler) status(target domain.DeviceStatus) http.HandlerFunc {
 		}
 		httpx.WriteJSON(w, http.StatusOK, toDeviceView(d))
 	}
+}
+
+func (h *DeviceHandler) interfaces(w http.ResponseWriter, r *http.Request) {
+	repo := h.Svc.Repo.(*postgres.DeviceRepo)
+	rows, err := repo.Interfaces(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"data": rows})
+}
+
+func (h *DeviceHandler) history(w http.ResponseWriter, r *http.Request) {
+	repo := h.Svc.Repo.(*postgres.DeviceRepo)
+	rows, err := repo.History(r.Context(), chi.URLParam(r, "id"), 100)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"data": rows})
+}
+
+func (h *DeviceHandler) neighbors(w http.ResponseWriter, r *http.Request) {
+	repo := h.Svc.Repo.(*postgres.DeviceRepo)
+	rows, err := repo.Neighbors(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"data": rows})
 }
 
 func (h *DeviceHandler) syncNow(w http.ResponseWriter, r *http.Request) {

@@ -6,6 +6,7 @@ import { AppShell } from "./app/AppShell";
 import { LoginPage } from "./features/auth/LoginPage";
 import { InventoryPage } from "./features/inventory/InventoryPage";
 import { DashboardPage } from "./features/dashboard/DashboardPage";
+import { DeviceDetailPage } from "./features/devices/DeviceDetailPage";
 import { ApiError } from "./api/client";
 import "./styles/base.css";
 
@@ -42,7 +43,7 @@ const router = createBrowserRouter([
       { path: "alerts", element: <Placeholder title="Alerts" /> },
       { path: "maps", element: <Placeholder title="Weathermaps" /> },
       { path: "platform", element: <Placeholder title="Platform" /> },
-      { path: "devices/:id", element: <Placeholder title="Device detail" /> },
+      { path: "devices/:id", element: <DeviceDetailPage /> },
     ],
   },
 ]);
