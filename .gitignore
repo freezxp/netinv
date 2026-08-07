@@ -1,0 +1,18 @@
+# Go
+backend/bin/
+*.test
+*.out
+
+# Node
+node_modules/
+frontend/dist/
+
+# Local env & scratch
+.env
+.env.*
+scratch/
+
+# Editor/OS
+.DS_Store
+.idea/
+.vscode/

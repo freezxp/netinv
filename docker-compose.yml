@@ -1,0 +1,92 @@
+# NetInv local development stack (NFR-73). Infra services start by default;
+# app services live behind the "app" profile (built from backend/Dockerfile):
+#   make dev            → infra only (run Go services on the host for hot reload)
+#   docker compose --profile app up → everything in containers
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: netinv
+      POSTGRES_PASSWORD: netinv-dev # dev only; never in deployed environments
+      POSTGRES_DB: netinv
+    ports: ["5432:5432"]
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U netinv"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: netinv
+      RABBITMQ_DEFAULT_PASS: netinv-dev
+    ports: ["5672:5672", "15672:15672"]
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  victoriametrics:
+    image: victoriametrics/victoria-metrics:v1.103.0
+    command: ["-retentionPeriod=90d", "-storageDataPath=/storage"]
+    ports: ["8428:8428"]
+    volumes: [vmdata:/storage]
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8428/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  snmpsim:
+    image: tandrup/snmpsim
+    ports: ["1161:161/udp"]
+    volumes:
+      - ./tools/snmpsim/data:/usr/local/snmpsim/data:ro
+
+  api:
+    profiles: [app]
+    build: { context: backend, args: { SERVICE: api } }
+    environment: &appenv
+      NETINV_LOG_LEVEL: info
+    ports: ["8080:8080"]
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      rabbitmq: { condition: service_healthy }
+      victoriametrics: { condition: service_healthy }
+  scheduler:
+    profiles: [app]
+    build: { context: backend, args: { SERVICE: scheduler } }
+    environment: *appenv
+  poller:
+    profiles: [app]
+    build: { context: backend, args: { SERVICE: poller } }
+    environment: *appenv
+  ingester:
+    profiles: [app]
+    build: { context: backend, args: { SERVICE: ingester } }
+    environment: *appenv
+  alerter:
+    profiles: [app]
+    build: { context: backend, args: { SERVICE: alerter } }
+    environment: *appenv
+  notifier:
+    profiles: [app]
+    build: { context: backend, args: { SERVICE: notifier } }
+    environment: *appenv
+
+volumes:
+  pgdata:
+  vmdata:

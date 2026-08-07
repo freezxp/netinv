@@ -1,0 +1,36 @@
+/* Minimal Sprint-1 styling; Tailwind + design tokens arrive in Sprint 11 (doc 30 §0). */
+:root {
+  color-scheme: dark light;
+  --bg: #f8fafc;
+  --panel: #ffffff;
+  --text: #0f172a;
+  --muted: #64748b;
+  --accent: #0ea5e9;
+}
+html.dark {
+  --bg: #0b1220;
+  --panel: #111a2c;
+  --text: #e2e8f0;
+  --muted: #94a3b8;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: Inter, system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+}
+.shell { display: flex; min-height: 100vh; }
+.sidebar {
+  width: 220px;
+  background: var(--panel);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+.brand { font-weight: 700; font-size: 18px; color: var(--accent); }
+nav { display: flex; flex-direction: column; gap: 8px; }
+.navitem { color: var(--muted); padding: 6px 8px; border-radius: 6px; }
+.content { flex: 1; padding: 32px; }
+code { color: var(--accent); }
