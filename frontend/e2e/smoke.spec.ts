@@ -198,6 +198,37 @@ test("deleting a map requires typing its name", async ({ page, request }) => {
   expect(list.data.some((m: { name: string }) => m.name === name)).toBe(false);
 });
 
+// Collapsing must not cost anything: the links still navigate, still carry an
+// accessible name once the text is hidden, and the choice survives a reload —
+// a NOC screen that reopens wide on every refresh defeats the point.
+test("the sidebar collapses to icons and stays collapsed", async ({ page }) => {
+  await login(page);
+  const inventory = page.getByRole("link", { name: "Inventory" });
+  await expect(inventory).toBeVisible();
+
+  const aside = page.locator("aside");
+  const wide = (await aside.boundingBox())!.width;
+
+  await page.getByRole("button", { name: "Collapse sidebar" }).click();
+  await expect
+    .poll(async () => (await aside.boundingBox())!.width)
+    .toBeLessThan(wide);
+
+  // Name comes from the sr-only span now that the label is not painted.
+  await expect(inventory).toBeVisible();
+  await expect(page.getByText("NetInv")).toHaveCount(0);
+  await inventory.click();
+  await expect(page.getByRole("heading", { name: "Inventory" })).toBeVisible();
+
+  await page.reload();
+  await expect(page.getByRole("button", { name: "Expand sidebar" })).toBeVisible();
+  const still = (await aside.boundingBox())!.width;
+  expect(still).toBeLessThan(wide);
+
+  await page.getByRole("button", { name: "Expand sidebar" }).click();
+  await expect(page.getByText("NetInv")).toBeVisible();
+});
+
 test("admin sees role-gated nav (Users, Audit, Settings)", async ({ page }) => {
   await login(page);
   await expect(page.getByRole("link", { name: "Users" })).toBeVisible();
