@@ -17,3 +17,8 @@ scratch/
 .idea/
 .vscode/
 *.tsbuildinfo
+*.env
+
+# ...but keep example env templates
+!*.env.example
+!.env.example

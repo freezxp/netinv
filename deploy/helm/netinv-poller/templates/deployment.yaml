@@ -14,6 +14,10 @@ spec:
     spec:
       securityContext:
         runAsNonRoot: true
+        runAsUser: 65532
+        # fsGroup makes the state PVC group-writable by the non-root user so
+        # the poller can create its buffer/identity dir (distroless nonroot).
+        fsGroup: 65532
         seccompProfile: { type: RuntimeDefault }
       containers:
         - name: poller
