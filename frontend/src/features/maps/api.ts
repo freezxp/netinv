@@ -54,6 +54,8 @@ export interface LiveData {
     util_in: number;
     util_out: number;
     state: string;
+    /** What utilisation was divided by; 0 when no capacity is known. */
+    capacity_bps: number;
   }>;
 }
 

@@ -9,6 +9,7 @@ import {
   useDeviceInterfaces,
   useQueryRange,
   useSyncNow,
+  trafficExpr,
 } from "../../api/hooks";
 import {
   Button,
@@ -145,7 +146,7 @@ function InterfacesTab({
   );
   const traffic = useQueryRange(
     focused
-      ? `rate(netinv_if_in_octets_total{device_id="${deviceID}",if_index="${focused.if_index}"}[5m]) * 8 or rate(netinv_if_out_octets_total{device_id="${deviceID}",if_index="${focused.if_index}"}[5m]) * 8`
+      ? trafficExpr(deviceID, focused.if_index)
       : `vector(0)`,
     6,
     120,
@@ -217,7 +218,7 @@ function InterfacesTab({
           result={traffic.data ?? []}
           windowHours={6}
           format={formatBps}
-          label={(m) => (m.__name__?.includes("out") ? "out" : "in")}
+          label={(m) => m.dir ?? "in"}
         />
       </Card>
     </div>

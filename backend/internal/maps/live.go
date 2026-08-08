@@ -31,6 +31,10 @@ type LinkLive struct {
 	UtilIn  float64 `json:"util_in"`
 	UtilOut float64 `json:"util_out"`
 	State   string  `json:"state"` // up | down | partial | nodata
+	// CapacityBPS is what utilisation was divided by, 0 when unknown. Sent so
+	// the UI can distinguish "idle" from "no capacity to measure against" —
+	// both of which otherwise read as 0%.
+	CapacityBPS float64 `json:"capacity_bps"`
 }
 
 // newLiveData starts from empty slices rather than nil. A map with no links
@@ -142,6 +146,7 @@ func (a *LiveAssembler) Live(ctx context.Context, mapID string) (*LiveData, erro
 			k := key{l.AEndpoint.DeviceID, fmt.Sprint(l.AEndpoint.IfIndex)}
 			ll.InBPS, ll.OutBPS = rateIn[k], rateOut[k]
 			cap := linkCapacity(l, speed[k], wan)
+			ll.CapacityBPS = cap
 			if cap > 0 {
 				ll.UtilIn = 100 * ll.InBPS / cap
 				ll.UtilOut = 100 * ll.OutBPS / cap

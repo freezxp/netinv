@@ -237,6 +237,21 @@ interface RangeMatrix {
   };
 }
 
+// trafficExpr returns interface throughput as two labelled series.
+//
+// label_set is load-bearing: multiplying by 8 strips __name__ from both sides,
+// leaving them with identical label sets, and `or` then keeps the right-hand
+// series only where the left has no match — so the out direction disappeared
+// entirely and the chart silently showed in twice. The explicit dir label
+// keeps them distinct.
+export function trafficExpr(deviceID: string, ifIndex: number | string) {
+  const sel = `{device_id="${deviceID}",if_index="${ifIndex}"}`;
+  return (
+    `label_set(rate(netinv_if_in_octets_total${sel}[5m]) * 8, "dir", "in")` +
+    ` or label_set(rate(netinv_if_out_octets_total${sel}[5m]) * 8, "dir", "out")`
+  );
+}
+
 // useQueryRange fetches a MetricsQL range through the scope-guarded proxy.
 export function useQueryRange(expr: string, rangeHours: number, stepS = 60) {
   return useQuery({

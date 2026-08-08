@@ -88,7 +88,10 @@ export function TimeSeries({
               stroke: axisColor,
               grid: { stroke: gridColor },
               ticks: { stroke: gridColor },
-              size: 60,
+              // uPlot's size covers ticks and gap as well as the text, so this
+              // needs headroom over the label width or a rate like
+              // "80.0 Mbps" loses its leading digits.
+              size: 90,
               values: (_u, vals) =>
                 vals.map((v) => (format ? format(v) : String(v))),
             },

@@ -20,7 +20,7 @@ import {
   type MapDefinition,
   type MapLink,
 } from "./api";
-import { applyPositions, nodeTypes, toFlow } from "./canvas";
+import { applyPositions, edgeTypes, nodeTypes, toFlow } from "./canvas";
 import { useDeviceInterfaces, useDevices } from "../../api/hooks";
 import { Button, Card, Input, Select, cx } from "../../components/ui";
 import { ApiError } from "../../api/client";
@@ -164,6 +164,7 @@ export function MapEditorPage() {
             nodes={rfNodes}
             edges={flow.edges}
             nodeTypes={nodeTypes}
+            edgeTypes={edgeTypes}
             onNodesChange={onNodesChange}
             onConnect={onConnect}
             connectionMode={ConnectionMode.Loose}

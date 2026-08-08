@@ -1,17 +1,24 @@
 // Live weathermap viewer (doc 30 §3): published definition + ≤30s live
 // coloring; every viewer shares the server-side cached payload.
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { ReactFlow, Background, ConnectionMode, Controls } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { useMapDef, useMapLive, utilLegend } from "./api";
-import { nodeTypes, toFlow } from "./canvas";
+import { edgeTypes, nodeTypes, toFlow } from "./canvas";
+import { LinkGraph } from "./LinkGraph";
 import { Button } from "../../components/ui";
 
 export function MapViewPage() {
   const { id = "" } = useParams();
   const def = useMapDef(id, "published");
   const live = useMapLive(id, !!def.data);
+
+  const [hover, setHover] = useState<{
+    id: string;
+    x: number;
+    y: number;
+  } | null>(null);
 
   const flow = useMemo(
     () =>
@@ -46,6 +53,14 @@ export function MapViewPage() {
           nodes={flow.nodes}
           edges={flow.edges}
           nodeTypes={nodeTypes}
+          edgeTypes={edgeTypes}
+          onEdgeMouseEnter={(e, edge) =>
+            setHover({ id: edge.id, x: e.clientX, y: e.clientY })
+          }
+          onEdgeMouseMove={(e, edge) =>
+            setHover({ id: edge.id, x: e.clientX, y: e.clientY })
+          }
+          onEdgeMouseLeave={() => setHover(null)}
           // Must match the editor: nodes declare every handle as a source, and
           // under the default Strict mode edge rendering cannot resolve a
           // target handle — so links silently vanish from the published map.
@@ -60,6 +75,14 @@ export function MapViewPage() {
           <Controls showInteractive={false} />
         </ReactFlow>
       </div>
+      {hover && def.data && (
+        <LinkGraph
+          def={def.data.definition}
+          live={live.data}
+          linkID={hover.id}
+          at={{ x: hover.x, y: hover.y }}
+        />
+      )}
     </div>
   );
 }
