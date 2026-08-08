@@ -11,6 +11,12 @@ dev-down:
 compose-app: ## everything in containers, including the six services
 	docker compose --profile app up --build
 
+quickstart: ## one-command full deployment on this host (see docs/32-quickstart.md)
+	./deploy/compose-app/quickstart.sh
+
+quickstart-down: ## stop the quickstart deployment (keeps data)
+	./deploy/compose-app/quickstart.sh down
+
 build:
 	cd backend && go build ./...
 

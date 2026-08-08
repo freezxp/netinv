@@ -4,6 +4,19 @@ Centralized, vendor-neutral network monitoring: SNMP (v2c/v3) collection from Ci
 
 > **Status: Build phase — Sprints 1–19 of 20 complete.** Milestones M1 (collection pipeline), M2 (alerting), M3 (usable product), and M4 (weathermap flagship) are all achieved and verified against the simulated fleet. Remaining before v1.0: real-hardware connector validation, soak/chaos runs on a staging cluster, and the Sprint-20 pilot deployment (needs the production sites). Sprint log: `git log --oneline`.
 
+## Try it in one command
+
+Docker + Compose v2 is all you need — no Go, Node, or database to install:
+
+```bash
+git clone https://github.com/freezxp/netinv.git && cd netinv
+./deploy/compose-app/quickstart.sh
+```
+
+It generates secrets, builds the images, starts the whole platform (six
+services + UI + a bundled data tier and SNMP simulator), and prints your login.
+Open **http://localhost:8090**. Full guide: [docs/32-quickstart.md](docs/32-quickstart.md).
+
 ## What it does (v1)
 
 - **Collects** interface traffic, errors/discards, device health (CPU/memory/temp/PSU/optics), ICMP availability/latency, and inventory metadata from network devices over SNMP v2c/v3.

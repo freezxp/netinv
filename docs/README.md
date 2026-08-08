@@ -35,6 +35,7 @@
 | 29 | [Future Enhancements](29-future-enhancements.md) | Wireless, flow, multi-tenant SaaS, HA/DR sequencing | draft |
 | 30 | [UI Design](30-ui-design.md) | Every page: layout, components, states, dark mode | draft |
 | 31 | [Pilot & Production Runbook](31-pilot-runbook.md) | Operator checklist: install, enroll, validate, back up, widen | draft |
+| 32 | [Quick Start (Docker Compose)](32-quickstart.md) | One-command single-host test deployment | draft |
 
 ## Role guides
 

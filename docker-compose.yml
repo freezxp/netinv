@@ -7,7 +7,9 @@ services:
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: netinv
-      POSTGRES_PASSWORD: netinv-dev # dev only; never in deployed environments
+      # Defaults to netinv-dev for `make dev`; the deploy overlay's .env
+      # overrides both this and the app-side DSN so they always match.
+      POSTGRES_PASSWORD: ${PG_PASSWORD:-netinv-dev}
       POSTGRES_DB: netinv
     ports: ["5432:5432"]
     volumes: [pgdata:/var/lib/postgresql/data]
@@ -30,7 +32,7 @@ services:
     image: rabbitmq:3.13-management-alpine
     environment:
       RABBITMQ_DEFAULT_USER: netinv
-      RABBITMQ_DEFAULT_PASS: netinv-dev
+      RABBITMQ_DEFAULT_PASS: ${RABBIT_PASSWORD:-netinv-dev}
     ports: ["5672:5672", "15672:15672"]
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
