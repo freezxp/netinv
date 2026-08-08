@@ -2,7 +2,7 @@
 // coloring; every viewer shares the server-side cached payload.
 import { useMemo } from "react";
 import { Link, useParams } from "react-router-dom";
-import { ReactFlow, Background, Controls } from "@xyflow/react";
+import { ReactFlow, Background, ConnectionMode, Controls } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { useMapDef, useMapLive, utilLegend } from "./api";
 import { nodeTypes, toFlow } from "./canvas";
@@ -46,6 +46,10 @@ export function MapViewPage() {
           nodes={flow.nodes}
           edges={flow.edges}
           nodeTypes={nodeTypes}
+          // Must match the editor: nodes declare every handle as a source, and
+          // under the default Strict mode edge rendering cannot resolve a
+          // target handle — so links silently vanish from the published map.
+          connectionMode={ConnectionMode.Loose}
           fitView
           nodesDraggable={false}
           nodesConnectable={false}
