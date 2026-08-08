@@ -94,27 +94,20 @@ func (r *DiscoveryRepo) UpsertFound(ctx context.Context, ruleID string,
 		// ignored entry — an operator's decision sticks until they change it.
 		if _, err := r.Pool.Exec(ctx, `
 			INSERT INTO platform.discovered_devices
-				(id, rule_id, ip, sys_object_id, sys_descr, matched_connector_id,
-				 responding_credential_id, state)
-			VALUES ($1,$2,$3::inet,nullif($4,''),nullif($5,''),nullif($6,''),$7,'pending')
+				(id, rule_id, ip, sys_name, sys_object_id, sys_descr,
+				 matched_connector_id, responding_credential_id, state)
+			VALUES ($1,$2,$3::inet,nullif($4,''),nullif($5,''),nullif($6,''),
+			        nullif($7,''),$8,'pending')
 			ON CONFLICT (rule_id, ip) DO UPDATE SET
+				sys_name = excluded.sys_name,
 				sys_object_id = excluded.sys_object_id,
 				sys_descr = excluded.sys_descr,
 				matched_connector_id = excluded.matched_connector_id,
 				responding_credential_id = excluded.responding_credential_id,
 				seen_last_at = now()`,
-			id.New("dd"), ruleID, h.IP, h.SysObjectID, h.SysDescr, connector,
-			h.CredentialID); err != nil {
+			id.New("dd"), ruleID, h.IP, h.SysName, h.SysObjectID, h.SysDescr,
+			connector, h.CredentialID); err != nil {
 			return n, errx.Wrap(errx.KindTransient, err, "upsert discovered device")
-		}
-		// sysName lives only in the description column set; keep it visible by
-		// storing it alongside when the device supplied one.
-		if h.SysName != "" {
-			_, _ = r.Pool.Exec(ctx, `
-				UPDATE platform.discovered_devices SET sys_descr =
-					CASE WHEN coalesce(sys_descr,'') = '' THEN $3
-					     ELSE sys_descr END
-				WHERE rule_id=$1 AND ip=$2::inet`, ruleID, h.IP, h.SysName)
 		}
 		n++
 	}
@@ -126,7 +119,8 @@ func (r *DiscoveryRepo) UpsertFound(ctx context.Context, ruleID string,
 func (r *DiscoveryRepo) ListFound(ctx context.Context, state string) ([]app.Discovered, error) {
 	q := `
 		SELECT dd.id, dd.rule_id, dr.site_id, host(dd.ip),
-		       coalesce(dd.sys_descr,''), coalesce(dd.sys_object_id,''),
+		       coalesce(dd.sys_name,''), coalesce(dd.sys_descr,''),
+		       coalesce(dd.sys_object_id,''),
 		       coalesce(dd.matched_connector_id,''),
 		       coalesce(dd.responding_credential_id,''), dd.state::text,
 		       EXISTS(SELECT 1 FROM inventory.devices d
@@ -149,9 +143,9 @@ func (r *DiscoveryRepo) ListFound(ctx context.Context, state string) ([]app.Disc
 	for rows.Next() {
 		var d app.Discovered
 		var seen time.Time
-		if err := rows.Scan(&d.ID, &d.RuleID, &d.SiteID, &d.IP, &d.SysDescr,
-			&d.SysObjectID, &d.ConnectorID, &d.CredentialID, &d.State,
-			&d.Managed, &seen); err != nil {
+		if err := rows.Scan(&d.ID, &d.RuleID, &d.SiteID, &d.IP, &d.SysName,
+			&d.SysDescr, &d.SysObjectID, &d.ConnectorID, &d.CredentialID,
+			&d.State, &d.Managed, &seen); err != nil {
 			return nil, err
 		}
 		d.SeenLastAt = seen.UTC().Format(time.RFC3339)

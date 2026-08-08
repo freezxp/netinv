@@ -190,8 +190,15 @@ export function InventoryPage() {
                 </td>
                 <td className="px-4 py-2 font-medium">
                   <Link to={`/devices/${d.id}`} className="hover:text-sky-500">
-                    {d.name}
+                    {d.sys_name || d.name}
                   </Link>
+                  {/* The device's own sysName leads; the operator's label is
+                      kept visible when it differs so neither is lost. */}
+                  {d.sys_name && d.sys_name !== d.name && (
+                    <span className="ml-2 text-xs font-normal text-slate-500">
+                      {d.name}
+                    </span>
+                  )}
                 </td>
                 <td className="mono px-4 py-2">{d.mgmt_ip}</td>
                 <td className="px-4 py-2">{siteName(d.site_id)}</td>
