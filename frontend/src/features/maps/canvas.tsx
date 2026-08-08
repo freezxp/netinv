@@ -3,6 +3,7 @@ import { Handle, Position, type Edge, type Node as RFNode } from "@xyflow/react"
 import type { LiveData, MapDefinition, MapLink, MapNode } from "./api";
 import { utilColor } from "./api";
 import { formatBps } from "../../lib/format";
+import { cx } from "../../components/ui";
 
 const nodeStateColor: Record<string, string> = {
   up: "var(--status-ok)",
@@ -36,10 +37,30 @@ export function DeviceNode({
   data: DeviceNodeData;
   isConnectable?: boolean;
 }) {
+  // Nodes with no device behind them never take a live state, so a solid
+  // status border would be a lie — a caption is not "unknown", it is simply
+  // not monitored. Dashed and muted says that without a legend.
+  const plain = data.kind !== "device";
+  const caption = data.kind === "label";
+
   return (
     <div
-      className="rounded-md border-2 bg-white px-3 py-1.5 text-xs font-medium shadow-sm dark:bg-slate-900 dark:text-slate-200"
-      style={{ borderColor: nodeStateColor[data.state] ?? "var(--status-muted)" }}
+      className={cx(
+        "px-3 py-1.5 text-xs font-medium",
+        caption
+          ? "text-slate-600 dark:text-slate-300"
+          : "rounded-md border-2 bg-white shadow-sm dark:bg-slate-900 dark:text-slate-200",
+        plain && !caption && "border-dashed",
+      )}
+      style={
+        caption
+          ? undefined
+          : {
+              borderColor: plain
+                ? "var(--status-muted)"
+                : (nodeStateColor[data.state] ?? "var(--status-muted)"),
+            }
+      }
     >
       {/* Handles stay mounted in the read-only viewer — edges anchor to them —
           but are invisible there, so a published map shows no editing dots. */}

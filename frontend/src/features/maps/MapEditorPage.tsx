@@ -19,6 +19,7 @@ import {
   useSuggestions,
   type MapDefinition,
   type MapLink,
+  type MapNode,
 } from "./api";
 import { applyPositions, edgeTypes, nodeTypes, toFlow } from "./canvas";
 import { useDeviceInterfaces, useDevices } from "../../api/hooks";
@@ -35,6 +36,7 @@ export function MapEditorPage() {
   const publish = usePublish(id);
   const [def, setDef] = useState<MapDefinition | null>(null);
   const [selectedLink, setSelectedLink] = useState<string | null>(null);
+  const [selectedNode, setSelectedNode] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
   const undoStack = useRef<MapDefinition[]>([]);
 
@@ -142,10 +144,20 @@ export function MapEditorPage() {
         <span
           className={cx(
             "text-xs",
-            dirty || save.isPending ? "text-amber-500" : "text-slate-500",
+            save.isError
+              ? "text-red-500"
+              : dirty || save.isPending
+                ? "text-amber-500"
+                : "text-slate-500",
           )}
         >
-          {save.isPending ? "saving…" : dirty ? "unsaved changes" : "draft saved"}
+          {save.isError
+            ? "not saved"
+            : save.isPending
+              ? "saving…"
+              : dirty
+                ? "unsaved changes"
+                : "draft saved"}
         </span>
         <div className="flex-1" />
         <Link to={`/maps/${id}`}>
@@ -158,6 +170,13 @@ export function MapEditorPage() {
       {publishError && (
         <div className="mb-2 text-sm text-red-500">{publishError}</div>
       )}
+      {/* Autosave runs on a timer, so a rejected save has no click to attach an
+          error to — without this the map would just quietly stop persisting. */}
+      {save.isError && (
+        <div className="mb-2 text-sm text-red-500">
+          Draft not saved: {(save.error as Error).message}
+        </div>
+      )}
       <div className="flex min-h-0 flex-1 gap-3">
         <div className="min-h-0 flex-1 rounded-lg border border-slate-200 dark:border-slate-800">
           <ReactFlow
@@ -168,7 +187,14 @@ export function MapEditorPage() {
             onNodesChange={onNodesChange}
             onConnect={onConnect}
             connectionMode={ConnectionMode.Loose}
-            onEdgeClick={(_e, edge) => setSelectedLink(edge.id)}
+            onEdgeClick={(_e, edge) => {
+              setSelectedLink(edge.id);
+              setSelectedNode(null);
+            }}
+            onNodeClick={(_e, node) => {
+              setSelectedNode(node.id);
+              setSelectedLink(null);
+            }}
             onEdgesChange={(changes) => {
               const removed = changes.filter((c) => c.type === "remove");
               if (removed.length) {
@@ -192,6 +218,8 @@ export function MapEditorPage() {
           change={change}
           mapID={id}
           selectedLink={selectedLink}
+          selectedNode={selectedNode}
+          onNodeRemoved={() => setSelectedNode(null)}
         />
       </div>
     </div>
@@ -203,15 +231,27 @@ function SidePanel({
   change,
   mapID,
   selectedLink,
+  selectedNode,
+  onNodeRemoved,
 }: {
   def: MapDefinition;
   change: (fn: (d: MapDefinition) => MapDefinition) => void;
   mapID: string;
   selectedLink: string | null;
+  selectedNode: string | null;
+  onNodeRemoved: () => void;
 }) {
   const devices = useDevices({});
   const suggestions = useSuggestions(mapID);
   const link = def.links.find((l) => l.id === selectedLink);
+  const node = def.nodes.find((n) => n.id === selectedNode);
+
+  // New nodes land on a loose grid so they never stack exactly on top of an
+  // existing one and vanish.
+  const nextSpot = (d: MapDefinition) => ({
+    x: 80 + (d.nodes.length % 5) * 160,
+    y: 80 + Math.floor(d.nodes.length / 5) * 120,
+  });
 
   const addDevice = (deviceID: string) => {
     const dev = devices.data?.data.find((d) => d.id === deviceID);
@@ -225,12 +265,20 @@ function SidePanel({
           kind: "device",
           device_id: deviceID,
           label: dev.name,
-          x: 80 + (d.nodes.length % 5) * 160,
-          y: 80 + Math.floor(d.nodes.length / 5) * 120,
+          ...nextSpot(d),
         },
       ],
     }));
   };
+
+  // Nodes that stand for something NetInv does not poll — an ISP, a customer
+  // site, a plain caption (FR-MAP-02). They carry no device binding, so they
+  // never take a live state and render muted.
+  const addPlain = (kind: MapNode["kind"], label: string) =>
+    change((d) => ({
+      ...d,
+      nodes: [...d.nodes, { id: genId("n"), kind, label, ...nextSpot(d) }],
+    }));
 
   return (
     <div className="flex w-72 shrink-0 flex-col gap-3 overflow-auto">
@@ -248,7 +296,32 @@ function SidePanel({
           draw a link, then bind its interface below. Delete removes selected
           items.
         </div>
+        <div className="mt-3 border-t border-slate-200 pt-3 dark:border-slate-800">
+          <div className="mb-1.5 text-xs text-slate-500">
+            Or place something NetInv doesn't poll:
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="ghost" onClick={() => addPlain("cloud", "Internet")}>
+              ☁ Cloud
+            </Button>
+            <Button variant="ghost" onClick={() => addPlain("site", "Site")}>
+              ▣ Site
+            </Button>
+            <Button variant="ghost" onClick={() => addPlain("label", "Label")}>
+              Label
+            </Button>
+          </div>
+        </div>
       </Card>
+
+      {node && (
+        <NodePanel
+          key={node.id}
+          node={node}
+          change={change}
+          onRemoved={onNodeRemoved}
+        />
+      )}
 
       {link && (
         <LinkPanel key={link.id} def={def} link={link} change={change} />
@@ -268,6 +341,62 @@ function SidePanel({
         </div>
       </Card>
     </div>
+  );
+}
+
+// Renaming matters most for plain nodes, where the label is the entire
+// content — an "Internet" cloud called "Label" is useless.
+function NodePanel({
+  node,
+  change,
+  onRemoved,
+}: {
+  node: MapNode;
+  change: (fn: (d: MapDefinition) => MapDefinition) => void;
+  onRemoved: () => void;
+}) {
+  const kindWord =
+    node.kind === "device" ? "Device" : node.kind === "cloud" ? "Cloud"
+      : node.kind === "site" ? "Site" : "Label";
+  return (
+    <Card title={`${kindWord} node`}>
+      <label className="flex flex-col gap-1">
+        <span className="text-xs text-slate-500">
+          {node.kind === "device"
+            ? "Label on the map — the device itself is not renamed"
+            : "Label"}
+        </span>
+        <Input
+          value={node.label ?? ""}
+          onChange={(e) =>
+            change((d) => ({
+              ...d,
+              nodes: d.nodes.map((n) =>
+                n.id === node.id ? { ...n, label: e.target.value } : n,
+              ),
+            }))
+          }
+        />
+      </label>
+      <div className="mt-3 flex justify-end">
+        <Button
+          variant="danger"
+          onClick={() => {
+            change((d) => ({
+              ...d,
+              nodes: d.nodes.filter((n) => n.id !== node.id),
+              // Links dangling off a removed node would never render.
+              links: d.links.filter(
+                (l) => l.from !== node.id && l.to !== node.id,
+              ),
+            }));
+            onRemoved();
+          }}
+        >
+          Remove from map
+        </Button>
+      </div>
+    </Card>
   );
 }
 

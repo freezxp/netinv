@@ -158,8 +158,54 @@ func (s *Store) Load(ctx context.Context, mapID, which string) (*Definition, int
 	return &def, rev, nil
 }
 
+// NodeKinds are the placeable node types (FR-MAP-02). Only "device" carries a
+// live state; the rest stand for things NetInv does not poll.
+var NodeKinds = map[string]bool{
+	"device": true, "site": true, "cloud": true, "label": true,
+}
+
+// Validate rejects a document the renderer could not draw. Cheap to run and it
+// keeps a typo in a hand-written or generated definition (FR-MAP-07 import)
+// from being stored and then silently skipped.
+func (d *Definition) Validate() error {
+	ids := make(map[string]bool, len(d.Nodes))
+	for _, n := range d.Nodes {
+		if n.ID == "" {
+			return errx.New(errx.KindInvalid, "every node needs an id")
+		}
+		if ids[n.ID] {
+			return errx.New(errx.KindInvalid, "duplicate node id %q", n.ID)
+		}
+		ids[n.ID] = true
+		if !NodeKinds[n.Kind] {
+			return errx.New(errx.KindInvalid,
+				"node %q has unknown kind %q — expected device, site, cloud or label",
+				n.ID, n.Kind)
+		}
+		if n.Kind == "device" && n.DeviceID == "" {
+			return errx.New(errx.KindInvalid, "device node %q has no device", n.ID)
+		}
+	}
+	for _, l := range d.Links {
+		if l.ID == "" {
+			return errx.New(errx.KindInvalid, "every link needs an id")
+		}
+		// A link to a node that is not on the map cannot be drawn, and the
+		// endpoint would silently disappear rather than error.
+		if !ids[l.From] || !ids[l.To] {
+			return errx.New(errx.KindInvalid,
+				"link %q joins a node that is not on the map", l.ID)
+		}
+	}
+	return nil
+}
+
 // SaveDraft overwrites the current draft revision (autosave, FR-MAP-02).
 func (s *Store) SaveDraft(ctx context.Context, mapID string, def *Definition, savedBy string) error {
+	def.normalize()
+	if err := def.Validate(); err != nil {
+		return err
+	}
 	def.Schema = "netinv.map/1"
 	raw, err := json.Marshal(def)
 	if err != nil {

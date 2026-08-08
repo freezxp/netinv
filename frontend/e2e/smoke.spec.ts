@@ -277,6 +277,50 @@ test("alert rules can be created, edited and deleted", async ({ page }) => {
   await expect(page.getByText(name)).toHaveCount(0);
 });
 
+// FR-MAP-02 asks for site/cloud/label nodes alongside devices: the things a
+// map needs to make sense that NetInv does not poll — an ISP, a customer site,
+// a caption. Needs no fleet, so it runs anywhere.
+test("plain nodes can be placed, renamed and removed", async ({
+  page,
+  request,
+}) => {
+  await login(page);
+  await page.getByRole("link", { name: "Weathermaps" }).click();
+  const name = `e2e-nodes-${Date.now()}`;
+  await page.getByPlaceholder("New map name").fill(name);
+  await page.getByRole("button", { name: "Create" }).click();
+
+  const card = page
+    .locator("div")
+    .filter({ hasText: name })
+    .filter({ has: page.getByRole("button", { name: "Edit" }) })
+    .last();
+  await card.getByRole("button", { name: "Edit" }).click();
+  await expect(page.getByText("Add device node")).toBeVisible();
+
+  await page.getByRole("button", { name: "☁ Cloud" }).click();
+  await page.getByRole("button", { name: "▣ Site" }).click();
+  await page.getByRole("button", { name: "Label", exact: true }).click();
+  await expect(page.locator(".react-flow__node")).toHaveCount(3);
+
+  // Renaming is what makes a plain node useful — a cloud called "Label" is not.
+  await page.locator(".react-flow__node").filter({ hasText: "Internet" }).click();
+  await expect(page.getByText("Cloud node")).toBeVisible();
+  await page.locator('input[value="Internet"]').fill("ISP");
+  await expect(
+    page.locator(".react-flow__node").filter({ hasText: "ISP" }),
+  ).toBeVisible();
+
+  // The draft must survive the server's document validation.
+  await expect(page.getByText("draft saved")).toBeVisible({ timeout: 10_000 });
+
+  await page.getByRole("button", { name: "Remove from map" }).click();
+  await expect(page.locator(".react-flow__node")).toHaveCount(2);
+
+  const id = page.url().match(/\/maps\/([^/]+)/)?.[1];
+  if (id) await deleteMap(request, id);
+});
+
 test("admin sees role-gated nav (Users, Audit, Settings)", async ({ page }) => {
   await login(page);
   await expect(page.getByRole("link", { name: "Users" })).toBeVisible();

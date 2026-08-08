@@ -88,7 +88,7 @@ Requirement IDs: `FR-<MODULE>-<nn>`. Every requirement is testable; acceptance c
 ## MAP — Weathermap (flagship; UI detail in doc 30 §3)
 
 - **FR-MAP-01** Multiple named maps with per-role visibility; CRUD restricted to Operator+.
-- **FR-MAP-02** Editor: add/position device nodes, site/cloud/label nodes; snap grid; pan/zoom; undo/redo (≥50 steps); autosave drafts, explicit publish.
+- **FR-MAP-02** Editor: add/position device nodes, site/cloud/label nodes; snap grid; pan/zoom; undo/redo (≥50 steps); autosave drafts, explicit publish. Site/cloud/label nodes stand for things NetInv does not poll (an ISP, a customer site, a caption): they carry no device binding, never take a live state, and render muted and dashed so they are not mistaken for a device reporting `unknown`. Any node's map label is editable and does not rename the device behind it (sync owns that, doc 11 §3); removing a node also removes links that would otherwise dangle. Saved documents are validated server-side — node kind, unique ids, device nodes carry a device, links join nodes that exist — so a typo in a hand-written or imported definition (FR-MAP-07) is refused rather than stored and silently skipped by the renderer.
 - **FR-MAP-03** Links bind to one or two directed interface endpoints; rendered as split-direction arrows colored by live utilization on the classic scale (0–1-10-25-40-55-70-85-100%); link labels show bps in/out.
 - **FR-MAP-04** Device nodes colored by state: up (green), degraded/active warning (amber), down/critical (red), unreachable (grey), unpolled (blue outline).
 - **FR-MAP-05** Live data refresh ≤ 30 s via the map-data endpoint (doc 09 §maps); clicking a node/link opens device/interface detail.

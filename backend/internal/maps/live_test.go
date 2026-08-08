@@ -131,3 +131,53 @@ func TestLinkCapacitySingleBoundEndpoint(t *testing.T) {
 		t.Errorf("got %v, want 300e6", got)
 	}
 }
+
+// ---- definition validation (FR-MAP-02) ----
+
+func TestValidateAcceptsPlainNodes(t *testing.T) {
+	d := &Definition{Nodes: []Node{
+		{ID: "n1", Kind: "device", DeviceID: "d1"},
+		{ID: "n2", Kind: "cloud", Label: "Internet"},
+		{ID: "n3", Kind: "site", Label: "Branch"},
+		{ID: "n4", Kind: "label", Label: "core"},
+	}, Links: []Link{{ID: "l1", From: "n1", To: "n2"}}}
+	if err := d.Validate(); err != nil {
+		t.Fatalf("a valid map with plain nodes was rejected: %v", err)
+	}
+}
+
+func TestValidateRejectsBrokenDocuments(t *testing.T) {
+	for name, d := range map[string]*Definition{
+		"unknown kind":          {Nodes: []Node{{ID: "n1", Kind: "rectangle"}}},
+		"device with no device": {Nodes: []Node{{ID: "n1", Kind: "device"}}},
+		"node with no id":       {Nodes: []Node{{Kind: "cloud"}}},
+		"duplicate ids": {Nodes: []Node{
+			{ID: "n1", Kind: "cloud"}, {ID: "n1", Kind: "cloud"},
+		}},
+		// A link to a node that isn't there renders as nothing at all.
+		"dangling link": {
+			Nodes: []Node{{ID: "n1", Kind: "cloud"}},
+			Links: []Link{{ID: "l1", From: "n1", To: "ghost"}},
+		},
+		"link with no id": {
+			Nodes: []Node{{ID: "n1", Kind: "cloud"}, {ID: "n2", Kind: "cloud"}},
+			Links: []Link{{From: "n1", To: "n2"}},
+		},
+	} {
+		if err := d.Validate(); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+}
+
+// Plain nodes carry no device, so the live assembler must leave them alone
+// rather than report them as an unreachable device.
+func TestPlainNodesTakeNoDeviceState(t *testing.T) {
+	d := &Definition{Nodes: []Node{{ID: "n1", Kind: "cloud", Label: "Internet"}}}
+	if err := d.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if d.Nodes[0].DeviceID != "" {
+		t.Error("a cloud node acquired a device binding")
+	}
+}
