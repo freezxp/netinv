@@ -95,7 +95,7 @@ Go composition: `type cisco struct { generic.Base }` — override `CollectHealth
 
 | Connector | sysObjectID prefix | Health sources (beyond IF-MIB) | Notes |
 |---|---|---|---|
-| `generic` | * (fallback) | **UCD-SNMP-MIB** (CPU idle→busy, load average, memory with buffers/cache excluded) and **LM-SENSORS** temperatures — every net-snmp agent exposes these, so Linux-based appliances and servers get health for free | matches anything, lowest score |
+| `generic` | * (fallback) | **UCD-SNMP-MIB** (CPU idle→busy, load average, memory with buffers/cache excluded) and **LM-SENSORS** temperatures — every net-snmp agent exposes these, so Linux-based appliances and servers get health for free | matches anything, lowest score. **Interface speed reads ifHighSpeed first, then ifSpeed.** ifHighSpeed is preferred because ifSpeed is a 32-bit gauge that saturates around 4.29 Gbit/s, but agents that leave ifHighSpeed at 0 are common — a Ruckus R710 reports 1000000000 in ifSpeed and 0 in ifHighSpeed on every port. Reading only ifHighSpeed published a speed of 0, and a zero denominator pins utilization at 0% however busy the link is |
 | `cisco-ios` | .1.3.6.1.4.1.9 | CISCO-PROCESS-MIB (cpmCPUTotal5minRev), CISCO-MEMORY-POOL / CISCO-ENHANCED-MEMPOOL, CISCO-ENVMON + CISCO-ENTITY-SENSOR (temp/fan/PSU), CISCO-ENTITY-FRU-CONTROL, CISCO-STACK, optics via entSensor | covers IOS/IOS-XE; NX-OS quirks via sub-profile field in `attrs` |
 | `juniper-junos` | .1.3.6.1.4.1.2636 | JUNIPER-MIB jnxOperatingTable (CPU/mem/temp per FRU), jnxFruTable (PSU/fan), JUNIPER-DOM-MIB (optics dBm) | |
 | `huawei-vrp` | .1.3.6.1.4.1.2011 | HUAWEI-ENTITY-EXTENT-MIB (hwEntityCpuUsage/MemUsage/Temperature), HUAWEI-ENERGY, hwOpticalModuleInfo | |

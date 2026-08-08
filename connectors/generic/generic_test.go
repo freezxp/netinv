@@ -126,3 +126,41 @@ func TestRegistryMatch(t *testing.T) {
 		t.Errorf("generic score = %d, want universal floor 1", s)
 	}
 }
+
+// ifHighSpeed is preferred, but an agent that leaves it at zero and populates
+// only ifSpeed must still yield a speed. A Ruckus R710 does exactly that on
+// every port, and a zero denominator pins utilisation at 0% however busy the
+// link is.
+func TestSpeedFallsBackToIfSpeedWhenHighSpeedIsZero(t *testing.T) {
+	sess := &fakeSession{data: map[string]any{
+		".1.3.6.1.2.1.2.2.1.5.14":     uint64(1000000000), // ifSpeed
+		".1.3.6.1.2.1.31.1.1.1.15.14": uint64(0),          // ifHighSpeed unset
+	}}
+	samples, err := (&Base{}).CollectInterfaces(context.Background(), sess)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v, ok := find(samples, "netinv_if_speed_bps", "14")
+	if !ok {
+		t.Fatal("no speed reported at all")
+	}
+	if v != 1e9 {
+		t.Errorf("speed = %v, want 1e9 from ifSpeed", v)
+	}
+}
+
+// When both are present ifHighSpeed wins: ifSpeed is a 32-bit gauge that
+// saturates above ~4.29 Gbit/s, so on a 10G port it reports the ceiling.
+func TestSpeedPrefersIfHighSpeedOverSaturatedIfSpeed(t *testing.T) {
+	sess := &fakeSession{data: map[string]any{
+		".1.3.6.1.2.1.2.2.1.5.7":     uint64(4294967295), // saturated
+		".1.3.6.1.2.1.31.1.1.1.15.7": uint64(10000),      // 10 Gbit/s
+	}}
+	samples, err := (&Base{}).CollectInterfaces(context.Background(), sess)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v, ok := find(samples, "netinv_if_speed_bps", "7"); !ok || v != 1e10 {
+		t.Errorf("speed = %v (ok=%v), want 1e10 from ifHighSpeed", v, ok)
+	}
+}

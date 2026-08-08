@@ -11,17 +11,17 @@ import (
 // during pilot validation — doc 31 §6.
 func udmProSession() *fakeSession {
 	return &fakeSession{data: map[string]any{
-		oidMemTotalReal: uint64(4040828), // KB
-		oidMemAvailReal: uint64(244044),
-		oidMemBuffer:    uint64(378528),
-		oidMemCached:    uint64(1307192),
-		oidSsCpuIdle:    uint64(80),
-		oidLaLoad + ".1": "1.41",
-		oidLaLoad + ".2": "1.24",
-		oidLaLoad + ".3": "1.02",
+		oidMemTotalReal:       uint64(4040828), // KB
+		oidMemAvailReal:       uint64(244044),
+		oidMemBuffer:          uint64(378528),
+		oidMemCached:          uint64(1307192),
+		oidSsCpuIdle:          uint64(80),
+		oidLaLoad + ".1":      "1.41",
+		oidLaLoad + ".2":      "1.24",
+		oidLaLoad + ".3":      "1.02",
 		oidLmTempName + ".1":  "temp-CPU",
 		oidLmTempName + ".2":  "temp-Local",
-		oidLmTempName + ".3":  "Board Temp", // unpopulated slot, reads 0
+		oidLmTempName + ".3":  "Board Temp",  // unpopulated slot, reads 0
 		oidLmTempValue + ".1": uint64(50000), // millidegrees
 		oidLmTempValue + ".2": uint64(68000),
 		oidLmTempValue + ".3": uint64(0),

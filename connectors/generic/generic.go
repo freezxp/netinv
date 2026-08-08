@@ -127,19 +127,38 @@ func (b *Base) CollectInterfaces(ctx context.Context, s sdk.Session) ([]sdk.Samp
 			})
 		}
 	}
-	// ifHighSpeed (Mbps) → speed label metric for utilization math.
-	speedPrefix := oidIfXTable + ".15."
-	for oid, v := range ifX {
-		if strings.HasPrefix(oid, speedPrefix) {
-			if val, ok := toFloat(v.Value); ok {
-				samples = append(samples, sdk.Sample{
-					Name:   "netinv_if_speed_bps",
-					Labels: map[string]string{"if_index": strings.TrimPrefix(oid, speedPrefix)},
-					Value:  val * 1e6,
-					At:     now,
-				})
+	// Interface speed, the denominator every utilisation figure divides by.
+	//
+	// ifHighSpeed (Mbit/s) is preferred because ifSpeed is a 32-bit gauge that
+	// saturates above ~4.29 Gbit/s, but plenty of agents leave ifHighSpeed at
+	// zero and populate only ifSpeed — a Ruckus R710 reports 1000000000 in
+	// ifSpeed and 0 in ifHighSpeed for every port. Reading ifHighSpeed alone
+	// published a speed of 0 for such devices, and a zero denominator means
+	// utilisation silently stays at 0% however busy the link is.
+	speed := map[string]float64{}
+	lowPrefix := oidIfTable + ".5."
+	for oid, v := range ifT {
+		if strings.HasPrefix(oid, lowPrefix) {
+			if val, ok := toFloat(v.Value); ok && val > 0 {
+				speed[strings.TrimPrefix(oid, lowPrefix)] = val
 			}
 		}
+	}
+	highPrefix := oidIfXTable + ".15."
+	for oid, v := range ifX {
+		if strings.HasPrefix(oid, highPrefix) {
+			if val, ok := toFloat(v.Value); ok && val > 0 {
+				speed[strings.TrimPrefix(oid, highPrefix)] = val * 1e6
+			}
+		}
+	}
+	for ifIndex, val := range speed {
+		samples = append(samples, sdk.Sample{
+			Name:   "netinv_if_speed_bps",
+			Labels: map[string]string{"if_index": ifIndex},
+			Value:  val,
+			At:     now,
+		})
 	}
 	return samples, nil
 }

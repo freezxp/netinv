@@ -16,12 +16,12 @@ import (
 // extend it). Everything here is best-effort: a device that doesn't expose a
 // subtree simply contributes no samples, never an error.
 const (
-	oidLaLoad       = ".1.3.6.1.4.1.2021.10.1.3"     // laLoad: 1/5/15-min load, DisplayString
-	oidMemTotalReal = ".1.3.6.1.4.1.2021.4.5.0"      // KB
-	oidMemAvailReal = ".1.3.6.1.4.1.2021.4.6.0"      // KB (free, excl. buffers/cache)
-	oidMemBuffer    = ".1.3.6.1.4.1.2021.4.14.0"     // KB
-	oidMemCached    = ".1.3.6.1.4.1.2021.4.15.0"     // KB
-	oidSsCpuIdle    = ".1.3.6.1.4.1.2021.11.11.0"    // percent idle
+	oidLaLoad       = ".1.3.6.1.4.1.2021.10.1.3"      // laLoad: 1/5/15-min load, DisplayString
+	oidMemTotalReal = ".1.3.6.1.4.1.2021.4.5.0"       // KB
+	oidMemAvailReal = ".1.3.6.1.4.1.2021.4.6.0"       // KB (free, excl. buffers/cache)
+	oidMemBuffer    = ".1.3.6.1.4.1.2021.4.14.0"      // KB
+	oidMemCached    = ".1.3.6.1.4.1.2021.4.15.0"      // KB
+	oidSsCpuIdle    = ".1.3.6.1.4.1.2021.11.11.0"     // percent idle
 	oidLmTempName   = ".1.3.6.1.4.1.2021.13.16.2.1.2" // lmTempSensorsDevice
 	oidLmTempValue  = ".1.3.6.1.4.1.2021.13.16.2.1.3" // millidegrees C
 )
