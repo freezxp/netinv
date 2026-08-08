@@ -203,7 +203,9 @@ func (s *Service) heatmap(ctx context.Context) (any, error) {
 		return nil, errx.Wrap(errx.KindTransient, err, "heatmap")
 	}
 	defer rows.Close()
-	var out []map[string]any
+	// Non-nil so an empty estate serializes as [] rather than null — clients
+	// iterate list payloads directly (FR-API-02).
+	out := []map[string]any{}
 	for rows.Next() {
 		var id, name, site, status string
 		var worst int

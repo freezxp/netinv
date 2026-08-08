@@ -60,5 +60,18 @@ export async function api<T>(
       err?.trace_id,
     );
   }
-  return body as T;
+  return normalizeLists(body) as T;
+}
+
+// List payloads are always arrays for consumers. Go marshals an empty slice
+// that was never appended to as `null`, so a brand-new install could hand the
+// UI `{"data": null}` and crash any component that iterates it. The API is
+// fixed to emit `[]`, and this keeps older/other servers from breaking the UI.
+function normalizeLists(body: unknown): unknown {
+  if (body && typeof body === "object" && !Array.isArray(body)) {
+    const obj = body as Record<string, unknown>;
+    if ("data" in obj && obj.data === null) obj.data = [];
+    if ("events" in obj && obj.events === null) obj.events = [];
+  }
+  return body;
 }

@@ -230,7 +230,7 @@ func (s *Store) Events(ctx context.Context, instID string) ([]map[string]any, er
 		return nil, errx.Wrap(errx.KindTransient, err, "alert events")
 	}
 	defer rows.Close()
-	var out []map[string]any
+	out := []map[string]any{}
 	for rows.Next() {
 		var event, actor string
 		var detail []byte

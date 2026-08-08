@@ -166,7 +166,7 @@ func (h *Handler) rules(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer rows.Close()
-	var out []map[string]any
+	out := []map[string]any{}
 	for rows.Next() {
 		var id, name, kind, sev, expr string
 		var enabled, builtin bool
@@ -209,7 +209,7 @@ func (h *Handler) silences(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer rows.Close()
-	var out []map[string]any
+	out := []map[string]any{}
 	for rows.Next() {
 		var sid, reason, createdBy string
 		var scope map[string]any

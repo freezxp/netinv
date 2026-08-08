@@ -29,7 +29,7 @@ func (r *ChannelRepo) EnabledChannels(ctx context.Context) ([]app.Channel, error
 		return nil, errx.Wrap(errx.KindTransient, err, "channels")
 	}
 	defer rows.Close()
-	var out []app.Channel
+	out := []app.Channel{}
 	for rows.Next() {
 		var ch app.Channel
 		var kind string
@@ -90,7 +90,7 @@ func (r *ChannelRepo) List(ctx context.Context) ([]map[string]any, error) {
 		return nil, errx.Wrap(errx.KindTransient, err, "list channels")
 	}
 	defer rows.Close()
-	var out []map[string]any
+	out := []map[string]any{}
 	for rows.Next() {
 		var id, name, kind string
 		var config []byte

@@ -108,7 +108,7 @@ func (r *UserRepo) Roles(ctx context.Context) ([]Role, error) {
 		return nil, errx.Wrap(errx.KindTransient, err, "list roles")
 	}
 	defer rows.Close()
-	var out []Role
+	out := []Role{}
 	for rows.Next() {
 		var role Role
 		if err := rows.Scan(&role.ID, &role.Name, &role.Description,
