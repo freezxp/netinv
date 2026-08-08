@@ -163,6 +163,41 @@ test("a published link renders in the viewer", async ({ page, request }) => {
   await deleteMap(request, created.id);
 });
 
+// Deleting a map is unrecoverable — every revision goes with it — so the
+// confirm dialog must actually gate it, not just decorate the click.
+test("deleting a map requires typing its name", async ({ page, request }) => {
+  await login(page);
+  await page.getByRole("link", { name: "Weathermaps" }).click();
+  const name = `e2e-del-${Date.now()}`;
+  await page.getByPlaceholder("New map name").fill(name);
+  await page.getByRole("button", { name: "Create" }).click();
+
+  const card = page
+    .locator("div")
+    .filter({ hasText: name })
+    .filter({ has: page.getByRole("button", { name: "Delete" }) })
+    .last();
+  await expect(card).toBeVisible();
+  await card.getByRole("button", { name: "Delete" }).click();
+
+  const confirm = page.getByRole("button", { name: "Delete permanently" });
+  await expect(confirm).toBeDisabled();
+
+  // A near-miss must not arm it.
+  await page.getByPlaceholder(name).fill(name.slice(0, -1));
+  await expect(confirm).toBeDisabled();
+
+  await page.getByPlaceholder(name).fill(name);
+  await expect(confirm).toBeEnabled();
+  await confirm.click();
+
+  await expect(page.getByText(name)).toHaveCount(0);
+  const list = await (
+    await request.get("/api/v1/maps", { headers: await apiHeaders(request) })
+  ).json();
+  expect(list.data.some((m: { name: string }) => m.name === name)).toBe(false);
+});
+
 test("admin sees role-gated nav (Users, Audit, Settings)", async ({ page }) => {
   await login(page);
   await expect(page.getByRole("link", { name: "Users" })).toBeVisible();

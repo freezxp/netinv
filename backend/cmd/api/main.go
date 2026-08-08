@@ -334,6 +334,7 @@ func main() {
 						Store: mapStore, VM: alertvm.New(vmURL), Redis: redisClient,
 					},
 					Checker: checker,
+					Audit:   auditor,
 				}).Register(g)
 			} else {
 				rt.Log.Warn("NETINV_VM_URL not set — metrics proxy, dashboard, maps disabled")

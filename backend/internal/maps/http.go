@@ -3,9 +3,11 @@ package maps
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/freezxp/netinv/backend/internal/audit"
 	"github.com/freezxp/netinv/backend/internal/platform/authz"
 	"github.com/freezxp/netinv/backend/internal/platform/errx"
 	"github.com/freezxp/netinv/backend/internal/platform/httpx"
@@ -18,6 +20,8 @@ type Handler struct {
 	Store   *Store
 	Live    *LiveAssembler
 	Checker authz.Checker
+	// Audit records destructive changes. Optional so tests can omit it.
+	Audit audit.Writer
 }
 
 func (h *Handler) Register(r chi.Router) {
@@ -118,9 +122,26 @@ func (h *Handler) suggestions(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) del(w http.ResponseWriter, r *http.Request) {
-	if err := h.Store.Delete(r.Context(), chi.URLParam(r, "id")); err != nil {
+	id := chi.URLParam(r, "id")
+	// Read the name first: deleting takes every revision with it, and an audit
+	// row naming only an id nobody can look up afterwards is close to useless.
+	name := h.Store.Name(r.Context(), id)
+	if err := h.Store.Delete(r.Context(), id); err != nil {
 		httpx.WriteError(w, r, err)
 		return
+	}
+	if h.Audit != nil {
+		ip := r.RemoteAddr
+		if i := strings.LastIndex(ip, ":"); i > 0 {
+			ip = ip[:i]
+		}
+		h.Audit.Write(r.Context(), audit.Event{
+			ActorKind: "user", ActorID: httpx.ClaimsFrom(r.Context()).Subject,
+			Action: "map.delete", ResourceKind: "map", ResourceID: id,
+			Before:   map[string]any{"name": name},
+			SourceIP: ip, UserAgent: r.UserAgent(),
+			TraceID: httpx.TraceID(r.Context()),
+		})
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

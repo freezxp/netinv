@@ -75,6 +75,14 @@ export function useCreateMap() {
   });
 }
 
+export function useDeleteMap() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api<void>(`/maps/${id}`, { method: "DELETE" }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["maps"] }),
+  });
+}
+
 export function useMapDef(id: string, rev: "draft" | "published") {
   return useQuery({
     queryKey: ["map", id, rev],

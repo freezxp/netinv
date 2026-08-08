@@ -263,6 +263,14 @@ func (s *Store) Publish(ctx context.Context, mapID, actor string) (int, error) {
 	return rev, nil
 }
 
+// Name returns a map's name, or empty when it no longer exists. Used to make
+// the audit trail readable after the row is gone.
+func (s *Store) Name(ctx context.Context, mapID string) string {
+	var name string
+	_ = s.Pool.QueryRow(ctx, `SELECT name FROM maps.maps WHERE id=$1`, mapID).Scan(&name)
+	return name
+}
+
 func (s *Store) Delete(ctx context.Context, mapID string) error {
 	tag, err := s.Pool.Exec(ctx, `DELETE FROM maps.maps WHERE id=$1`, mapID)
 	if err != nil {
