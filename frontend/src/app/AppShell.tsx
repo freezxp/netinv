@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { useAuthStore } from "../features/auth/store";
+import { useSessionRestore } from "../features/auth/useSessionRestore";
 import { useLogout } from "../api/hooks";
 import { Button } from "../components/ui";
 
@@ -33,11 +34,19 @@ export function AppShell() {
   const navigate = useNavigate();
   const logout = useLogout();
   const { dark, toggle } = useTheme();
+  const restored = useSessionRestore();
 
   useEffect(() => {
-    if (!user) navigate("/login", { replace: true });
-  }, [user, navigate]);
+    if (restored && !user) navigate("/login", { replace: true });
+  }, [restored, user, navigate]);
 
+  if (!restored) {
+    return (
+      <div className="flex h-full items-center justify-center text-slate-500">
+        Restoring session…
+      </div>
+    );
+  }
   if (!user) return null;
 
   return (
