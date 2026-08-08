@@ -140,14 +140,34 @@ func (r *DeviceRepo) Create(ctx context.Context, d *domain.Device) error {
 
 func insertSchedules(ctx context.Context, tx pgx.Tx, deviceID, profileID string) error {
 	var traffic, health, icmp, sync int
+	var enabled []string
 	if err := tx.QueryRow(ctx, `
-		SELECT traffic_interval_s, health_interval_s, icmp_interval_s, sync_interval_s
+		SELECT traffic_interval_s, health_interval_s, icmp_interval_s, sync_interval_s,
+		       coalesce(array(SELECT jsonb_array_elements_text(families_enabled)), '{}')
 		FROM platform.polling_profiles WHERE id = $1`, profileID).
-		Scan(&traffic, &health, &icmp, &sync); err != nil {
+		Scan(&traffic, &health, &icmp, &sync, &enabled); err != nil {
 		return errx.Wrap(errx.KindInvalid, err, "load profile")
+	}
+	on := make(map[string]bool, len(enabled))
+	for _, f := range enabled {
+		on[f] = true
 	}
 	families := map[string]int{"traffic": traffic, "health": health, "icmp": icmp, "sync": sync}
 	for family, interval := range families {
+		// families_enabled is the per-family switch FR-COLL-04 describes. It
+		// has been in the schema since the first migration but was never read,
+		// so a profile that turned a family off was polled regardless — the
+		// intervals cannot express "off", their CHECK constraints require a
+		// positive value. Dropping the row also stops an already-scheduled
+		// family when a device moves to a profile that excludes it.
+		if !on[family] {
+			if _, err := tx.Exec(ctx, `
+				DELETE FROM platform.polling_schedule
+				WHERE device_id = $1 AND family = $2`, deviceID, family); err != nil {
+				return errx.Wrap(errx.KindTransient, err, "drop disabled schedule")
+			}
+			continue
+		}
 		due := time.Now().UTC()
 		if family != "sync" { // sync runs immediately at onboarding (doc 07 §2)
 			due = due.Add(time.Duration(rand.IntN(interval)) * time.Second)
