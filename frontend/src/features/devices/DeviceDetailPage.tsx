@@ -19,6 +19,7 @@ import {
   cx,
 } from "../../components/ui";
 import { TimeSeries, type PromMatrix } from "../../components/TimeSeries";
+import { OidBrowser } from "../inventory/OidBrowser";
 import { formatBps, formatDuration, formatMs } from "../../lib/format";
 
 const tabs = ["Interfaces", "Health", "Availability", "History", "Alerts"] as const;
@@ -30,6 +31,7 @@ export function DeviceDetailPage() {
   const interfaces = useDeviceInterfaces(id);
   const sync = useSyncNow();
   const [tab, setTab] = useState<(typeof tabs)[number]>("Interfaces");
+  const [browsing, setBrowsing] = useState(false);
 
   const focusIf = params.get("if") ?? "";
   const d = device.data;
@@ -53,12 +55,22 @@ export function DeviceDetailPage() {
         <div className="flex-1" />
         <Button
           variant="ghost"
+          onClick={() => setBrowsing(true)}
+          title="Walk this device and show every SNMP object it exposes"
+        >
+          All SNMP data
+        </Button>
+        <Button
+          variant="ghost"
           onClick={() => sync.mutate(id)}
           disabled={sync.isPending}
         >
           {sync.isPending ? "Sync queued…" : "Sync now"}
         </Button>
       </div>
+      {browsing && d && (
+        <OidBrowser device={d} onClose={() => setBrowsing(false)} />
+      )}
 
       {d?.sys_name && (
         <div className="text-sm text-slate-500">

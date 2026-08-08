@@ -132,24 +132,37 @@ export function OidBrowser({
               Nothing returned under this OID — the device doesn't implement it.
             </EmptyState>
           )}
-          <table className="w-full text-xs">
+          {/* Fixed layout: without it a long OID column starves the value
+              column, which then wraps to a dozen lines per row. */}
+          <table className="w-full table-fixed text-xs">
+            <colgroup>
+              <col className="w-[46%]" />
+              <col className="w-[12%]" />
+              <col className="w-[42%]" />
+            </colgroup>
             <tbody>
-              {rows.map((v) => (
+              {rows.slice(0, 1000).map((v) => (
                 <tr
                   key={v.oid}
                   className="border-b border-slate-100 align-top dark:border-slate-800/60"
                 >
-                  <td className="mono px-3 py-1 whitespace-nowrap text-slate-500">
+                  <td className="mono truncate px-3 py-1 text-slate-500" title={v.oid}>
                     {v.oid}
                   </td>
-                  <td className="px-3 py-1 whitespace-nowrap text-slate-400">
-                    {v.type}
+                  <td className="px-3 py-1 text-slate-400">{v.type}</td>
+                  <td className="mono truncate px-3 py-1" title={v.value}>
+                    {v.value}
                   </td>
-                  <td className="mono px-3 py-1 break-all">{v.value}</td>
                 </tr>
               ))}
             </tbody>
           </table>
+          {rows.length > 1000 && (
+            <div className="px-3 py-2 text-xs text-slate-500">
+              Showing the first 1000 of {rows.length} — narrow the root OID or
+              use the filter to see the rest.
+            </div>
+          )}
         </div>
         <div className="mt-2 text-xs text-slate-500">
           Walks run live against the device from the NetInv server. Large
