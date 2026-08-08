@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/freezxp/netinv/backend/internal/alerting/domain"
@@ -47,9 +48,13 @@ type AlertPublisher interface {
 	Publish(ctx context.Context, event string, inst *domain.Instance, rule *domain.Rule) error
 }
 
-// InterfaceResolver best-effort maps (device_id, if_index) → interface id.
+// InterfaceResolver best-effort maps (device_id, if_index) → interface id, and
+// exposes a device's interface names for dependency suppression.
 type InterfaceResolver interface {
 	InterfaceID(ctx context.Context, deviceID, ifIndex string) string
+	// InterfaceNames returns if_index → name for one device. A nil map simply
+	// disables suppression for that device.
+	InterfaceNames(ctx context.Context, deviceID string) map[string]string
 }
 
 type Evaluator struct {
@@ -93,6 +98,7 @@ func (e *Evaluator) evalRule(ctx context.Context, rule *domain.Rule) error {
 	if err != nil {
 		return fmt.Errorf("query: %w", err)
 	}
+	series, ifNames := e.suppressDependents(ctx, series)
 	live, err := e.Instances.LiveByRule(ctx, rule.ID)
 	if err != nil {
 		return err
@@ -126,6 +132,18 @@ func (e *Evaluator) evalRule(ctx context.Context, rule *domain.Rule) error {
 		}
 		if e.Ifaces != nil && s.Labels["if_index"] != "" && inst.DeviceID != "" {
 			inst.InterfaceID = e.Ifaces.InterfaceID(ctx, inst.DeviceID, s.Labels["if_index"])
+			// Annotations say "Interface {{if_name}} on {{device}}", but the
+			// metric only carries if_index, so summaries read as a blank. Added
+			// after fingerprinting so alert identity stays metric identity and
+			// a rename doesn't re-fire the alert.
+			if name := ifNames[inst.DeviceID][s.Labels["if_index"]]; name != "" {
+				labels := make(map[string]string, len(s.Labels)+1)
+				for k, v := range s.Labels {
+					labels[k] = v
+				}
+				labels["if_name"] = name
+				inst.Labels = labels
+			}
 		}
 		if err := e.Instances.Fire(ctx, inst); err != nil {
 			e.Log.Error("fire failed", "rule", rule.ID, "err", err)
@@ -158,6 +176,68 @@ func (e *Evaluator) evalRule(ctx context.Context, rule *domain.Rule) error {
 		e.notify(ctx, "alert.resolved", inst, rule)
 	}
 	return nil
+}
+
+// parentInterface returns the interface a subinterface hangs off, by the
+// dot convention every platform we collect from uses (eth9.101 → eth9,
+// and Q-in-Q eth9.101.200 → eth9.101). Empty when the name is not a
+// subinterface.
+func parentInterface(name string) string {
+	if i := strings.LastIndex(name, "."); i > 0 {
+		return name[:i]
+	}
+	return ""
+}
+
+// suppressDependents drops symptom series whose cause is already firing in the
+// same result: one unplugged port takes its VLAN subinterfaces down with it,
+// and reporting each of them is fifteen alerts for one fault.
+//
+// Only ever suppresses within a single rule's own result set, so a
+// subinterface still alerts whenever its parent is healthy — that case is a
+// genuine fault rather than a consequence. Interface-scoped rules are the ones
+// this can apply to; anything without an if_index passes straight through.
+// Returns the surviving series plus the device → if_index → name lookup it
+// built, which the caller reuses to label alerts with a readable name.
+func (e *Evaluator) suppressDependents(ctx context.Context, series []Series) ([]Series, map[string]map[string]string) {
+	if e.Ifaces == nil {
+		return series, nil
+	}
+	// Names of the interfaces this rule is firing on, per device.
+	names := map[string]map[string]string{} // device_id → if_index → name
+	firing := map[string]map[string]bool{}  // device_id → name → firing
+	for _, s := range series {
+		dev, idx := s.Labels["device_id"], s.Labels["if_index"]
+		if dev == "" || idx == "" {
+			continue
+		}
+		if _, ok := names[dev]; !ok {
+			names[dev] = e.Ifaces.InterfaceNames(ctx, dev)
+			firing[dev] = map[string]bool{}
+		}
+		if n := names[dev][idx]; n != "" {
+			firing[dev][n] = true
+		}
+	}
+
+	out := make([]Series, 0, len(series))
+	suppressed := 0
+	for _, s := range series {
+		dev, idx := s.Labels["device_id"], s.Labels["if_index"]
+		name := names[dev][idx]
+		// Test against the unfiltered set: with Q-in-Q the direct parent may
+		// itself be suppressed, and the child must still go with it.
+		if name != "" && firing[dev][parentInterface(name)] {
+			suppressed++
+			continue
+		}
+		out = append(out, s)
+	}
+	if suppressed > 0 {
+		e.Log.Debug("suppressed dependent interface alerts",
+			"count", suppressed, "remaining", len(out))
+	}
+	return out, names
 }
 
 // notify publishes unless silenced or collapsed by flapping (FR-ALR-05/06).

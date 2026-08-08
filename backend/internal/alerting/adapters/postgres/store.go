@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strconv"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -255,6 +256,28 @@ func (s *Store) InterfaceID(ctx context.Context, deviceID, ifIndex string) strin
 		SELECT id FROM inventory.interfaces
 		WHERE device_id=$1 AND if_index=$2::int`, deviceID, ifIndex).Scan(&id)
 	return id
+}
+
+// InterfaceNames implements app.InterfaceResolver: if_index → name for a whole
+// device in one round trip, so dependency suppression costs one query per
+// device per cycle rather than one per alerting series.
+func (s *Store) InterfaceNames(ctx context.Context, deviceID string) map[string]string {
+	rows, err := s.Pool.Query(ctx, `
+		SELECT if_index, coalesce(name,'') FROM inventory.interfaces
+		WHERE device_id=$1 AND state != 'removed'`, deviceID)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	out := map[string]string{}
+	for rows.Next() {
+		var idx int
+		var name string
+		if rows.Scan(&idx, &name) == nil && name != "" {
+			out[strconv.Itoa(idx)] = name
+		}
+	}
+	return out
 }
 
 // Silenced implements app.SilenceChecker: any active silence whose scope

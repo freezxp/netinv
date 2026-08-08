@@ -72,6 +72,7 @@ Requirement IDs: `FR-<MODULE>-<nn>`. Every requirement is testable; acceptance c
 - **FR-ALR-05** Flap suppression: an alert resolving and re-firing >3 times in 15 min collapses into a single `flapping` alert until quiet for 15 min.
 - **FR-ALR-06** Silences: user-created mute for a scope + duration with mandatory reason; silenced alerts still record state but notify nothing.
 - **FR-ALR-07** Ships with a default rule pack: device down (ICMP fail 3 cycles) critical; interface down (oper≠admin) warning; utilization >80%/15m warning, >90% critical; CPU >85%/10m; memory >90%; temperature above vendor threshold; PSU/fan failed; device rebooted (sysUpTime reset) info; poll auth-failure warning.
+- **FR-ALR-08** Dependency suppression: when a rule fires on both an interface and a subinterface of it, only the parent alerts. A physical port carries its VLAN subinterfaces down with it, and one unplugged port must not read as fifteen faults. Parentage follows the `parent.vlan` naming convention (`eth9.101` → `eth9`, Q-in-Q `eth9.101.200` → `eth9.101`), evaluated per device and only within a single rule's own results — so a subinterface down while its parent is healthy still alerts, that being a real fault rather than a consequence. Suppressed alerts are never created, so nothing needs acknowledging; alerts also carry `if_name` for readable summaries, added after fingerprinting so alert identity remains metric identity.
 
 ## NOT — Notification
 
