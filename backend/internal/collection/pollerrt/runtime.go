@@ -42,21 +42,7 @@ func (r *Runtime) Run(ctx context.Context) error {
 	if r.Workers == 0 {
 		r.Workers = 50
 	}
-	if err := r.Client.DeclareJobTopology(); err != nil {
-		return err
-	}
-	if err := r.Client.EnsureSiteQueue(r.SiteID); err != nil {
-		return err
-	}
-	if err := r.Client.EnsureMetricsQueue(); err != nil {
-		return err
-	}
-	deliveries, err := r.Client.Consume(amqpx.SiteQueue(r.SiteID), r.Workers*2)
-	if err != nil {
-		return err
-	}
-	r.Log.Info("poller consuming", "queue", amqpx.SiteQueue(r.SiteID), "workers", r.Workers)
-
+	jobs := make(chan amqp.Delivery)
 	var wg sync.WaitGroup
 	for range r.Workers {
 		wg.Add(1)
@@ -66,7 +52,7 @@ func (r *Runtime) Run(ctx context.Context) error {
 				select {
 				case <-ctx.Done():
 					return
-				case d, ok := <-deliveries:
+				case d, ok := <-jobs:
 					if !ok {
 						return
 					}
@@ -75,6 +61,46 @@ func (r *Runtime) Run(ctx context.Context) error {
 			}
 		}()
 	}
+	// Job-stream supervisor: (re)establishes consumption across broker
+	// restarts — the delivery channel closes on connection loss (doc 07 §6).
+	go func() {
+		defer close(jobs)
+		for ctx.Err() == nil {
+			err := func() error {
+				if err := r.Client.DeclareJobTopology(); err != nil {
+					return err
+				}
+				if err := r.Client.EnsureSiteQueue(r.SiteID); err != nil {
+					return err
+				}
+				return r.Client.EnsureMetricsQueue()
+			}()
+			if err == nil {
+				var deliveries <-chan amqp.Delivery
+				deliveries, err = r.Client.Consume(amqpx.SiteQueue(r.SiteID), r.Workers*2)
+				if err == nil {
+					r.Log.Info("job stream established",
+						"queue", amqpx.SiteQueue(r.SiteID), "workers", r.Workers)
+					for d := range deliveries {
+						select {
+						case <-ctx.Done():
+							return
+						case jobs <- d:
+						}
+					}
+					r.Log.Warn("job stream closed — reconnecting")
+				}
+			}
+			if err != nil {
+				r.Log.Warn("job stream unavailable — retrying", "err", err)
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(3 * time.Second):
+			}
+		}
+	}()
 	// Periodic flusher (age-based) + buffer drain loop (FR-COLL-08).
 	flushT := time.NewTicker(batchFlushAge)
 	defer flushT.Stop()

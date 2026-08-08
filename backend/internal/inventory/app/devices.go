@@ -14,11 +14,11 @@ import (
 )
 
 type DeviceFilter struct {
-	SiteID   string
-	Status   []string
-	Query    string
-	Cursor   string
-	Limit    int
+	SiteID string
+	Status []string
+	Query  string
+	Cursor string
+	Limit  int
 }
 
 type DeviceRepo interface {

@@ -43,7 +43,7 @@ func (f *fakeUsers) Create(_ context.Context, u *domain.User, _ []string) error 
 	f.byName[u.Username] = u
 	return nil
 }
-func (f *fakeUsers) Count(context.Context) (int, error) { return len(f.byName), nil }
+func (f *fakeUsers) Count(context.Context) (int, error)                   { return len(f.byName), nil }
 func (f *fakeUsers) RecordLogin(context.Context, string, time.Time) error { return nil }
 
 type fakeTokens struct {

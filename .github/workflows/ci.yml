@@ -28,6 +28,17 @@ jobs:
     needs: changes
     if: needs.changes.outputs.backend == 'true' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: netinv
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: netinv
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U netinv" --health-interval 5s
+          --health-timeout 3s --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -40,9 +51,36 @@ jobs:
       - name: Vet
         working-directory: backend
         run: go vet ./...
-      - name: Test
+      - name: Test (unit + PG integration)
         working-directory: backend
+        env:
+          NETINV_TEST_PG_DSN: postgres://netinv:ci@localhost:5432/netinv
         run: go test -race ./...
+      - name: Connector tests
+        working-directory: connectors
+        run: go test ./...
+
+  security:
+    needs: changes
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - name: govulncheck
+        working-directory: backend
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - name: npm audit (high+)
+        working-directory: frontend
+        run: npm audit --audit-level=high
 
   frontend:
     needs: changes

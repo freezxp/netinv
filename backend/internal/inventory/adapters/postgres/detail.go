@@ -10,16 +10,16 @@ import (
 // Read models for the device detail page (doc 09 §6, doc 30 §5).
 
 type InterfaceRow struct {
-	ID          string  `json:"id"`
-	IfIndex     int     `json:"if_index"`
-	Name        string  `json:"name"`
-	Alias       string  `json:"alias"`
-	SpeedBPS    int64   `json:"speed_bps"`
-	MTU         int     `json:"mtu"`
-	AdminStatus int     `json:"admin_status"`
-	OperStatus  int     `json:"oper_status"`
-	State       string  `json:"state"`
-	Monitor     bool    `json:"monitor"`
+	ID          string `json:"id"`
+	IfIndex     int    `json:"if_index"`
+	Name        string `json:"name"`
+	Alias       string `json:"alias"`
+	SpeedBPS    int64  `json:"speed_bps"`
+	MTU         int    `json:"mtu"`
+	AdminStatus int    `json:"admin_status"`
+	OperStatus  int    `json:"oper_status"`
+	State       string `json:"state"`
+	Monitor     bool   `json:"monitor"`
 }
 
 func (r *DeviceRepo) Interfaces(ctx context.Context, deviceID string) ([]InterfaceRow, error) {

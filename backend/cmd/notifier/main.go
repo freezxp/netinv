@@ -5,6 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"time"
+
+	amqp091 "github.com/rabbitmq/amqp091-go"
 
 	notifpg "github.com/freezxp/netinv/backend/internal/notify/adapters/postgres"
 	"github.com/freezxp/netinv/backend/internal/notify/adapters/senders"
@@ -42,17 +45,6 @@ func main() {
 			return err
 		}
 		defer mq.Close()
-		if err := mq.EnsureEventsTopology(); err != nil {
-			return err
-		}
-		if err := mq.EnsureTopicQueue(alertsQueue, "alert.*"); err != nil {
-			return err
-		}
-		deliveries, err := mq.Consume(alertsQueue, 8)
-		if err != nil {
-			return err
-		}
-
 		dispatcher := &notifapp.Dispatcher{
 			Channels: &notifpg.ChannelRepo{Pool: pool, Keys: keys},
 			Senders: map[string]notifapp.Sender{
@@ -64,24 +56,47 @@ func main() {
 			Log:      rt.Log,
 		}
 		rt.Health.SetReady(true)
-		rt.Log.Info("notifier consuming", "queue", alertsQueue)
-		for {
+		// Consume with reconnect across broker restarts (doc 23 §7).
+		for ctx.Err() == nil {
+			err := mq.EnsureEventsTopology()
+			if err == nil {
+				err = mq.EnsureTopicQueue(alertsQueue, "alert.*")
+			}
+			if err == nil {
+				var deliveries <-chan amqp091.Delivery
+				deliveries, err = mq.Consume(alertsQueue, 8)
+				if err == nil {
+					rt.Log.Info("notifier consuming", "queue", alertsQueue)
+				stream:
+					for {
+						select {
+						case <-ctx.Done():
+							return nil
+						case d, ok := <-deliveries:
+							if !ok {
+								rt.Log.Warn("alert stream closed — reconnecting")
+								break stream
+							}
+							var ev wire.AlertEvent
+							if err := json.Unmarshal(d.Body, &ev); err != nil {
+								rt.Log.Warn("malformed alert event dropped", "err", err)
+								_ = d.Reject(false)
+								continue
+							}
+							dispatcher.Handle(ctx, ev) // outcome recorded per channel
+							_ = d.Ack(false)
+						}
+					}
+				}
+			}
+			if err != nil {
+				rt.Log.Warn("alert stream unavailable — retrying", "err", err)
+			}
 			select {
 			case <-ctx.Done():
-				return nil
-			case d, ok := <-deliveries:
-				if !ok {
-					return nil
-				}
-				var ev wire.AlertEvent
-				if err := json.Unmarshal(d.Body, &ev); err != nil {
-					rt.Log.Warn("malformed alert event dropped", "err", err)
-					_ = d.Reject(false)
-					continue
-				}
-				dispatcher.Handle(ctx, ev) // outcome recorded per channel
-				_ = d.Ack(false)
+			case <-time.After(3 * time.Second):
 			}
 		}
+		return nil
 	})
 }

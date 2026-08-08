@@ -231,8 +231,8 @@ func absDur(d time.Duration) time.Duration {
 	return d
 }
 
-func itoa(n int) string   { return fmt.Sprintf("%d", n) }
-func i64(n int64) string  { return fmt.Sprintf("%d", n) }
+func itoa(n int) string  { return fmt.Sprintf("%d", n) }
+func i64(n int64) string { return fmt.Sprintf("%d", n) }
 
 // ---- service ----
 
@@ -260,10 +260,10 @@ type DeviceLocker interface {
 }
 
 type SyncService struct {
-	Repo   SyncRepo
-	Locks  DeviceLocker
-	Audit  audit.Writer
-	Log    *slog.Logger
+	Repo  SyncRepo
+	Locks DeviceLocker
+	Audit audit.Writer
+	Log   *slog.Logger
 }
 
 // HandleResult processes one poller SyncResult (consumed from the queue).

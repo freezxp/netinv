@@ -21,21 +21,31 @@ const (
 	EventsExchange   = "events.domain"
 )
 
-func SiteQueue(siteID string) string  { return "poll.site." + siteID }
+func SiteQueue(siteID string) string   { return "poll.site." + siteID }
 func SiteRouting(siteID string) string { return "site." + siteID }
 
 type Client struct {
+	url  string
 	conn *amqp.Connection
 	ch   *amqp.Channel
 	mu   sync.Mutex
 }
 
-// channel returns a live channel, reopening it if a previous channel-level
-// exception (e.g. a 406 precondition failure) closed it. AMQP closes the
-// channel on such errors; without recovery every later operation 504s.
+// channel returns a live channel, redialing the connection and/or reopening
+// the channel as needed. AMQP closes channels on channel-level exceptions
+// (e.g. 406) and the whole connection on broker restarts; publisher paths
+// self-heal here, while consumers treat a closed delivery stream as fatal
+// (crash-only: the supervisor restarts the process — doc 23 §7).
 func (c *Client) channel() (*amqp.Channel, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.conn == nil || c.conn.IsClosed() {
+		conn, err := amqp.Dial(c.url)
+		if err != nil {
+			return nil, errx.Wrap(errx.KindTransient, err, "amqpx: redial")
+		}
+		c.conn, c.ch = conn, nil
+	}
 	if c.ch != nil && !c.ch.IsClosed() {
 		return c.ch, nil
 	}
@@ -65,7 +75,7 @@ func Connect(ctx context.Context, url string) (*Client, error) {
 				_ = conn.Close()
 				return nil, errx.Wrap(errx.KindTransient, err, "amqpx: confirm mode")
 			}
-			return &Client{conn: conn, ch: ch}, nil
+			return &Client{url: url, conn: conn, ch: ch}, nil
 		}
 		select {
 		case <-ctx.Done():

@@ -51,13 +51,13 @@ func meta(r *http.Request) app.ClientMeta {
 }
 
 type userView struct {
-	ID                     string  `json:"id"`
-	Username               string  `json:"username"`
-	Email                  string  `json:"email"`
-	DisplayName            string  `json:"display_name"`
-	Status                 string  `json:"status"`
-	PasswordChangeRequired bool    `json:"password_change_required"`
-	LastLoginAt            *string `json:"last_login_at"`
+	ID                     string   `json:"id"`
+	Username               string   `json:"username"`
+	Email                  string   `json:"email"`
+	DisplayName            string   `json:"display_name"`
+	Status                 string   `json:"status"`
+	PasswordChangeRequired bool     `json:"password_change_required"`
+	LastLoginAt            *string  `json:"last_login_at"`
 	Roles                  []string `json:"roles"`
 }
 

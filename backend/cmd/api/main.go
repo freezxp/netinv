@@ -18,12 +18,12 @@ import (
 	alertpg "github.com/freezxp/netinv/backend/internal/alerting/adapters/postgres"
 	alertvm "github.com/freezxp/netinv/backend/internal/alerting/adapters/vm"
 	"github.com/freezxp/netinv/backend/internal/audit"
-	"github.com/freezxp/netinv/backend/internal/dashboard"
 	colamqp "github.com/freezxp/netinv/backend/internal/collection/adapters/amqp"
 	colhttp "github.com/freezxp/netinv/backend/internal/collection/adapters/httpapi"
 	colpg "github.com/freezxp/netinv/backend/internal/collection/adapters/postgres"
 	"github.com/freezxp/netinv/backend/internal/collection/adapters/secrets"
 	colapp "github.com/freezxp/netinv/backend/internal/collection/app"
+	"github.com/freezxp/netinv/backend/internal/dashboard"
 	"github.com/freezxp/netinv/backend/internal/iam/adapters/httpapi"
 	"github.com/freezxp/netinv/backend/internal/iam/adapters/lockout"
 	iampg "github.com/freezxp/netinv/backend/internal/iam/adapters/postgres"
@@ -105,8 +105,8 @@ func main() {
 
 		auditor := &audit.PGWriter{Pool: pool, Log: rt.Log}
 		authSvc := &app.AuthService{
-			Users:  &iampg.UserRepo{Pool: pool},
-			Tokens: &iampg.RefreshTokenRepo{Pool: pool},
+			Users:   &iampg.UserRepo{Pool: pool},
+			Tokens:  &iampg.RefreshTokenRepo{Pool: pool},
 			Lockout: lock, Issuer: issuer, Audit: auditor,
 			Argon: authn.DefaultArgon2, Log: rt.Log,
 		}
@@ -202,11 +202,20 @@ func main() {
 				Locks: redisLocker(redisClient),
 				Audit: auditor, Log: rt.Log,
 			}
-			deliveries, err := mq.Consume(amqpx.SyncResultsQueue, 8)
-			if err != nil {
-				return err
-			}
-			go consumeSyncResults(ctx, deliveries, syncSvc, rt)
+			go func() { // consume with reconnect across broker restarts
+				for ctx.Err() == nil {
+					if err := mq.EnsureSyncResultsQueue(); err == nil {
+						if deliveries, err := mq.Consume(amqpx.SyncResultsQueue, 8); err == nil {
+							consumeSyncResults(ctx, deliveries, syncSvc, rt)
+							rt.Log.Warn("sync stream closed — reconnecting")
+						}
+					}
+					select {
+					case <-ctx.Done():
+					case <-time.After(3 * time.Second):
+					}
+				}
+			}()
 
 			dispatcher := &colamqp.SyncDispatcher{
 				Client: mq, Secrets: &secrets.Resolver{Vault: vault},

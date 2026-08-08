@@ -157,4 +157,3 @@ func (h *Handler) clearRefreshCookie(w http.ResponseWriter) {
 		MaxAge: -1,
 	})
 }
-

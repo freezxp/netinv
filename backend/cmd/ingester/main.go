@@ -4,6 +4,7 @@ package main
 import (
 	"context"
 	"os"
+	"time"
 
 	"github.com/freezxp/netinv/backend/internal/metrics/adapters/postgres"
 	"github.com/freezxp/netinv/backend/internal/metrics/adapters/victoriametrics"
@@ -34,21 +35,29 @@ func main() {
 			return err
 		}
 		defer mq.Close()
-		if err := mq.EnsureMetricsQueue(); err != nil {
-			return err
-		}
-		deliveries, err := mq.Consume(amqpx.MetricsQueue, 32)
-		if err != nil {
-			return err
-		}
-
 		ing := &app.Ingester{
 			Labels: &postgres.LabelSource{Pool: pool},
 			Writer: victoriametrics.New(vmURL),
 			Log:    rt.Log,
 		}
 		rt.Health.SetReady(true)
-		rt.Log.Info("ingester consuming", "queue", amqpx.MetricsQueue, "vm", vmURL)
-		return ing.Run(ctx, deliveries)
+		// Consume with reconnect: the delivery stream closes on broker
+		// restarts; amqpx redials underneath (doc 23 §7).
+		for ctx.Err() == nil {
+			if err := mq.EnsureMetricsQueue(); err == nil {
+				if deliveries, err := mq.Consume(amqpx.MetricsQueue, 32); err == nil {
+					rt.Log.Info("ingester consuming", "queue", amqpx.MetricsQueue, "vm", vmURL)
+					if err := ing.Run(ctx, deliveries); err != nil {
+						return err
+					}
+					rt.Log.Warn("metric stream closed — reconnecting")
+				}
+			}
+			select {
+			case <-ctx.Done():
+			case <-time.After(3 * time.Second):
+			}
+		}
+		return nil
 	})
 }

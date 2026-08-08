@@ -39,14 +39,14 @@ type LoginResult struct {
 
 // AuthService implements login/refresh/logout (docs 07 §4, 20 §2).
 type AuthService struct {
-	Users    UserRepo
-	Tokens   RefreshTokenRepo
-	Lockout  Lockout
-	Issuer   *authn.Issuer
-	Audit    audit.Writer
-	Argon    authn.Argon2Params
-	Log      *slog.Logger
-	Now      func() time.Time // injectable clock for tests
+	Users   UserRepo
+	Tokens  RefreshTokenRepo
+	Lockout Lockout
+	Issuer  *authn.Issuer
+	Audit   audit.Writer
+	Argon   authn.Argon2Params
+	Log     *slog.Logger
+	Now     func() time.Time // injectable clock for tests
 }
 
 func (s *AuthService) now() time.Time {

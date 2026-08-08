@@ -23,7 +23,7 @@ type PollJob struct {
 	JobID       string    `json:"job_id"`
 	DeviceID    string    `json:"device_id"`
 	SiteID      string    `json:"site_id"`
-	Family      string    `json:"family"` // traffic | health | icmp | sync
+	Family      string    `json:"family"`            // traffic | health | icmp | sync
 	Trigger     string    `json:"trigger,omitempty"` // scheduled | manual | onboarding
 	MgmtIP      string    `json:"mgmt_ip"`
 	Port        int       `json:"port"`

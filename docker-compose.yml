@@ -61,7 +61,7 @@ services:
 
   api:
     profiles: [app]
-    build: { context: backend, args: { SERVICE: api } }
+    build: { context: ., dockerfile: backend/Dockerfile, args: { SERVICE: api } }
     environment: &appenv
       NETINV_LOG_LEVEL: info
     ports: ["8080:8080"]
@@ -72,23 +72,23 @@ services:
       victoriametrics: { condition: service_healthy }
   scheduler:
     profiles: [app]
-    build: { context: backend, args: { SERVICE: scheduler } }
+    build: { context: ., dockerfile: backend/Dockerfile, args: { SERVICE: scheduler } }
     environment: *appenv
   poller:
     profiles: [app]
-    build: { context: backend, args: { SERVICE: poller } }
+    build: { context: ., dockerfile: backend/Dockerfile, args: { SERVICE: poller } }
     environment: *appenv
   ingester:
     profiles: [app]
-    build: { context: backend, args: { SERVICE: ingester } }
+    build: { context: ., dockerfile: backend/Dockerfile, args: { SERVICE: ingester } }
     environment: *appenv
   alerter:
     profiles: [app]
-    build: { context: backend, args: { SERVICE: alerter } }
+    build: { context: ., dockerfile: backend/Dockerfile, args: { SERVICE: alerter } }
     environment: *appenv
   notifier:
     profiles: [app]
-    build: { context: backend, args: { SERVICE: notifier } }
+    build: { context: ., dockerfile: backend/Dockerfile, args: { SERVICE: notifier } }
     environment: *appenv
 
 volumes:

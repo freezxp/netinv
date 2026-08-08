@@ -221,8 +221,8 @@ func (h *Handler) silences(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, map[string]any{
 			"id": sid, "scope": scope, "reason": reason,
-			"starts_at": starts.UTC().Format(time.RFC3339),
-			"ends_at":   ends.UTC().Format(time.RFC3339),
+			"starts_at":  starts.UTC().Format(time.RFC3339),
+			"ends_at":    ends.UTC().Format(time.RFC3339),
 			"created_by": createdBy, "active": revoked == nil && time.Now().Before(ends),
 		})
 	}
