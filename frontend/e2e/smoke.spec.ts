@@ -56,6 +56,35 @@ test("weathermap list is reachable", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "Weathermaps" })).toBeVisible();
 });
 
+// A map with no links made the live endpoint emit links:null, and the viewer
+// crashed iterating it — so the flagship feature broke for exactly the map
+// someone had just created. A fresh map reproduces it with no seeded fleet.
+test("a brand-new map opens in the viewer and the editor", async ({ page }) => {
+  const crashes: string[] = [];
+  page.on("pageerror", (e) => crashes.push(e.message));
+
+  await login(page);
+  await page.getByRole("link", { name: "Weathermaps" }).click();
+  const name = `e2e-empty-${Date.now()}`;
+  await page.getByPlaceholder("New map name").fill(name);
+  await page.getByRole("button", { name: "Create" }).click();
+
+  // Innermost div that holds both the map's name and its buttons.
+  const card = page
+    .locator("div")
+    .filter({ hasText: name })
+    .filter({ has: page.getByRole("button", { name: "View" }) })
+    .last();
+  await expect(card).toBeVisible();
+  await card.getByRole("button", { name: "View" }).click();
+  await expect(page.getByRole("heading", { name: "Weathermap" })).toBeVisible();
+  await expect(page.getByText("Unexpected Application Error")).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Edit" }).click();
+  await expect(page.getByText("Add device node")).toBeVisible();
+  expect(crashes, `viewer/editor threw: ${crashes.join("; ")}`).toEqual([]);
+});
+
 test("admin sees role-gated nav (Users, Audit, Settings)", async ({ page }) => {
   await login(page);
   await expect(page.getByRole("link", { name: "Users" })).toBeVisible();

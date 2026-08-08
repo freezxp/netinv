@@ -33,6 +33,17 @@ type LinkLive struct {
 	State   string  `json:"state"` // up | down | partial | nodata
 }
 
+// newLiveData starts from empty slices rather than nil. A map with no links
+// yet must marshal as `[]`, not `null`, or any consumer that iterates the
+// payload breaks on a brand-new map — precisely when someone is looking at it.
+func newLiveData() *LiveData {
+	return &LiveData{
+		AsOf:  time.Now().UTC().Format(time.RFC3339),
+		Nodes: []NodeLive{},
+		Links: []LinkLive{},
+	}
+}
+
 type LiveAssembler struct {
 	Store *Store
 	VM    *alertvm.Reader
@@ -109,7 +120,7 @@ func (a *LiveAssembler) Live(ctx context.Context, mapID string) (*LiveData, erro
 		rows.Close()
 	}
 
-	out := &LiveData{AsOf: time.Now().UTC().Format(time.RFC3339)}
+	out := newLiveData()
 	for _, n := range def.Nodes {
 		state := "unknown"
 		if n.Kind == "device" && n.DeviceID != "" {

@@ -12,6 +12,10 @@ frontend/dist/
 .env.*
 scratch/
 
+# Playwright run artefacts
+frontend/test-results/
+frontend/playwright-report/
+
 # Editor/OS
 .DS_Store
 .idea/

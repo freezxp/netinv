@@ -18,16 +18,43 @@ export interface DeviceNodeData extends Record<string, unknown> {
   state: string;
 }
 
-export function DeviceNode({ data }: { data: DeviceNodeData }) {
+// One handle per side, each declared source *and* target (paired with
+// ConnectionMode.Loose in the editor) so a link can be dragged from any side of
+// any node to any side of another. A single top-source/bottom-target pair made
+// linking two side-by-side nodes almost impossible.
+export const handleSides = [
+  { id: "t", position: Position.Top },
+  { id: "r", position: Position.Right },
+  { id: "b", position: Position.Bottom },
+  { id: "l", position: Position.Left },
+] as const;
+
+export function DeviceNode({
+  data,
+  isConnectable,
+}: {
+  data: DeviceNodeData;
+  isConnectable?: boolean;
+}) {
   return (
     <div
       className="rounded-md border-2 bg-white px-3 py-1.5 text-xs font-medium shadow-sm dark:bg-slate-900 dark:text-slate-200"
       style={{ borderColor: nodeStateColor[data.state] ?? "var(--status-muted)" }}
     >
-      <Handle type="source" position={Position.Top} className="!bg-slate-400" />
+      {/* Handles stay mounted in the read-only viewer — edges anchor to them —
+          but are invisible there, so a published map shows no editing dots. */}
+      {handleSides.map((h) => (
+        <Handle
+          key={h.id}
+          id={h.id}
+          type="source"
+          position={h.position}
+          className="!h-2 !w-2 !border-0 !bg-slate-400"
+          style={{ opacity: isConnectable ? 1 : 0 }}
+        />
+      ))}
       {data.kind === "site" ? "▣ " : data.kind === "cloud" ? "☁ " : ""}
       {data.label}
-      <Handle type="target" position={Position.Bottom} className="!bg-slate-400" />
     </div>
   );
 }
@@ -38,9 +65,11 @@ export function toFlow(
   def: MapDefinition,
   live?: LiveData,
 ): { nodes: RFNode<DeviceNodeData>[]; edges: Edge[] } {
-  const liveNodes = new Map(live?.nodes.map((n) => [n.id, n.state]));
-  const liveLinks = new Map(live?.links.map((l) => [l.id, l]));
-  const nodes = def.nodes.map((n) => ({
+  // Every array here is guarded: `live?.x` only guards `live`, and a map with
+  // no links yet is the case that reaches the viewer as null.
+  const liveNodes = new Map((live?.nodes ?? []).map((n) => [n.id, n.state]));
+  const liveLinks = new Map((live?.links ?? []).map((l) => [l.id, l]));
+  const nodes = (def.nodes ?? []).map((n) => ({
     id: n.id,
     type: "netinv" as const,
     position: { x: n.x, y: n.y },
@@ -50,7 +79,7 @@ export function toFlow(
       state: liveNodes.get(n.id) ?? "unknown",
     },
   }));
-  const edges = def.links.map((l) => {
+  const edges = (def.links ?? []).map((l) => {
     const lv = liveLinks.get(l.id);
     const util = lv ? Math.max(lv.util_in, lv.util_out) : 0;
     const color = lv ? utilColor(util, lv.state) : "#64748b";
@@ -58,6 +87,8 @@ export function toFlow(
       id: l.id,
       source: l.from,
       target: l.to,
+      sourceHandle: l.from_handle ?? null,
+      targetHandle: l.to_handle ?? null,
       label: lv
         ? `${formatBps(lv.in_bps)} / ${formatBps(lv.out_bps)}`
         : l.a_endpoint

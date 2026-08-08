@@ -21,6 +21,9 @@ export interface MapLink {
   id: string;
   from: string;
   to: string;
+  /** Side of each node the line attaches to (t|r|b|l); cosmetic. */
+  from_handle?: string | null;
+  to_handle?: string | null;
   a_endpoint?: MapEndpoint;
   b_endpoint?: MapEndpoint;
   bandwidth_bps?: number;

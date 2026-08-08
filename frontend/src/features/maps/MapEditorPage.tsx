@@ -5,6 +5,7 @@ import { Link, useParams } from "react-router-dom";
 import {
   ReactFlow,
   Background,
+  ConnectionMode,
   Controls,
   applyNodeChanges,
   type Connection,
@@ -21,7 +22,7 @@ import {
 } from "./api";
 import { applyPositions, nodeTypes, toFlow } from "./canvas";
 import { useDeviceInterfaces, useDevices } from "../../api/hooks";
-import { Button, Card, Select, cx } from "../../components/ui";
+import { Button, Card, Input, Select, cx } from "../../components/ui";
 import { ApiError } from "../../api/client";
 
 let nextId = 1;
@@ -109,12 +110,19 @@ export function MapEditorPage() {
 
   const onConnect = useCallback(
     (conn: Connection) => {
+      if (!conn.source || !conn.target || conn.source === conn.target) return;
       const linkId = genId("l");
       change((d) => ({
         ...d,
         links: [
           ...d.links,
-          { id: linkId, from: conn.source, to: conn.target } satisfies MapLink,
+          {
+            id: linkId,
+            from: conn.source,
+            to: conn.target,
+            from_handle: conn.sourceHandle,
+            to_handle: conn.targetHandle,
+          } satisfies MapLink,
         ],
       }));
       setSelectedLink(linkId);
@@ -158,6 +166,7 @@ export function MapEditorPage() {
             nodeTypes={nodeTypes}
             onNodesChange={onNodesChange}
             onConnect={onConnect}
+            connectionMode={ConnectionMode.Loose}
             onEdgeClick={(_e, edge) => setSelectedLink(edge.id)}
             onEdgesChange={(changes) => {
               const removed = changes.filter((c) => c.type === "remove");
@@ -234,8 +243,9 @@ function SidePanel({
           ))}
         </Select>
         <div className="mt-2 text-xs text-slate-500">
-          Drag between node handles to draw a link, then bind its interface
-          below. Delete removes selected items.
+          Drag from a dot on any side of one node to any side of another to
+          draw a link, then bind its interface below. Delete removes selected
+          items.
         </div>
       </Card>
 
@@ -274,21 +284,27 @@ function LinkPanel({
   const aIfs = useDeviceInterfaces(fromNode?.device_id ?? "");
   const bIfs = useDeviceInterfaces(toNode?.device_id ?? "");
 
-  const bind = (side: "a" | "b", deviceID: string, ifIndex: number) =>
+  const patch = (fields: Partial<MapLink>) =>
     change((d) => ({
       ...d,
-      links: d.links.map((l) =>
-        l.id === link.id
-          ? {
-              ...l,
-              [side === "a" ? "a_endpoint" : "b_endpoint"]: {
-                device_id: deviceID,
-                if_index: ifIndex,
-              },
-            }
-          : l,
-      ),
+      links: d.links.map((l) => (l.id === link.id ? { ...l, ...fields } : l)),
     }));
+
+  const bind = (side: "a" | "b", deviceID: string, ifIndex: number) =>
+    patch({
+      [side === "a" ? "a_endpoint" : "b_endpoint"]: {
+        device_id: deviceID,
+        if_index: ifIndex,
+      },
+    });
+
+  // Utilisation colouring divides by capacity. Most interfaces report ifSpeed,
+  // but VPN tunnels and other virtual interfaces report 0 — for those the
+  // operator has to say what the link is worth, or it sits at 0% forever.
+  const aIf = aIfs.data?.data.find(
+    (i) => i.if_index === link.a_endpoint?.if_index,
+  );
+  const reportedSpeed = aIf?.speed_bps ?? 0;
 
   return (
     <Card title={`Link ${fromNode?.label ?? "?"} → ${toNode?.label ?? "?"}`}>
@@ -333,6 +349,29 @@ function LinkPanel({
             </Select>
           </label>
         )}
+        <label className="flex flex-col gap-1">
+          <span className="text-xs text-slate-500">
+            Capacity (Mbit/s)
+            {link.a_endpoint &&
+              (reportedSpeed > 0
+                ? ` — interface reports ${Math.round(reportedSpeed / 1e6)}`
+                : " — interface reports no speed, set one to get utilisation colour")}
+          </span>
+          <Input
+            type="number"
+            min={0}
+            placeholder={
+              reportedSpeed > 0 ? String(Math.round(reportedSpeed / 1e6)) : "e.g. 100"
+            }
+            value={link.bandwidth_bps ? link.bandwidth_bps / 1e6 : ""}
+            onChange={(e) => {
+              const mbps = Number(e.target.value);
+              patch({
+                bandwidth_bps: e.target.value && mbps > 0 ? mbps * 1e6 : undefined,
+              });
+            }}
+          />
+        </label>
       </div>
     </Card>
   );

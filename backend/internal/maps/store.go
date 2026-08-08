@@ -25,6 +25,18 @@ type Definition struct {
 	Links   []Link         `json:"links"`
 }
 
+// normalize guarantees the collections are non-nil. A document may have been
+// stored before this rule existed, or written by a client that sent null;
+// callers and JSON consumers must always be able to iterate them.
+func (d *Definition) normalize() {
+	if d.Nodes == nil {
+		d.Nodes = []Node{}
+	}
+	if d.Links == nil {
+		d.Links = []Link{}
+	}
+}
+
 type Node struct {
 	ID       string  `json:"id"`
 	Kind     string  `json:"kind"` // device | site | cloud | label
@@ -42,9 +54,14 @@ type Endpoint struct {
 }
 
 type Link struct {
-	ID           string    `json:"id"`
-	From         string    `json:"from"`
-	To           string    `json:"to"`
+	ID   string `json:"id"`
+	From string `json:"from"`
+	To   string `json:"to"`
+	// Which side of each node the line attaches to (t|r|b|l). Cosmetic only —
+	// the editor records what the operator drew so the map redraws the same
+	// way. Absent on links drawn before this was stored.
+	FromHandle   string    `json:"from_handle,omitempty"`
+	ToHandle     string    `json:"to_handle,omitempty"`
 	AEndpoint    *Endpoint `json:"a_endpoint,omitempty"`
 	BEndpoint    *Endpoint `json:"b_endpoint,omitempty"`
 	BandwidthBPS int64     `json:"bandwidth_bps,omitempty"`
@@ -137,6 +154,7 @@ func (s *Store) Load(ctx context.Context, mapID, which string) (*Definition, int
 	if err := json.Unmarshal(raw, &def); err != nil {
 		return nil, 0, errx.Wrap(errx.KindInternal, err, "decode map")
 	}
+	def.normalize()
 	return &def, rev, nil
 }
 
