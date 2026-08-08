@@ -11,17 +11,21 @@ import (
 	"github.com/freezxp/netinv/backend/internal/alerting/domain"
 )
 
-// fakeIfaces serves interface names from a fixture, keyed device → index → name.
+// fakeIfaces serves interfaces from a fixture, keyed device → if_index.
 type fakeIfaces struct {
-	names map[string]map[string]string
-	calls int
+	ifaces map[string]map[string]InterfaceInfo
+	calls  int
 }
 
 func (f *fakeIfaces) InterfaceID(context.Context, string, string) string { return "" }
-func (f *fakeIfaces) InterfaceNames(_ context.Context, dev string) map[string]string {
+func (f *fakeIfaces) Interfaces(_ context.Context, dev string) map[string]InterfaceInfo {
 	f.calls++
-	return f.names[dev]
+	return f.ifaces[dev]
 }
+
+// up builds a fixture entry for an interface that has been in service, which
+// is the ordinary case — never-up is the exception these tests call out.
+func up(name string) InterfaceInfo { return InterfaceInfo{Name: name, EverUp: true} }
 
 func ifSeries(dev string, idx int) Series {
 	return Series{
@@ -31,35 +35,33 @@ func ifSeries(dev string, idx int) Series {
 }
 
 func newEval(f *fakeIfaces) *Evaluator {
-	return &Evaluator{
-		Ifaces: f,
-		Log:    slog.New(slog.NewTextHandler(io.Discard, nil)),
-	}
+	return &Evaluator{Ifaces: f, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 }
 
 func names(t *testing.T, s []Series, f *fakeIfaces) []string {
 	t.Helper()
 	var out []string
 	for _, x := range s {
-		out = append(out, f.names[x.Labels["device_id"]][x.Labels["if_index"]])
+		out = append(out, f.ifaces[x.Labels["device_id"]][x.Labels["if_index"]].Name)
 	}
 	return out
 }
 
+// ---- dependent (parent/child) suppression ----
+
 // The case from the field: one unplugged port took thirteen VLAN
 // subinterfaces down with it and reported fifteen alerts for one fault.
 func TestSuppressesVLANChildrenOfADownParent(t *testing.T) {
-	fx := map[string]string{"3": "eth9", "79": "lag0"}
-	var series []Series
-	series = append(series, ifSeries("d1", 3), ifSeries("d1", 79))
+	fx := map[string]InterfaceInfo{"3": up("eth9"), "79": up("lag0")}
+	series := []Series{ifSeries("d1", 3), ifSeries("d1", 79)}
 	for i, vlan := range []string{"101", "102", "103", "104", "111", "13", "2", "20", "3", "4", "5", "6", "7"} {
 		idx := 38 + i
-		fx[strconv.Itoa(idx)] = "eth9." + vlan
+		fx[strconv.Itoa(idx)] = up("eth9." + vlan)
 		series = append(series, ifSeries("d1", idx))
 	}
-	f := &fakeIfaces{names: map[string]map[string]string{"d1": fx}}
+	f := &fakeIfaces{ifaces: map[string]map[string]InterfaceInfo{"d1": fx}}
 
-	got, _ := newEval(f).suppressDependents(context.Background(), series)
+	got, _ := newEval(f).suppressNoise(context.Background(), series)
 
 	want := []string{"eth9", "lag0"} // lag0 is nobody's child, so it stands
 	if len(got) != len(want) {
@@ -71,17 +73,17 @@ func TestSuppressesVLANChildrenOfADownParent(t *testing.T) {
 		}
 	}
 	if f.calls != 1 {
-		t.Errorf("looked up names %d times for one device, want 1", f.calls)
+		t.Errorf("looked up interfaces %d times for one device, want 1", f.calls)
 	}
 }
 
 // A subinterface down while its parent is fine is a real fault, not a
 // consequence — suppressing it would hide the thing worth paging on.
 func TestKeepsChildWhenParentIsHealthy(t *testing.T) {
-	f := &fakeIfaces{names: map[string]map[string]string{
-		"d1": {"3": "eth9", "38": "eth9.101"},
+	f := &fakeIfaces{ifaces: map[string]map[string]InterfaceInfo{
+		"d1": {"3": up("eth9"), "38": up("eth9.101")},
 	}}
-	got, _ := newEval(f).suppressDependents(context.Background(), []Series{ifSeries("d1", 38)})
+	got, _ := newEval(f).suppressNoise(context.Background(), []Series{ifSeries("d1", 38)})
 	if len(got) != 1 {
 		t.Fatalf("child alert was dropped though eth9 is up: %v", names(t, got, f))
 	}
@@ -90,10 +92,10 @@ func TestKeepsChildWhenParentIsHealthy(t *testing.T) {
 // Q-in-Q: the direct parent is itself suppressed, and the grandchild has to go
 // with it rather than being promoted to the only visible alert.
 func TestSuppressesGrandchildOfADownParent(t *testing.T) {
-	f := &fakeIfaces{names: map[string]map[string]string{
-		"d1": {"3": "eth9", "38": "eth9.101", "39": "eth9.101.200"},
+	f := &fakeIfaces{ifaces: map[string]map[string]InterfaceInfo{
+		"d1": {"3": up("eth9"), "38": up("eth9.101"), "39": up("eth9.101.200")},
 	}}
-	got, _ := newEval(f).suppressDependents(context.Background(),
+	got, _ := newEval(f).suppressNoise(context.Background(),
 		[]Series{ifSeries("d1", 3), ifSeries("d1", 38), ifSeries("d1", 39)})
 	if len(got) != 1 || names(t, got, f)[0] != "eth9" {
 		t.Fatalf("got %v, want [eth9]", names(t, got, f))
@@ -102,14 +104,50 @@ func TestSuppressesGrandchildOfADownParent(t *testing.T) {
 
 // The same name on another device must not suppress anything here.
 func TestSuppressionIsPerDevice(t *testing.T) {
-	f := &fakeIfaces{names: map[string]map[string]string{
-		"d1": {"3": "eth9"},
-		"d2": {"38": "eth9.101"},
+	f := &fakeIfaces{ifaces: map[string]map[string]InterfaceInfo{
+		"d1": {"3": up("eth9")},
+		"d2": {"38": up("eth9.101")},
 	}}
-	got, _ := newEval(f).suppressDependents(context.Background(),
+	got, _ := newEval(f).suppressNoise(context.Background(),
 		[]Series{ifSeries("d1", 3), ifSeries("d2", 38)})
 	if len(got) != 2 {
 		t.Fatalf("cross-device suppression: got %v, want both", names(t, got, f))
+	}
+}
+
+// ---- never-in-service suppression ----
+
+// A port never plugged in reports down forever. "Never worked" is not an
+// incident, and it must not alert.
+func TestSuppressesInterfaceNeverInService(t *testing.T) {
+	f := &fakeIfaces{ifaces: map[string]map[string]InterfaceInfo{
+		"d1": {"4": {Name: "eth1", EverUp: false}},
+	}}
+	got, _ := newEval(f).suppressNoise(context.Background(), []Series{ifSeries("d1", 4)})
+	if len(got) != 0 {
+		t.Fatalf("never-up port alerted: %v", names(t, got, f))
+	}
+}
+
+// The whole point of a stored flag over a lookback window: a port that has
+// once worked keeps alerting however long it stays down.
+func TestKeepsAlertingOnAPortThatHasWorked(t *testing.T) {
+	f := &fakeIfaces{ifaces: map[string]map[string]InterfaceInfo{
+		"d1": {"4": up("eth1")},
+	}}
+	got, _ := newEval(f).suppressNoise(context.Background(), []Series{ifSeries("d1", 4)})
+	if len(got) != 1 {
+		t.Fatal("a port that has been in service stopped alerting")
+	}
+}
+
+// Silence is the wrong default when inventory has no record of the interface:
+// an unknown interface must still alert rather than be treated as never-up.
+func TestUnknownInterfaceStillAlerts(t *testing.T) {
+	f := &fakeIfaces{ifaces: map[string]map[string]InterfaceInfo{"d1": {}}}
+	got, _ := newEval(f).suppressNoise(context.Background(), []Series{ifSeries("d1", 99)})
+	if len(got) != 1 {
+		t.Fatal("interface missing from inventory was silently suppressed")
 	}
 }
 
@@ -118,14 +156,14 @@ func TestSuppressionIsPerDevice(t *testing.T) {
 func TestNonInterfaceSeriesPassThrough(t *testing.T) {
 	f := &fakeIfaces{}
 	in := []Series{{Labels: map[string]string{"device_id": "d1"}, Value: 91}}
-	if got, _ := newEval(f).suppressDependents(context.Background(), in); len(got) != 1 {
+	if got, _ := newEval(f).suppressNoise(context.Background(), in); len(got) != 1 {
 		t.Errorf("device-scoped series was suppressed")
 	}
 	if f.calls != 0 {
-		t.Errorf("looked up interface names for a device-scoped rule")
+		t.Errorf("looked up interfaces for a device-scoped rule")
 	}
 	bare := &Evaluator{Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
-	if got, _ := bare.suppressDependents(context.Background(), in); len(got) != 1 {
+	if got, _ := bare.suppressNoise(context.Background(), in); len(got) != 1 {
 		t.Errorf("nil resolver should pass series through")
 	}
 }
@@ -145,7 +183,7 @@ func TestParentInterface(t *testing.T) {
 	}
 }
 
-// ---- end to end through evalRule: one fault must fire exactly one alert ----
+// ---- end to end through evalRule ----
 
 type stubInstances struct{ fired []*domain.Instance }
 
@@ -169,21 +207,25 @@ type stubMetrics struct{ series []Series }
 
 func (s stubMetrics) Query(context.Context, string) ([]Series, error) { return s.series, nil }
 
-func TestEvalRuleFiresOnceForOneFault(t *testing.T) {
-	f := &fakeIfaces{names: map[string]map[string]string{
-		"d1": {"3": "eth9", "38": "eth9.101", "39": "eth9.102"},
-	}}
+func run(t *testing.T, f *fakeIfaces, series []Series) *stubInstances {
+	t.Helper()
 	inst := &stubInstances{}
 	e := &Evaluator{
-		Instances: inst,
-		Metrics:   stubMetrics{series: []Series{ifSeries("d1", 3), ifSeries("d1", 38), ifSeries("d1", 39)}},
-		Ifaces:    f,
-		Log:       slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Instances: inst, Metrics: stubMetrics{series: series}, Ifaces: f,
+		Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 	if err := e.evalRule(context.Background(),
 		&domain.Rule{ID: "ar_if_down", Name: "Interface down", Expr: "x"}); err != nil {
 		t.Fatal(err)
 	}
+	return inst
+}
+
+func TestEvalRuleFiresOnceForOneFault(t *testing.T) {
+	f := &fakeIfaces{ifaces: map[string]map[string]InterfaceInfo{
+		"d1": {"3": up("eth9"), "38": up("eth9.101"), "39": up("eth9.102")},
+	}}
+	inst := run(t, f, []Series{ifSeries("d1", 3), ifSeries("d1", 38), ifSeries("d1", 39)})
 	if len(inst.fired) != 1 {
 		t.Fatalf("fired %d alerts for one down port, want 1", len(inst.fired))
 	}
@@ -197,6 +239,26 @@ func TestEvalRuleFiresOnceForOneFault(t *testing.T) {
 	}
 }
 
+// The fleet shape that prompted this: unused ports plus a parent's VLAN
+// children, with one port that genuinely failed.
+func TestEvalRuleReportsOnlyTheRealFault(t *testing.T) {
+	f := &fakeIfaces{ifaces: map[string]map[string]InterfaceInfo{
+		"d1": {
+			"3":  {Name: "eth9", EverUp: false},  // never plugged in
+			"5":  {Name: "eth10", EverUp: false}, // never plugged in
+			"38": {Name: "eth9.101", EverUp: false},
+			"7":  up("eth0"), // was working, now down — the actual incident
+		},
+	}}
+	inst := run(t, f, []Series{ifSeries("d1", 3), ifSeries("d1", 5), ifSeries("d1", 38), ifSeries("d1", 7)})
+	if len(inst.fired) != 1 {
+		t.Fatalf("fired %d alerts, want only the port that failed", len(inst.fired))
+	}
+	if got := inst.fired[0].Labels["if_name"]; got != "eth0" {
+		t.Errorf("alerted on %q, want eth0", got)
+	}
+}
+
 // Alert identity must stay metric identity: adding the readable name to the
 // labels must not change the fingerprint, or every alert re-fires on upgrade
 // and again on any interface rename.
@@ -206,17 +268,8 @@ func TestNameLabelDoesNotChangeFingerprint(t *testing.T) {
 	if domain.Fingerprint("ar_if_down", metric) == domain.Fingerprint("ar_if_down", withName) {
 		t.Skip("fingerprint ignores extra labels; nothing to guard")
 	}
-
-	f := &fakeIfaces{names: map[string]map[string]string{"d1": {"3": "eth9"}}}
-	inst := &stubInstances{}
-	e := &Evaluator{
-		Instances: inst, Metrics: stubMetrics{series: []Series{ifSeries("d1", 3)}},
-		Ifaces: f, Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
-	}
-	if err := e.evalRule(context.Background(),
-		&domain.Rule{ID: "ar_if_down", Name: "Interface down", Expr: "x"}); err != nil {
-		t.Fatal(err)
-	}
+	f := &fakeIfaces{ifaces: map[string]map[string]InterfaceInfo{"d1": {"3": up("eth9")}}}
+	inst := run(t, f, []Series{ifSeries("d1", 3)})
 	if got := inst.fired[0].Fingerprint; got != domain.Fingerprint("ar_if_down", metric) {
 		t.Errorf("fingerprint changed once if_name was added: %s", got)
 	}

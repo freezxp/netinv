@@ -48,13 +48,22 @@ type AlertPublisher interface {
 	Publish(ctx context.Context, event string, inst *domain.Instance, rule *domain.Rule) error
 }
 
+// InterfaceInfo is what alert suppression needs to know about an interface.
+type InterfaceInfo struct {
+	Name string
+	// EverUp is false until sync has observed the interface operationally up.
+	// Monotonic once true — see FR-ALR-08 for why this is a stored flag rather
+	// than a lookback window.
+	EverUp bool
+}
+
 // InterfaceResolver best-effort maps (device_id, if_index) → interface id, and
-// exposes a device's interface names for dependency suppression.
+// exposes a device's interfaces for alert suppression.
 type InterfaceResolver interface {
 	InterfaceID(ctx context.Context, deviceID, ifIndex string) string
-	// InterfaceNames returns if_index → name for one device. A nil map simply
+	// Interfaces returns if_index → info for one device. A nil map simply
 	// disables suppression for that device.
-	InterfaceNames(ctx context.Context, deviceID string) map[string]string
+	Interfaces(ctx context.Context, deviceID string) map[string]InterfaceInfo
 }
 
 type Evaluator struct {
@@ -98,7 +107,7 @@ func (e *Evaluator) evalRule(ctx context.Context, rule *domain.Rule) error {
 	if err != nil {
 		return fmt.Errorf("query: %w", err)
 	}
-	series, ifNames := e.suppressDependents(ctx, series)
+	series, ifaces := e.suppressNoise(ctx, series)
 	live, err := e.Instances.LiveByRule(ctx, rule.ID)
 	if err != nil {
 		return err
@@ -136,7 +145,7 @@ func (e *Evaluator) evalRule(ctx context.Context, rule *domain.Rule) error {
 			// metric only carries if_index, so summaries read as a blank. Added
 			// after fingerprinting so alert identity stays metric identity and
 			// a rename doesn't re-fire the alert.
-			if name := ifNames[inst.DeviceID][s.Labels["if_index"]]; name != "" {
+			if name := ifaces[inst.DeviceID][s.Labels["if_index"]].Name; name != "" {
 				labels := make(map[string]string, len(s.Labels)+1)
 				for k, v := range s.Labels {
 					labels[k] = v
@@ -189,55 +198,67 @@ func parentInterface(name string) string {
 	return ""
 }
 
-// suppressDependents drops symptom series whose cause is already firing in the
-// same result: one unplugged port takes its VLAN subinterfaces down with it,
-// and reporting each of them is fifteen alerts for one fault.
+// suppressNoise drops interface series that describe no actionable fault
+// (FR-ALR-08). Two causes, both scoped per device and to a single rule's own
+// results:
 //
-// Only ever suppresses within a single rule's own result set, so a
-// subinterface still alerts whenever its parent is healthy — that case is a
-// genuine fault rather than a consequence. Interface-scoped rules are the ones
-// this can apply to; anything without an if_index passes straight through.
-// Returns the surviving series plus the device → if_index → name lookup it
-// built, which the caller reuses to label alerts with a readable name.
-func (e *Evaluator) suppressDependents(ctx context.Context, series []Series) ([]Series, map[string]map[string]string) {
+//   - a subinterface whose parent is firing the same rule. One unplugged port
+//     takes its VLAN children down with it, and reporting each of them is
+//     fifteen alerts for one fault. A subinterface down while its parent is
+//     healthy still alerts — that is a genuine fault, not a consequence.
+//   - an interface never observed in service. A port never plugged in reports
+//     down forever, and "never worked" is not an incident. The flag behind it
+//     is monotonic, so a port that has ever worked alerts indefinitely.
+//
+// Anything without an if_index — device-scoped rules like CPU or ICMP — passes
+// straight through. Returns the surviving series plus the device → if_index →
+// info lookup it built, which the caller reuses to label alerts readably.
+func (e *Evaluator) suppressNoise(ctx context.Context, series []Series) ([]Series, map[string]map[string]InterfaceInfo) {
 	if e.Ifaces == nil {
 		return series, nil
 	}
-	// Names of the interfaces this rule is firing on, per device.
-	names := map[string]map[string]string{} // device_id → if_index → name
-	firing := map[string]map[string]bool{}  // device_id → name → firing
+	ifaces := map[string]map[string]InterfaceInfo{} // device_id → if_index → info
+	firing := map[string]map[string]bool{}          // device_id → name → firing
 	for _, s := range series {
 		dev, idx := s.Labels["device_id"], s.Labels["if_index"]
 		if dev == "" || idx == "" {
 			continue
 		}
-		if _, ok := names[dev]; !ok {
-			names[dev] = e.Ifaces.InterfaceNames(ctx, dev)
+		if _, ok := ifaces[dev]; !ok {
+			ifaces[dev] = e.Ifaces.Interfaces(ctx, dev)
 			firing[dev] = map[string]bool{}
 		}
-		if n := names[dev][idx]; n != "" {
+		if n := ifaces[dev][idx].Name; n != "" {
 			firing[dev][n] = true
 		}
 	}
 
 	out := make([]Series, 0, len(series))
-	suppressed := 0
+	var dependent, neverUp int
 	for _, s := range series {
 		dev, idx := s.Labels["device_id"], s.Labels["if_index"]
-		name := names[dev][idx]
-		// Test against the unfiltered set: with Q-in-Q the direct parent may
-		// itself be suppressed, and the child must still go with it.
-		if name != "" && firing[dev][parentInterface(name)] {
-			suppressed++
+		info, known := ifaces[dev][idx]
+		// Parentage is tested against the unfiltered firing set: with Q-in-Q
+		// the direct parent may itself be suppressed, and the child has to go
+		// with it rather than be promoted to the only visible alert.
+		if info.Name != "" && firing[dev][parentInterface(info.Name)] {
+			dependent++
+			continue
+		}
+		// Only suppress on a flag we actually hold. An interface inventory
+		// knows nothing about keeps alerting — silence is the wrong default
+		// when the data is missing.
+		if known && !info.EverUp {
+			neverUp++
 			continue
 		}
 		out = append(out, s)
 	}
-	if suppressed > 0 {
-		e.Log.Debug("suppressed dependent interface alerts",
-			"count", suppressed, "remaining", len(out))
+	if dependent+neverUp > 0 {
+		e.Log.Debug("suppressed interface alerts", "dependent", dependent,
+			"never_in_service", neverUp, "remaining", len(out))
 	}
-	return out, names
+	return out, ifaces
 }
 
 // notify publishes unless silenced or collapsed by flapping (FR-ALR-05/06).

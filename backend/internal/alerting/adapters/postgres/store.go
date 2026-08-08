@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/freezxp/netinv/backend/internal/alerting/app"
 	"github.com/freezxp/netinv/backend/internal/alerting/domain"
 	"github.com/freezxp/netinv/backend/internal/platform/errx"
 )
@@ -258,23 +259,23 @@ func (s *Store) InterfaceID(ctx context.Context, deviceID, ifIndex string) strin
 	return id
 }
 
-// InterfaceNames implements app.InterfaceResolver: if_index → name for a whole
-// device in one round trip, so dependency suppression costs one query per
-// device per cycle rather than one per alerting series.
-func (s *Store) InterfaceNames(ctx context.Context, deviceID string) map[string]string {
+// Interfaces implements app.InterfaceResolver: if_index → name and service
+// history for a whole device in one round trip, so alert suppression costs one
+// query per device per cycle rather than one per alerting series.
+func (s *Store) Interfaces(ctx context.Context, deviceID string) map[string]app.InterfaceInfo {
 	rows, err := s.Pool.Query(ctx, `
-		SELECT if_index, coalesce(name,'') FROM inventory.interfaces
+		SELECT if_index, coalesce(name,''), ever_up FROM inventory.interfaces
 		WHERE device_id=$1 AND state != 'removed'`, deviceID)
 	if err != nil {
 		return nil
 	}
 	defer rows.Close()
-	out := map[string]string{}
+	out := map[string]app.InterfaceInfo{}
 	for rows.Next() {
 		var idx int
-		var name string
-		if rows.Scan(&idx, &name) == nil && name != "" {
-			out[strconv.Itoa(idx)] = name
+		var info app.InterfaceInfo
+		if rows.Scan(&idx, &info.Name, &info.EverUp) == nil {
+			out[strconv.Itoa(idx)] = info
 		}
 	}
 	return out

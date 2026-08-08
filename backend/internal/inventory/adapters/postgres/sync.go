@@ -89,11 +89,12 @@ func (r *SyncRepo) Apply(ctx context.Context, deviceID string, res app.DiffResul
 				if _, err := tx.Exec(ctx, `
 					INSERT INTO inventory.interfaces
 						(id, device_id, if_index, name, alias, descr, if_type, mtu,
-						 speed_bps, phys_address, admin_status, oper_status)
+						 speed_bps, phys_address, admin_status, oper_status, ever_up)
 					VALUES ($1,$2,$3,nullif($4,''),nullif($5,''),nullif($6,''),$7,$8,$9,
-					        nullif($10,'')::macaddr,$11,$12)
+					        nullif($10,'')::macaddr,$11,$12,$12 = 1)
 					ON CONFLICT (device_id, if_index) DO UPDATE SET
 						name = excluded.name, alias = excluded.alias,
+						ever_up = inventory.interfaces.ever_up OR excluded.ever_up,
 						state = 'present', miss_streak = 0, updated_at = now()`,
 					ifID, deviceID, u.Rec.IfIndex, u.Rec.Name, u.Rec.Alias, u.Rec.Descr,
 					u.Rec.IfType, u.Rec.MTU, u.Rec.SpeedBPS, u.Rec.PhysAddress,
@@ -108,7 +109,8 @@ func (r *SyncRepo) Apply(ctx context.Context, deviceID string, res app.DiffResul
 					if_index=$2, name=nullif($3,''), alias=nullif($4,''),
 					descr=nullif($5,''), if_type=$6, mtu=$7, speed_bps=$8,
 					phys_address=nullif($9,'')::macaddr, admin_status=$10,
-					oper_status=$11, state='present', miss_streak=0,
+					oper_status=$11, ever_up = ever_up OR $11 = 1,
+					state='present', miss_streak=0,
 					missing_since=NULL, updated_at=now()
 				WHERE id=$1`,
 				u.ExistingID, u.Rec.IfIndex, u.Rec.Name, u.Rec.Alias, u.Rec.Descr,

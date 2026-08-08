@@ -169,6 +169,8 @@ export interface InterfaceRow {
   oper_status: number;
   state: string;
   monitor: boolean;
+  /** False for a port never seen in service; those don't raise down alerts. */
+  ever_up: boolean;
 }
 
 export function useDeviceInterfaces(id: string) {

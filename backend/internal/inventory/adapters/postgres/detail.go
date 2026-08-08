@@ -20,13 +20,17 @@ type InterfaceRow struct {
 	OperStatus  int    `json:"oper_status"`
 	State       string `json:"state"`
 	Monitor     bool   `json:"monitor"`
+	// EverUp is false for a port never observed in service. Those are excluded
+	// from interface-down alerting (FR-ALR-08), so the UI must be able to say
+	// why a down port is not alerting.
+	EverUp bool `json:"ever_up"`
 }
 
 func (r *DeviceRepo) Interfaces(ctx context.Context, deviceID string) ([]InterfaceRow, error) {
 	rows, err := r.Pool.Query(ctx, `
 		SELECT id, if_index, coalesce(name,''), coalesce(alias,''),
 		       coalesce(speed_bps,0), coalesce(mtu,0), coalesce(admin_status,0),
-		       coalesce(oper_status,0), state, monitor
+		       coalesce(oper_status,0), state, monitor, ever_up
 		FROM inventory.interfaces
 		WHERE device_id = $1 AND state != 'removed'
 		ORDER BY if_index`, deviceID)
@@ -38,7 +42,8 @@ func (r *DeviceRepo) Interfaces(ctx context.Context, deviceID string) ([]Interfa
 	for rows.Next() {
 		var i InterfaceRow
 		if err := rows.Scan(&i.ID, &i.IfIndex, &i.Name, &i.Alias, &i.SpeedBPS,
-			&i.MTU, &i.AdminStatus, &i.OperStatus, &i.State, &i.Monitor); err != nil {
+			&i.MTU, &i.AdminStatus, &i.OperStatus, &i.State, &i.Monitor,
+			&i.EverUp); err != nil {
 			return nil, err
 		}
 		out = append(out, i)

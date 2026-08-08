@@ -185,6 +185,16 @@ function InterfacesTab({
                   <StatusBadge
                     status={i.oper_status === 1 ? "up" : i.oper_status === 2 ? "critical" : "unreachable"}
                   />
+                  {/* A down port that never worked doesn't alert (FR-ALR-08);
+                      say so here, or its silence looks like a missed alert. */}
+                  {i.oper_status === 2 && !i.ever_up && (
+                    <span
+                      className="ml-2 text-[10px] text-slate-500"
+                      title="This port has never been seen up, so it raises no down alert. It will start alerting once it has been in service."
+                    >
+                      never used
+                    </span>
+                  )}
                 </td>
                 <td className="px-3 py-1.5">{statusWord(i.admin_status)}</td>
                 <td className="px-3 py-1.5 text-slate-500">{i.state}</td>
