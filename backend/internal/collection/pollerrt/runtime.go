@@ -144,6 +144,20 @@ func (r *Runtime) handle(ctx context.Context, d amqp.Delivery) {
 		_ = d.Reject(false) // poison → DLQ policy (doc 23 §3)
 		return
 	}
+	// Discovery sweeps ride the same site queue but carry their own payload.
+	if job.Family == "discovery" {
+		var dj wire.DiscoveryJob
+		if err := json.Unmarshal(d.Body, &dj); err != nil {
+			r.Log.Warn("malformed discovery job dropped", "err", err)
+			_ = d.Reject(false)
+			return
+		}
+		if err := r.executeDiscovery(ctx, dj); err != nil {
+			r.Log.Error("discovery sweep failed", "cidr", dj.CIDR, "err", err)
+		}
+		_ = d.Ack(false)
+		return
+	}
 	start := time.Now()
 	samples, err := r.execute(ctx, job)
 	dur := time.Since(start)

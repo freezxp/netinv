@@ -45,12 +45,13 @@ func (h *PollerHandler) RegisterAuthed(r chi.Router) {
 	})
 }
 
-func (h *PollerHandler) meta(r *http.Request) app.PollerMeta {
+// meta captures request attribution for audit events (doc 21 §1).
+func meta(r *http.Request) app.Meta {
 	ip, _, _ := net.SplitHostPort(r.RemoteAddr)
 	if fwd := r.Header.Get("X-Forwarded-For"); fwd != "" {
 		ip = strings.TrimSpace(strings.Split(fwd, ",")[0])
 	}
-	return app.PollerMeta{
+	return app.Meta{
 		Actor:     httpx.ClaimsFrom(r.Context()).Subject,
 		SourceIP:  ip,
 		UserAgent: r.UserAgent(),
@@ -142,7 +143,7 @@ func (h *PollerHandler) issueToken(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errx.New(errx.KindInvalid, "malformed JSON body"))
 		return
 	}
-	p, token, err := h.Svc.IssueEnrollToken(r.Context(), req.Name, req.SiteID, h.meta(r))
+	p, token, err := h.Svc.IssueEnrollToken(r.Context(), req.Name, req.SiteID, meta(r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -161,7 +162,7 @@ func (h *PollerHandler) register(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errx.New(errx.KindInvalid, "token is required"))
 		return
 	}
-	res, err := h.Svc.Register(r.Context(), req.Token, req.Version, h.meta(r))
+	res, err := h.Svc.Register(r.Context(), req.Token, req.Version, meta(r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -188,7 +189,7 @@ func (h *PollerHandler) heartbeat(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *PollerHandler) approve(w http.ResponseWriter, r *http.Request) {
-	if err := h.Svc.Approve(r.Context(), chi.URLParam(r, "id"), h.meta(r)); err != nil {
+	if err := h.Svc.Approve(r.Context(), chi.URLParam(r, "id"), meta(r)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -197,7 +198,7 @@ func (h *PollerHandler) approve(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *PollerHandler) disable(w http.ResponseWriter, r *http.Request) {
-	if err := h.Svc.Disable(r.Context(), chi.URLParam(r, "id"), h.meta(r)); err != nil {
+	if err := h.Svc.Disable(r.Context(), chi.URLParam(r, "id"), meta(r)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}

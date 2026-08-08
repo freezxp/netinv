@@ -2,7 +2,7 @@
 // keyset pagination. Virtualization arrives with the large-fleet sprint.
 import { useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { useDevices, useSites } from "../../api/hooks";
+import { useDeviceHealth, useDevices, useSites } from "../../api/hooks";
 import { useAuthStore } from "../auth/store";
 import {
   Button,
@@ -44,6 +44,7 @@ export function InventoryPage() {
   };
   const devices = useDevices(filters);
   const sites = useSites();
+  const health = useDeviceHealth();
   const siteName = (id: string) =>
     sites.data?.data.find((s) => s.id === id)?.name ?? id;
 
@@ -159,13 +160,21 @@ export function InventoryPage() {
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-slate-200 text-left text-xs uppercase text-slate-500 dark:border-slate-800">
-              {["Status", "Name", "Management IP", "Site", "Model", "OS", "Tags"].map(
-                (h) => (
-                  <th key={h} className="px-4 py-2.5 font-medium">
-                    {h}
-                  </th>
-                ),
-              )}
+              {[
+                "Status",
+                "Name",
+                "Management IP",
+                "Site",
+                "Model",
+                "CPU",
+                "Memory",
+                "Temp",
+                "Tags",
+              ].map((h) => (
+                <th key={h} className="px-4 py-2.5 font-medium">
+                  {h}
+                </th>
+              ))}
             </tr>
           </thead>
           <tbody>
@@ -185,7 +194,15 @@ export function InventoryPage() {
                 <td className="mono px-4 py-2">{d.mgmt_ip}</td>
                 <td className="px-4 py-2">{siteName(d.site_id)}</td>
                 <td className="px-4 py-2">{d.model || "—"}</td>
-                <td className="px-4 py-2">{d.os_version || "—"}</td>
+                <td className="px-4 py-2">
+                  <StatCell value={health.data?.data[d.id]?.cpu} unit="%" warn={70} crit={85} />
+                </td>
+                <td className="px-4 py-2">
+                  <StatCell value={health.data?.data[d.id]?.memory} unit="%" warn={80} crit={90} />
+                </td>
+                <td className="px-4 py-2">
+                  <StatCell value={health.data?.data[d.id]?.temp} unit="°C" warn={70} crit={85} />
+                </td>
                 <td className="px-4 py-2 text-slate-500">
                   {d.tags.join(", ") || "—"}
                 </td>
@@ -220,5 +237,29 @@ export function InventoryPage() {
         </Button>
       </div>
     </div>
+  );
+}
+
+// Compact live stat with threshold tinting. A device whose connector exposes
+// no health simply shows a dash rather than a misleading zero.
+function StatCell({
+  value,
+  unit,
+  warn,
+  crit,
+}: {
+  value?: number;
+  unit: string;
+  warn: number;
+  crit: number;
+}) {
+  if (value === undefined) return <span className="text-slate-500">—</span>;
+  const tone =
+    value >= crit ? "text-red-500" : value >= warn ? "text-amber-500" : "";
+  return (
+    <span className={`mono ${tone}`}>
+      {value.toFixed(unit === "°C" ? 1 : 0)}
+      {unit}
+    </span>
   );
 }

@@ -69,6 +69,46 @@ type SyncSnapshot struct {
 	Adjacencies []SyncAdjacency `json:"adjacencies,omitempty"`
 }
 
+// ---- subnet discovery (FR-SYNC-04, doc 11 §7) ----
+
+// NamedCred is a candidate credential for a discovery sweep: the poller tries
+// each in turn and reports which one answered.
+type NamedCred struct {
+	CredentialID string   `json:"credential_id"`
+	Name         string   `json:"name"`
+	Cred         SNMPCred `json:"cred"`
+}
+
+type DiscoveryJob struct {
+	// Family is always "discovery" — sweeps share the site job queue with
+	// polls, so the poller discriminates on this field.
+	Family    string      `json:"family"`
+	JobID     string      `json:"job_id"`
+	RuleID    string      `json:"rule_id"`
+	SiteID    string      `json:"site_id"`
+	CIDR      string      `json:"cidr"`
+	Port      int         `json:"port"`
+	Creds     []NamedCred `json:"creds"`
+	TimeoutMS int         `json:"timeout_ms"`
+}
+
+type DiscoveredHost struct {
+	IP           string `json:"ip"`
+	SysName      string `json:"sys_name"`
+	SysDescr     string `json:"sys_descr"`
+	SysObjectID  string `json:"sys_object_id"`
+	CredentialID string `json:"credential_id"`
+}
+
+type DiscoveryResult struct {
+	JobID    string           `json:"job_id"`
+	RuleID   string           `json:"rule_id"`
+	PollerID string           `json:"poller_id"`
+	Scanned  int              `json:"scanned"`
+	Found    []DiscoveredHost `json:"found"`
+	Error    string           `json:"error,omitempty"`
+}
+
 // AlertEvent rides events.domain (rk alert.fired / alert.resolved) from the
 // alerter to the notifier — fat event, no callback needed (doc 05 §8).
 type AlertEvent struct {

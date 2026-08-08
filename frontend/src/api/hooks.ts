@@ -109,6 +109,21 @@ export interface HeatCell {
   class: "ok" | "warning" | "critical" | "unreachable" | "muted";
 }
 
+export type DeviceHealthMap = Record<
+  string,
+  { cpu?: number; memory?: number; temp?: number; load?: number }
+>;
+
+// One payload with the latest CPU/memory/temperature for every device, so the
+// inventory list shows live stats without a query per row.
+export function useDeviceHealth() {
+  return useQuery({
+    queryKey: ["dashboard", "device-health"],
+    queryFn: () => api<Wrapped<DeviceHealthMap>>("/dashboard/device-health"),
+    refetchInterval: 30_000,
+  });
+}
+
 export function useHeatmap() {
   return useQuery({
     queryKey: ["dashboard", "heatmap"],

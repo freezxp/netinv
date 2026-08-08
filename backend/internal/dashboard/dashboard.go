@@ -36,6 +36,7 @@ func (s *Service) Register(r chi.Router) {
 		g.Get("/dashboard/top", s.top) // cached per list param inside
 		g.Get("/dashboard/heatmap", s.cached("heatmap", s.heatmap))
 		g.Get("/dashboard/watchlist", s.cached("watchlist", s.watchlist))
+		g.Get("/dashboard/device-health", s.cached("device-health", s.deviceHealth))
 	})
 }
 
@@ -228,6 +229,47 @@ func (s *Service) heatmap(ctx context.Context) (any, error) {
 		})
 	}
 	return out, rows.Err()
+}
+
+// deviceHealth returns the latest CPU / memory / temperature per device in one
+// payload, so the inventory list can show live stats with a single request
+// instead of one query per row (NFR-12: no per-viewer, per-row fan-out).
+func (s *Service) deviceHealth(ctx context.Context) (any, error) {
+	out := map[string]map[string]float64{}
+	set := func(deviceID, field string, v float64) {
+		if deviceID == "" {
+			return
+		}
+		if out[deviceID] == nil {
+			out[deviceID] = map[string]float64{}
+		}
+		out[deviceID][field] = v
+	}
+	queries := []struct {
+		field, expr string
+		max         bool // keep the highest value across series (sensors)
+	}{
+		{"cpu", `netinv_device_cpu_percent`, true},
+		{"memory", `netinv_device_memory_percent`, false},
+		{"temp", `netinv_sensor_temperature_celsius`, true},
+		{"load", `netinv_device_load_average{period="1m"}`, false},
+	}
+	for _, q := range queries {
+		series, err := s.VM.Query(ctx, q.expr)
+		if err != nil {
+			continue // a missing family must not fail the whole payload
+		}
+		for _, se := range series {
+			id := se.Labels["device_id"]
+			if q.max {
+				if prev, ok := out[id][q.field]; ok && prev >= se.Value {
+					continue
+				}
+			}
+			set(id, q.field, round2(se.Value))
+		}
+	}
+	return out, nil
 }
 
 // ---- capacity watchlist: sustained >70% links with trend (doc 30 §2) ----

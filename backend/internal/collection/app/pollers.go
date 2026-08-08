@@ -34,14 +34,15 @@ type PollerService struct {
 	Audit audit.Writer
 }
 
-type PollerMeta struct {
+type Meta struct {
 	Actor, SourceIP, UserAgent, TraceID string
 }
 
-func (m PollerMeta) event(action, rid string, detail map[string]any) audit.Event {
+// event builds an audit record for any resource this context owns.
+func (m Meta) event(action, resourceKind, rid string, detail map[string]any) audit.Event {
 	return audit.Event{
 		ActorKind: "user", ActorID: m.Actor, Action: action,
-		ResourceKind: "poller", ResourceID: rid, Detail: detail,
+		ResourceKind: resourceKind, ResourceID: rid, Detail: detail,
 		SourceIP: m.SourceIP, UserAgent: m.UserAgent, TraceID: m.TraceID,
 	}
 }
@@ -63,7 +64,7 @@ func hashOf(plain string) string {
 
 // IssueEnrollToken creates a pending poller and returns the one-time token.
 func (s *PollerService) IssueEnrollToken(ctx context.Context, name, siteID string,
-	m PollerMeta) (*domain.Poller, string, error) {
+	m Meta) (*domain.Poller, string, error) {
 	if name == "" || siteID == "" {
 		return nil, "", errx.New(errx.KindInvalid, "name and site_id are required")
 	}
@@ -78,7 +79,7 @@ func (s *PollerService) IssueEnrollToken(ctx context.Context, name, siteID strin
 	if err := s.Repo.CreatePending(ctx, p, hash); err != nil {
 		return nil, "", err
 	}
-	s.Audit.Write(ctx, m.event("poller.enroll_token.issue", p.ID,
+	s.Audit.Write(ctx, m.event("poller.enroll_token.issue", "poller", p.ID,
 		map[string]any{"name": name, "site_id": siteID}))
 	return p, plain, nil
 }
@@ -92,7 +93,7 @@ type RegisterResult struct {
 
 // Register consumes an enrollment token (called by the poller itself).
 func (s *PollerService) Register(ctx context.Context, enrollToken, version string,
-	m PollerMeta) (*RegisterResult, error) {
+	m Meta) (*RegisterResult, error) {
 	p, err := s.Repo.FindByEnrollHash(ctx, hashOf(enrollToken))
 	if err != nil {
 		return nil, errx.New(errx.KindUnauthorized, "invalid enrollment token")
@@ -125,18 +126,18 @@ func (s *PollerService) Heartbeat(ctx context.Context, pollerID, token, version 
 	return s.Repo.Heartbeat(ctx, pollerID, version, stats, time.Now().UTC())
 }
 
-func (s *PollerService) Approve(ctx context.Context, pollerID string, m PollerMeta) error {
+func (s *PollerService) Approve(ctx context.Context, pollerID string, m Meta) error {
 	if err := s.Repo.SetStatus(ctx, pollerID, domain.PollerActive); err != nil {
 		return err
 	}
-	s.Audit.Write(ctx, m.event("poller.approve", pollerID, nil))
+	s.Audit.Write(ctx, m.event("poller.approve", "poller", pollerID, nil))
 	return nil
 }
 
-func (s *PollerService) Disable(ctx context.Context, pollerID string, m PollerMeta) error {
+func (s *PollerService) Disable(ctx context.Context, pollerID string, m Meta) error {
 	if err := s.Repo.SetStatus(ctx, pollerID, domain.PollerDisabled); err != nil {
 		return err
 	}
-	s.Audit.Write(ctx, m.event("poller.disable", pollerID, nil))
+	s.Audit.Write(ctx, m.event("poller.disable", "poller", pollerID, nil))
 	return nil
 }

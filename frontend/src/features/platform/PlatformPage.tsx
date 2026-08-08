@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../api/client";
 import { useSites } from "../../api/hooks";
 import { useAuthStore, hasPermissionRole } from "../auth/store";
+import { DiscoveryTab } from "./DiscoveryTab";
 import {
   Button,
   Card,
@@ -16,7 +17,7 @@ import {
 } from "../../components/ui";
 import { formatDuration } from "../../lib/format";
 
-const tabs = ["Sites", "Pollers", "Connectors", "Credentials"] as const;
+const tabs = ["Sites", "Discovery", "Pollers", "Connectors", "Credentials"] as const;
 
 export function PlatformPage() {
   const [tab, setTab] = useState<(typeof tabs)[number]>("Sites");
@@ -44,6 +45,7 @@ export function PlatformPage() {
         ))}
       </div>
       {tab === "Sites" && <SitesTab />}
+      {tab === "Discovery" && <DiscoveryTab />}
       {tab === "Pollers" && <PollersTab />}
       {tab === "Connectors" && <ConnectorsTab />}
       {tab === "Credentials" && <CredentialsTab />}

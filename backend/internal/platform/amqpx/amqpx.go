@@ -15,10 +15,11 @@ import (
 )
 
 const (
-	JobsExchange     = "jobs.poll"
-	MetricsQueue     = "metrics.raw"
-	SyncResultsQueue = "sync.results"
-	EventsExchange   = "events.domain"
+	JobsExchange          = "jobs.poll"
+	MetricsQueue          = "metrics.raw"
+	SyncResultsQueue      = "sync.results"
+	DiscoveryResultsQueue = "discovery.results"
+	EventsExchange        = "events.domain"
 )
 
 func SiteQueue(siteID string) string   { return "poll.site." + siteID }
@@ -139,6 +140,17 @@ func (c *Client) EnsureSyncResultsQueue() error {
 		return err
 	}
 	_, err = ch.QueueDeclare(SyncResultsQueue, true, false, false, false,
+		amqp.Table{"x-queue-type": "quorum"})
+	return err
+}
+
+// EnsureDiscoveryResultsQueue declares discovery.results (quorum).
+func (c *Client) EnsureDiscoveryResultsQueue() error {
+	ch, err := c.channel()
+	if err != nil {
+		return err
+	}
+	_, err = ch.QueueDeclare(DiscoveryResultsQueue, true, false, false, false,
 		amqp.Table{"x-queue-type": "quorum"})
 	return err
 }

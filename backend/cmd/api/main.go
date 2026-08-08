@@ -10,7 +10,10 @@ import (
 	"os"
 	"time"
 
+	"strings"
+
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	amqp091 "github.com/rabbitmq/amqp091-go"
 	"github.com/redis/go-redis/v9"
 
@@ -178,6 +181,8 @@ func main() {
 		devH := &invhttp.DeviceHandler{Svc: devSvc, Checker: checker}
 		exportH := &invhttp.ExportHandler{Repo: devSvc.Repo, Audit: auditor, Checker: checker}
 		pollerH := &colhttp.PollerHandler{Svc: pollerSvc, Checker: checker}
+		// Wired below only when AMQP is available (sweeps need a poller).
+		discH := &colhttp.DiscoveryHandler{Checker: checker}
 		alertH := &alerthttp.Handler{Store: &alertpg.Store{Pool: pool}, Pool: pool, Checker: checker}
 		channelH := &notifhttp.Handler{
 			Repo: &notifpg.ChannelRepo{Pool: pool, Keys: keys},
@@ -217,9 +222,68 @@ func main() {
 				}
 			}()
 
-			dispatcher := &colamqp.SyncDispatcher{
-				Client: mq, Secrets: &secrets.Resolver{Vault: vault},
+			resolver := &secrets.Resolver{Vault: vault}
+			dispatcher := &colamqp.SyncDispatcher{Client: mq, Secrets: resolver}
+
+			// Subnet discovery (FR-SYNC-04): sweep dispatch + result consumer
+			// + approval queue.
+			if err := mq.EnsureDiscoveryResultsQueue(); err != nil {
+				return err
 			}
+			discSvc := &colapp.DiscoveryService{
+				Repo:       &colpg.DiscoveryRepo{Pool: pool},
+				Dispatcher: &colamqp.DiscoveryDispatcher{Client: mq},
+				Creds: &colpg.NamedCredLookup{
+					Resolve: resolver.Resolve,
+					Names: func(nctx context.Context, cid string) string {
+						if c, err := vault.Get(nctx, cid); err == nil {
+							return c.Name
+						}
+						return ""
+					},
+				},
+				Match: connectorMatcher(pool),
+				Audit: auditor, Log: rt.Log,
+			}
+			discH.Svc = discSvc
+			discH.Onboard = func(octx context.Context, in colhttp.OnboardInput) (string, error) {
+				d, err := devSvc.Create(octx, invapp.DeviceInput{
+					Name: in.Name, MgmtIP: in.MgmtIP, SiteID: in.SiteID,
+					CredentialID: in.CredentialID, ConnectorID: in.ConnectorID,
+					Tags: []string{"discovered"},
+				}, invapp.Meta{Actor: "", TraceID: ""})
+				if err != nil {
+					return "", err
+				}
+				return d.ID, nil
+			}
+			go func() { // discovery results consumer, with reconnect
+				for ctx.Err() == nil {
+					if err := mq.EnsureDiscoveryResultsQueue(); err == nil {
+						if deliveries, err := mq.Consume(amqpx.DiscoveryResultsQueue, 4); err == nil {
+							for d := range deliveries {
+								var res wire.DiscoveryResult
+								if err := json.Unmarshal(d.Body, &res); err != nil {
+									rt.Log.Warn("malformed discovery result", "err", err)
+									_ = d.Reject(false)
+									continue
+								}
+								if err := discSvc.HandleResult(ctx, res); err != nil {
+									rt.Log.Error("discovery result failed", "err", err)
+									_ = d.Nack(false, true)
+									continue
+								}
+								_ = d.Ack(false)
+							}
+							rt.Log.Warn("discovery stream closed — reconnecting")
+						}
+					}
+					select {
+					case <-ctx.Done():
+					case <-time.After(3 * time.Second):
+					}
+				}
+			}()
 			devH.DispatchSync = func(dctx context.Context, d *invdomain.Device) (string, error) {
 				port := 0
 				if v, ok := d.Attrs["snmp_port"].(float64); ok {
@@ -244,6 +308,9 @@ func main() {
 			invH.Register(g)
 			devH.Register(g)
 			pollerH.RegisterAuthed(g)
+			if discH.Svc != nil {
+				discH.Register(g)
+			}
 			alertH.Register(g)
 			channelH.Register(g)
 			exportH.Register(g)
@@ -321,5 +388,40 @@ func consumeSyncResults(ctx context.Context, deliveries <-chan amqp091.Delivery,
 				_ = d.Reject(false)
 			}
 		}
+	}
+}
+
+// connectorMatcher scores a discovered system against the connector catalog
+// (doc 11 §7). The API must not import the connector registry (doc 13 rule 5),
+// so it matches on the catalog's stored sysObjectID prefixes, falling back to
+// vendor hints in sysDescr — which is how UniFi OS devices are identified,
+// since they report net-snmp's generic sysObjectID.
+func connectorMatcher(pool *pgxpool.Pool) colapp.ConnectorMatcher {
+	return func(sysObjectID, sysDescr string) string {
+		rows, err := pool.Query(context.Background(),
+			`SELECT id, vendor, sys_object_id_prefixes FROM platform.connectors WHERE enabled`)
+		if err != nil {
+			return "generic"
+		}
+		defer rows.Close()
+		best, bestLen := "generic", 0
+		descr := strings.ToLower(sysDescr)
+		for rows.Next() {
+			var id, vendor string
+			var prefixes []string
+			if err := rows.Scan(&id, &vendor, &prefixes); err != nil {
+				continue
+			}
+			for _, p := range prefixes {
+				if p != "" && strings.HasPrefix(sysObjectID, p) && len(p) > bestLen {
+					best, bestLen = id, len(p)
+				}
+			}
+			if bestLen == 0 && id != "generic" &&
+				strings.Contains(descr, strings.ToLower(vendor)) {
+				best = id
+			}
+		}
+		return best
 	}
 }
