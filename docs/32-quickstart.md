@@ -87,6 +87,15 @@ docker logs -f netinv-api-1           # follow a service
 ./deploy/compose-app/quickstart.sh reset    # stop and WIPE all data (fresh start)
 ```
 
+### After a host reboot
+
+Every service runs with `restart: unless-stopped`, and Docker is enabled at boot on a normal install, so the stack comes back on its own. A deliberate `quickstart.sh down` still stays down — the policy only restores what was running.
+
+Two things worth knowing if you ever bring it up by hand rather than via the script:
+
+- The application services sit behind the **`app` compose profile**. A bare `docker compose up -d` starts only the data tier and looks like it succeeded; you need `--profile app`.
+- The poller's state directory is a tmpfs pinned to `mode=1777`. Docker applies the tmpfs default mode when a container is *created* but not when an existing one is *started*, so without the explicit mode the poller dies on its first restart with `mkdir /var/lib/netinv-poller/buffer: permission denied`. Nothing else reports a problem when that happens — the API answers, the UI loads, the scheduler keeps queueing jobs — collection simply stops.
+
 ## Notes & going further
 
 - **Secrets** live in `deploy/compose-app/.env` (git-ignored, `chmod 600`).
