@@ -69,8 +69,10 @@ type deviceView struct {
 	OSVersion    string   `json:"os_version,omitempty"`
 	Tags         []string `json:"tags"`
 	Notes        string   `json:"notes,omitempty"`
-	CreatedAt    string   `json:"created_at"`
-	UpdatedAt    string   `json:"updated_at"`
+	// Subscribed uplink rate in bits/s; 0 when nobody has stated it.
+	WANCapacityBPS int64  `json:"wan_capacity_bps"`
+	CreatedAt      string `json:"created_at"`
+	UpdatedAt      string `json:"updated_at"`
 }
 
 func toDeviceView(d *domain.Device) deviceView {
@@ -81,7 +83,8 @@ func toDeviceView(d *domain.Device) deviceView {
 		ProfileID: d.ProfileID, Status: string(d.Status), SysName: d.SysName,
 		Vendor: d.Vendor, Model: d.Model, SerialNumber: d.SerialNumber,
 		OSVersion: d.OSVersion, Tags: d.Tags, Notes: d.Notes,
-		CreatedAt: d.CreatedAt.UTC().Format(rfc), UpdatedAt: d.UpdatedAt.UTC().Format(rfc),
+		WANCapacityBPS: d.WANCapacityBPS,
+		CreatedAt:      d.CreatedAt.UTC().Format(rfc), UpdatedAt: d.UpdatedAt.UTC().Format(rfc),
 	}
 }
 

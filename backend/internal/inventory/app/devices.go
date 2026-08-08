@@ -52,6 +52,9 @@ type DeviceInput struct {
 	Tags         []string `json:"tags"`
 	Notes        string   `json:"notes"`
 	SNMPPort     int      `json:"snmp_port"` // default 161
+	// WANCapacityBPS is the subscribed uplink rate; nil leaves it untouched, 0
+	// clears it back to unknown (FR-MAP-08).
+	WANCapacityBPS *int64 `json:"wan_capacity_bps"`
 }
 
 func (s *DeviceService) validate(ctx context.Context, in DeviceInput) error {
@@ -103,7 +106,8 @@ func (s *DeviceService) Update(ctx context.Context, deviceID string, in DeviceIn
 		return nil, err
 	}
 	before := map[string]any{"name": d.Name, "site_id": d.SiteID,
-		"credential_id": d.CredentialID, "profile_id": d.ProfileID, "notes": d.Notes}
+		"credential_id": d.CredentialID, "profile_id": d.ProfileID, "notes": d.Notes,
+		"wan_capacity_bps": d.WANCapacityBPS}
 	// Operator-owned fields only (doc 11 §3): identity fields from sync are
 	// not writable here.
 	if in.Name != "" {
@@ -125,6 +129,12 @@ func (s *DeviceService) Update(ctx context.Context, deviceID string, in DeviceIn
 		d.Tags = in.Tags
 	}
 	d.Notes = in.Notes
+	if in.WANCapacityBPS != nil {
+		if *in.WANCapacityBPS < 0 {
+			return nil, errx.New(errx.KindInvalid, "wan_capacity_bps cannot be negative")
+		}
+		d.WANCapacityBPS = *in.WANCapacityBPS
+	}
 	if err := s.Repo.RefsExist(ctx, d.SiteID, d.ConnectorID, d.CredentialID, d.ProfileID); err != nil {
 		return nil, err
 	}
@@ -133,7 +143,8 @@ func (s *DeviceService) Update(ctx context.Context, deviceID string, in DeviceIn
 	}
 	s.Audit.Write(ctx, m.event("device.update", "device", d.ID, before,
 		map[string]any{"name": d.Name, "site_id": d.SiteID,
-			"credential_id": d.CredentialID, "profile_id": d.ProfileID, "notes": d.Notes}))
+			"credential_id": d.CredentialID, "profile_id": d.ProfileID, "notes": d.Notes,
+			"wan_capacity_bps": d.WANCapacityBPS}))
 	return d, nil
 }
 

@@ -20,7 +20,8 @@ type DeviceRepo struct{ Pool *pgxpool.Pool }
 const deviceCols = `id, tenant_id, site_id, connector_id, credential_id, profile_id,
 	name, host(mgmt_ip), status, coalesce(sys_name,''), coalesce(sys_descr,''),
 	coalesce(vendor,''), coalesce(model,''), coalesce(serial_number,''),
-	coalesce(os_version,''), tags, coalesce(notes,''), attrs, created_at, updated_at`
+	coalesce(os_version,''), tags, coalesce(notes,''), attrs,
+	coalesce(wan_capacity_bps,0), created_at, updated_at`
 
 func scanDevice(row pgx.Row) (*domain.Device, error) {
 	d := &domain.Device{}
@@ -28,7 +29,7 @@ func scanDevice(row pgx.Row) (*domain.Device, error) {
 	err := row.Scan(&d.ID, &d.TenantID, &d.SiteID, &d.ConnectorID, &d.CredentialID,
 		&d.ProfileID, &d.Name, &d.MgmtIP, &status, &d.SysName, &d.SysDescr,
 		&d.Vendor, &d.Model, &d.SerialNumber, &d.OSVersion, &d.Tags, &d.Notes,
-		&d.Attrs, &d.CreatedAt, &d.UpdatedAt)
+		&d.Attrs, &d.WANCapacityBPS, &d.CreatedAt, &d.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, errx.New(errx.KindNotFound, "device not found")
 	}
@@ -168,10 +169,11 @@ func (r *DeviceRepo) Update(ctx context.Context, d *domain.Device) error {
 		tag, err := tx.Exec(ctx, `
 			UPDATE inventory.devices SET
 				site_id=$2, connector_id=$3, credential_id=$4, profile_id=$5,
-				name=$6, tags=$7, notes=nullif($8,''), updated_at=now()
+				name=$6, tags=$7, notes=nullif($8,''),
+				wan_capacity_bps=nullif($9::bigint,0), updated_at=now()
 			WHERE id=$1`,
 			d.ID, d.SiteID, d.ConnectorID, d.CredentialID, d.ProfileID,
-			d.Name, d.Tags, d.Notes)
+			d.Name, d.Tags, d.Notes, d.WANCapacityBPS)
 		if err != nil {
 			return errx.Wrap(errx.KindTransient, err, "update device")
 		}

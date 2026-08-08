@@ -31,8 +31,12 @@ type Device struct {
 	Tags         []string
 	Notes        string
 	Attrs        map[string]any // connector/transport extras, e.g. snmp_port
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	// WANCapacityBPS is the subscribed uplink rate, stated by an operator
+	// because SNMP cannot report it (a PPPoE session has no ifSpeed). 0 when
+	// unknown. Weathermap links over tunnels divide by it — see FR-MAP-08.
+	WANCapacityBPS int64
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
 }
 
 // Pollable reports whether the scheduler should dispatch jobs for the device.

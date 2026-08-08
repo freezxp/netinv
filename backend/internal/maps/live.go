@@ -135,15 +135,13 @@ func (a *LiveAssembler) Live(ctx context.Context, mapID string) (*LiveData, erro
 		}
 		out.Nodes = append(out.Nodes, NodeLive{ID: n.ID, State: state})
 	}
+	wan := a.wanCapacities(ctx, def)
 	for _, l := range def.Links {
 		ll := LinkLive{ID: l.ID, State: "nodata"}
 		if l.AEndpoint != nil {
 			k := key{l.AEndpoint.DeviceID, fmt.Sprint(l.AEndpoint.IfIndex)}
 			ll.InBPS, ll.OutBPS = rateIn[k], rateOut[k]
-			cap := float64(l.BandwidthBPS)
-			if cap == 0 {
-				cap = speed[k]
-			}
+			cap := linkCapacity(l, speed[k], wan)
 			if cap > 0 {
 				ll.UtilIn = 100 * ll.InBPS / cap
 				ll.UtilOut = 100 * ll.OutBPS / cap
@@ -168,4 +166,77 @@ func (a *LiveAssembler) Live(ctx context.Context, mapID string) (*LiveData, erro
 func hasKey(m map[string]float64, k string) bool {
 	_, ok := m[k]
 	return ok
+}
+
+// wanCapacities loads the operator-stated uplink rate of every device on the
+// map, for links whose own interfaces report no speed.
+func (a *LiveAssembler) wanCapacities(ctx context.Context, def *Definition) map[string]float64 {
+	ids := make([]string, 0, len(def.Nodes))
+	for _, n := range def.Nodes {
+		if n.DeviceID != "" {
+			ids = append(ids, n.DeviceID)
+		}
+	}
+	for _, l := range def.Links {
+		for _, ep := range []*Endpoint{l.AEndpoint, l.BEndpoint} {
+			if ep != nil && ep.DeviceID != "" {
+				ids = append(ids, ep.DeviceID)
+			}
+		}
+	}
+	out := map[string]float64{}
+	if len(ids) == 0 {
+		return out
+	}
+	rows, err := a.Store.Pool.Query(ctx, `
+		SELECT id, wan_capacity_bps FROM inventory.devices
+		WHERE id = any($1) AND wan_capacity_bps IS NOT NULL`, ids)
+	if err != nil {
+		return out // capacity is a nicety; never fail the map over it
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		var bps int64
+		if rows.Scan(&id, &bps) == nil {
+			out[id] = float64(bps)
+		}
+	}
+	return out
+}
+
+// linkCapacity decides what to divide traffic by, most specific first:
+//
+//  1. a capacity set on the link — an operator overriding everything;
+//  2. the A-side interface's own ifSpeed, which is right for physical links;
+//  3. the slower of the two ends' uplink rates. A tunnel's interfaces report
+//     no speed, and a site-to-site tunnel can only run as fast as the smaller
+//     of the two circuits carrying it (FR-MAP-08).
+//
+// Returns 0 when nothing is known, which leaves the link uncoloured rather
+// than inventing a denominator.
+func linkCapacity(l Link, ifSpeed float64, wan map[string]float64) float64 {
+	if l.BandwidthBPS > 0 {
+		return float64(l.BandwidthBPS)
+	}
+	if ifSpeed > 0 {
+		return ifSpeed
+	}
+	slowest := 0.0
+	for _, ep := range []*Endpoint{l.AEndpoint, l.BEndpoint} {
+		if ep == nil {
+			continue
+		}
+		c, ok := wan[ep.DeviceID]
+		if !ok || c <= 0 {
+			// One end unknown means the bottleneck is unknown. Guessing from
+			// the other end would overstate the capacity and under-report
+			// utilisation, which is the wrong way to be wrong.
+			return 0
+		}
+		if slowest == 0 || c < slowest {
+			slowest = c
+		}
+	}
+	return slowest
 }

@@ -8,6 +8,7 @@ import type { Device } from "../../api/types";
 import { hasPermissionRole, useAuthStore } from "../auth/store";
 import { Button, Card, Input } from "../../components/ui";
 import { OidBrowser } from "./OidBrowser";
+import { DeviceFormModal } from "./DeviceForm";
 
 export function DeviceActions({ device }: { device: Device }) {
   const qc = useQueryClient();
@@ -15,6 +16,7 @@ export function DeviceActions({ device }: { device: Device }) {
   const isAdmin = hasPermissionRole(user);
   const [confirming, setConfirming] = useState(false);
   const [browsing, setBrowsing] = useState(false);
+  const [editing, setEditing] = useState(false);
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ["devices"] });
@@ -65,6 +67,13 @@ export function DeviceActions({ device }: { device: Device }) {
     <>
       <Button
         variant="ghost"
+        onClick={() => setEditing(true)}
+        title="Change name, site, credential, tags, or the site's uplink rate"
+      >
+        Edit
+      </Button>
+      <Button
+        variant="ghost"
         onClick={() => setBrowsing(true)}
         title="Show every SNMP object this device exposes"
       >
@@ -80,6 +89,9 @@ export function DeviceActions({ device }: { device: Device }) {
       </Button>
       {browsing && (
         <OidBrowser device={device} onClose={() => setBrowsing(false)} />
+      )}
+      {editing && (
+        <DeviceFormModal existing={device} onClose={() => setEditing(false)} />
       )}
     </>
   );

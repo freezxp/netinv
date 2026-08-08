@@ -36,6 +36,8 @@ export interface Device {
   serial_number?: string;
   os_version?: string;
   tags: string[];
+  /** Subscribed uplink rate in bits/s; 0 when nobody has stated it. */
+  wan_capacity_bps: number;
   created_at: string;
   updated_at: string;
 }

@@ -32,6 +32,8 @@ export interface DeviceInput {
   snmp_port?: number;
   tags?: string[];
   notes?: string;
+  /** Subscribed uplink rate in bits/s; 0 clears it back to unknown. */
+  wan_capacity_bps?: number;
 }
 
 export function DeviceFormModal({
@@ -54,6 +56,7 @@ export function DeviceFormModal({
     credential_id: existing?.credential_id ?? "",
     snmp_port: undefined,
     tags: existing?.tags ?? [],
+    wan_capacity_bps: existing?.wan_capacity_bps || undefined,
   });
   const set = (k: keyof DeviceInput, v: unknown) =>
     setForm((f) => ({ ...f, [k]: v }));
@@ -80,8 +83,11 @@ export function DeviceFormModal({
     save.mutate(form);
   };
 
+  // whitespace-normal: this opens from the inventory actions cell, which sets
+  // nowrap to keep its buttons on one line. That inherits into the dialog and
+  // stops hint text wrapping.
   return (
-    <div className="fixed inset-0 z-20 flex items-center justify-center bg-black/40">
+    <div className="fixed inset-0 z-20 flex items-center justify-center bg-black/40 whitespace-normal">
       <Card
         title={existing ? `Edit ${existing.name}` : "Add device"}
         className="w-96"
@@ -141,6 +147,29 @@ export function DeviceFormModal({
               set("snmp_port", e.target.value ? Number(e.target.value) : undefined)
             }
           />
+          {/* min-w-0 or the hint refuses to wrap and spills out of the card. */}
+          <label className="flex w-full min-w-0 flex-col gap-1">
+            <span className="text-xs break-words text-slate-500">
+              Uplink rate (Mbit/s). SNMP can’t report a PPPoE plan rate, so
+              weathermap tunnels fall back to the slower of the two sites.
+            </span>
+            <Input
+              type="number"
+              min={0}
+              placeholder="e.g. 500"
+              defaultValue={
+                existing?.wan_capacity_bps
+                  ? existing.wan_capacity_bps / 1e6
+                  : ""
+              }
+              onChange={(e) =>
+                set(
+                  "wan_capacity_bps",
+                  e.target.value ? Number(e.target.value) * 1e6 : 0,
+                )
+              }
+            />
+          </label>
           <Input
             placeholder="Tags (comma separated)"
             defaultValue={form.tags?.join(", ")}

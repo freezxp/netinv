@@ -298,13 +298,28 @@ function LinkPanel({
       },
     });
 
-  // Utilisation colouring divides by capacity. Most interfaces report ifSpeed,
-  // but VPN tunnels and other virtual interfaces report 0 — for those the
-  // operator has to say what the link is worth, or it sits at 0% forever.
+  // Utilisation colouring divides by capacity, resolved most specific first:
+  // an explicit value here, else the A-side ifSpeed, else the slower of the
+  // two sites' uplink rates. Tunnels report no ifSpeed, which is what the
+  // uplink fallback is for (FR-MAP-08).
   const aIf = aIfs.data?.data.find(
     (i) => i.if_index === link.a_endpoint?.if_index,
   );
   const reportedSpeed = aIf?.speed_bps ?? 0;
+  const devices = useDevices({});
+  const wanOf = (nodeDeviceID?: string) =>
+    devices.data?.data.find((d) => d.id === nodeDeviceID)?.wan_capacity_bps ?? 0;
+  const wanA = wanOf(fromNode?.device_id);
+  const wanB = wanOf(toNode?.device_id);
+  const derivedFromWAN =
+    wanA > 0 && wanB > 0 ? Math.min(wanA, wanB) : wanA > 0 && !toNode?.device_id ? wanA : 0;
+
+  const inherited =
+    reportedSpeed > 0
+      ? `interface reports ${Math.round(reportedSpeed / 1e6)}`
+      : derivedFromWAN > 0
+        ? `${Math.round(derivedFromWAN / 1e6)} from the slower site uplink`
+        : "no interface speed and no site uplink rate set — leave blank and set the uplink on each gateway, or enter a value here";
 
   return (
     <Card title={`Link ${fromNode?.label ?? "?"} → ${toNode?.label ?? "?"}`}>
@@ -351,17 +366,17 @@ function LinkPanel({
         )}
         <label className="flex flex-col gap-1">
           <span className="text-xs text-slate-500">
-            Capacity (Mbit/s)
-            {link.a_endpoint &&
-              (reportedSpeed > 0
-                ? ` — interface reports ${Math.round(reportedSpeed / 1e6)}`
-                : " — interface reports no speed, set one to get utilisation colour")}
+            Capacity (Mbit/s){link.a_endpoint && ` — ${inherited}`}
           </span>
           <Input
             type="number"
             min={0}
             placeholder={
-              reportedSpeed > 0 ? String(Math.round(reportedSpeed / 1e6)) : "e.g. 100"
+              reportedSpeed > 0
+                ? String(Math.round(reportedSpeed / 1e6))
+                : derivedFromWAN > 0
+                  ? String(Math.round(derivedFromWAN / 1e6))
+                  : "e.g. 100"
             }
             value={link.bandwidth_bps ? link.bandwidth_bps / 1e6 : ""}
             onChange={(e) => {
