@@ -1,4 +1,9 @@
-import { test, expect, type Page } from "@playwright/test";
+import {
+  test,
+  expect,
+  type APIRequestContext,
+  type Page,
+} from "@playwright/test";
 
 const PASSWORD = process.env.NETINV_ADMIN_PASSWORD ?? "ChangeMe-Sprint3-Demo";
 
@@ -6,6 +11,20 @@ const PASSWORD = process.env.NETINV_ADMIN_PASSWORD ?? "ChangeMe-Sprint3-Demo";
 // synced interfaces). CI runs a bare api, so gate them on NETINV_E2E_SEEDED;
 // local/staging runs against the demo fleet set it.
 const seeded = process.env.NETINV_E2E_SEEDED === "1";
+
+// Maps created by tests must be removed again, or every run leaves litter in
+// the operator's map list.
+async function apiHeaders(request: APIRequestContext) {
+  const res = await request.post("/api/v1/auth/login", {
+    data: { username: "admin", password: PASSWORD },
+  });
+  const { access_token: token } = await res.json();
+  return { Authorization: `Bearer ${token}` };
+}
+
+async function deleteMap(request: APIRequestContext, id: string) {
+  await request.delete(`/api/v1/maps/${id}`, { headers: await apiHeaders(request) });
+}
 
 async function login(page: Page) {
   await page.goto("/login");
@@ -59,7 +78,10 @@ test("weathermap list is reachable", async ({ page }) => {
 // A map with no links made the live endpoint emit links:null, and the viewer
 // crashed iterating it — so the flagship feature broke for exactly the map
 // someone had just created. A fresh map reproduces it with no seeded fleet.
-test("a brand-new map opens in the viewer and the editor", async ({ page }) => {
+test("a brand-new map opens in the viewer and the editor", async ({
+  page,
+  request,
+}) => {
   const crashes: string[] = [];
   page.on("pageerror", (e) => crashes.push(e.message));
 
@@ -83,6 +105,10 @@ test("a brand-new map opens in the viewer and the editor", async ({ page }) => {
   await page.getByRole("button", { name: "Edit" }).click();
   await expect(page.getByText("Add device node")).toBeVisible();
   expect(crashes, `viewer/editor threw: ${crashes.join("; ")}`).toEqual([]);
+
+  // /maps/{id}/edit — the id is the only handle the UI ever exposed.
+  const id = page.url().match(/\/maps\/([^/]+)/)?.[1];
+  if (id) await deleteMap(request, id);
 });
 
 // Links rendered in the editor but vanished from the published map: nodes
@@ -133,6 +159,8 @@ test("a published link renders in the viewer", async ({ page, request }) => {
   await expect(page.getByRole("heading", { name: "Weathermap" })).toBeVisible();
   await expect(page.locator(".react-flow__node")).toHaveCount(2);
   await expect(page.locator(".react-flow__edge")).toHaveCount(1);
+
+  await deleteMap(request, created.id);
 });
 
 test("admin sees role-gated nav (Users, Audit, Settings)", async ({ page }) => {
