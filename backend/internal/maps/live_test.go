@@ -181,3 +181,36 @@ func TestPlainNodesTakeNoDeviceState(t *testing.T) {
 		t.Error("a cloud node acquired a device binding")
 	}
 }
+
+// ---- which endpoint describes a link (FR-MAP-03) ----
+
+// The field case: a mesh AP with no SNMP agent placed as a plain node, linked
+// to the root AP. The only pollable interface is the root's, and because the
+// link was drawn from the un-pollable side it landed in the B slot.
+func TestLinkEndpointFallsBackToB(t *testing.T) {
+	l := Link{BEndpoint: ep("root", 14)}
+	got, mirrored := linkEndpoint(l)
+	if got == nil || got.DeviceID != "root" {
+		t.Fatalf("no endpoint chosen: %+v", got)
+	}
+	if !mirrored {
+		t.Error("reading the far end must mirror in/out")
+	}
+}
+
+func TestLinkEndpointPrefersAWithoutMirroring(t *testing.T) {
+	l := Link{AEndpoint: ep("a", 1), BEndpoint: ep("b", 2)}
+	got, mirrored := linkEndpoint(l)
+	if got.DeviceID != "a" {
+		t.Errorf("chose %s, want the A endpoint", got.DeviceID)
+	}
+	if mirrored {
+		t.Error("the A endpoint is already the reference direction")
+	}
+}
+
+func TestLinkEndpointUnboundLinkHasNone(t *testing.T) {
+	if got, _ := linkEndpoint(Link{}); got != nil {
+		t.Errorf("unbound link resolved to %+v", got)
+	}
+}

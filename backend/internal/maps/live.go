@@ -142,9 +142,16 @@ func (a *LiveAssembler) Live(ctx context.Context, mapID string) (*LiveData, erro
 	wan := a.wanCapacities(ctx, def)
 	for _, l := range def.Links {
 		ll := LinkLive{ID: l.ID, State: "nodata"}
-		if l.AEndpoint != nil {
-			k := key{l.AEndpoint.DeviceID, fmt.Sprint(l.AEndpoint.IfIndex)}
-			ll.InBPS, ll.OutBPS = rateIn[k], rateOut[k]
+		ep, mirrored := linkEndpoint(l)
+		if ep != nil {
+			k := key{ep.DeviceID, fmt.Sprint(ep.IfIndex)}
+			in, eg := rateIn[k], rateOut[k]
+			if mirrored {
+				// in/out stay relative to the link's own A side, so reading
+				// from the far end swaps them: what B receives is what A sent.
+				in, eg = eg, in
+			}
+			ll.InBPS, ll.OutBPS = in, eg
 			cap := linkCapacity(l, speed[k], wan)
 			ll.CapacityBPS = cap
 			if cap > 0 {
@@ -208,6 +215,24 @@ func (a *LiveAssembler) wanCapacities(ctx context.Context, def *Definition) map[
 		}
 	}
 	return out
+}
+
+// linkEndpoint picks the interface that describes a link, and reports whether
+// its directions must be mirrored to stay relative to the link's A side.
+//
+// A link often has only one pollable end — a mesh AP running no SNMP agent, an
+// ISP cloud, any plain node — and one interface describes the whole wire
+// either way. Reading only the A endpoint left those blank for no better
+// reason than which way round the link happened to be drawn.
+func linkEndpoint(l Link) (*Endpoint, bool) {
+	if l.AEndpoint != nil {
+		return l.AEndpoint, false
+	}
+	if l.BEndpoint != nil {
+		// What B receives is what A sent, so in and out swap.
+		return l.BEndpoint, true
+	}
+	return nil, false
 }
 
 // linkCapacity decides what to divide traffic by, most specific first:

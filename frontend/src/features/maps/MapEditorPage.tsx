@@ -454,10 +454,17 @@ function LinkPanel({
   return (
     <Card title={`Link ${fromNode?.label ?? "?"} → ${toNode?.label ?? "?"}`}>
       <div className="flex flex-col gap-2 text-sm">
+        {/* Either end will do. Binding one is enough — a link to something
+            NetInv cannot poll still reads correctly from the far side. */}
+        <p className="text-xs text-slate-500">
+          Bind at least one end. The rates are read from the A side when it is
+          bound, otherwise from B — a link to a node NetInv can't poll still
+          shows traffic from whichever end it can.
+        </p>
         {fromNode?.device_id && (
           <label className="flex flex-col gap-1">
             <span className="text-xs text-slate-500">
-              A side — {fromNode.label} interface (drives coloring)
+              A side — {fromNode.label} interface
             </span>
             <Select
               value={link.a_endpoint?.if_index ?? ""}
