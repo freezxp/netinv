@@ -2,22 +2,49 @@ package pgx
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 	"testing"
 	"time"
 )
 
-// Integration test — runs when NETINV_TEST_PG_DSN points at a disposable
-// database (the compose stack provides one; CI uses testcontainers later).
+// Integration test — runs when NETINV_TEST_PG_DSN points at a PostgreSQL
+// instance. Because it drops the whole schema down to zero, it MUST NOT share
+// a database with other integration tests (they run in parallel packages
+// against the same instance in CI), so it creates and drops its own throwaway
+// database.
 func TestMigrateUpDownUp(t *testing.T) {
-	dsn := os.Getenv("NETINV_TEST_PG_DSN")
-	if dsn == "" {
+	baseDSN := os.Getenv("NETINV_TEST_PG_DSN")
+	if baseDSN == "" {
 		t.Skip("NETINV_TEST_PG_DSN not set")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	log := slog.New(slog.DiscardHandler)
+
+	// Isolate in a per-run database.
+	admin, err := Connect(ctx, baseDSN)
+	if err != nil {
+		t.Fatalf("connect admin: %v", err)
+	}
+	dbName := fmt.Sprintf("netinv_migtest_%d", time.Now().UnixNano())
+	if _, err := admin.Exec(ctx, "CREATE DATABASE "+dbName); err != nil {
+		admin.Close()
+		t.Fatalf("create test db: %v", err)
+	}
+	admin.Close()
+	dsn := swapDBName(baseDSN, dbName)
+	t.Cleanup(func() {
+		a, err := Connect(context.Background(), baseDSN)
+		if err != nil {
+			return
+		}
+		defer a.Close()
+		_, _ = a.Exec(context.Background(),
+			"DROP DATABASE IF EXISTS "+dbName+" WITH (FORCE)")
+	})
 
 	if err := Migrate(ctx, dsn, log); err != nil {
 		t.Fatalf("up: %v", err)
@@ -64,4 +91,16 @@ func TestMigrateUpDownUp(t *testing.T) {
 		"SELECT count(*) FROM iam.roles WHERE is_builtin").Scan(&n); err != nil || n != 4 {
 		t.Fatalf("roles after re-up = %d err=%v, want 4", n, err)
 	}
+}
+
+// swapDBName replaces the database path in a postgres URL DSN.
+func swapDBName(dsn, name string) string {
+	if i := strings.LastIndex(dsn, "/"); i >= 0 {
+		rest := dsn[i+1:]
+		if q := strings.IndexByte(rest, '?'); q >= 0 {
+			return dsn[:i+1] + name + rest[q:]
+		}
+		return dsn[:i+1] + name
+	}
+	return dsn
 }
