@@ -109,8 +109,8 @@ export function UsersPage() {
           </div>
         )}
       </Card>
-      <Card className="p-0">
-        <table className="w-full text-sm">
+      <Card className="overflow-x-auto p-0">
+        <table className="w-full min-w-[32rem] text-sm">
           <tbody>
             {users.data?.data.map((u) => (
               <tr

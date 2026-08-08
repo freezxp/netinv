@@ -87,10 +87,10 @@ export function DeviceFormModal({
   // nowrap to keep its buttons on one line. That inherits into the dialog and
   // stops hint text wrapping.
   return (
-    <div className="fixed inset-0 z-20 flex items-center justify-center bg-black/40 whitespace-normal">
+    <div className="fixed inset-0 z-20 flex items-center justify-center bg-black/40 p-4 whitespace-normal">
       <Card
         title={existing ? `Edit ${existing.name}` : "Add device"}
-        className="w-96"
+        className="w-full max-w-sm"
       >
         <form onSubmit={submit} className="flex flex-col gap-3">
           <Input

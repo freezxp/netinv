@@ -168,7 +168,7 @@ function InterfacesTab({
   return (
     <div className="grid gap-4 lg:grid-cols-2">
       <Card className="overflow-x-auto p-0">
-        <table className="w-full text-sm">
+        <table className="w-full min-w-[36rem] text-sm">
           <thead>
             <tr className="border-b border-slate-200 text-left text-xs uppercase text-slate-500 dark:border-slate-800">
               {["If", "Name", "Alias", "Speed", "Oper", "Admin", "State"].map((h) => (
@@ -503,8 +503,8 @@ function AvailabilityTab({ deviceID }: { deviceID: string }) {
 function HistoryTab({ deviceID }: { deviceID: string }) {
   const history = useDeviceHistory(deviceID);
   return (
-    <Card className="p-0">
-      <table className="w-full text-sm">
+    <Card className="overflow-x-auto p-0">
+      <table className="w-full min-w-[36rem] text-sm">
         <thead>
           <tr className="border-b border-slate-200 text-left text-xs uppercase text-slate-500 dark:border-slate-800">
             {["When", "Object", "Field", "Change"].map((h) => (
@@ -550,7 +550,7 @@ function HistoryTab({ deviceID }: { deviceID: string }) {
 function AlertsTab({ deviceID }: { deviceID: string }) {
   const alerts = useDeviceAlerts(deviceID);
   return (
-    <Card className="p-0">
+    <Card className="overflow-x-auto p-0">
       <div className="flex flex-col divide-y divide-slate-100 p-4 dark:divide-slate-800">
         {alerts.data?.data.length === 0 && (
           <EmptyState>No active alerts for this device.</EmptyState>

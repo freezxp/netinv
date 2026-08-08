@@ -15,7 +15,7 @@ export function MapsListPage() {
 
   return (
     <div className="mx-auto max-w-4xl">
-      <div className="mb-4 flex items-center justify-between">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-xl font-semibold">Weathermaps</h1>
         <div className={canEdit ? "flex gap-2" : "hidden"}>
           <Input
@@ -92,8 +92,8 @@ function ConfirmDeleteMap({
   const del = useDeleteMap();
   const [typed, setTyped] = useState("");
   return (
-    <div className="fixed inset-0 z-30 flex items-center justify-center bg-black/50">
-      <Card title="Delete weathermap" className="w-[26rem]">
+    <div className="fixed inset-0 z-30 flex items-center justify-center bg-black/50 p-4">
+      <Card title="Delete weathermap" className="w-full max-w-[26rem]">
         <p className="text-sm">
           This removes <span className="font-medium">{map.name}</span> and every
           revision of it — the published map and all draft history. It cannot be

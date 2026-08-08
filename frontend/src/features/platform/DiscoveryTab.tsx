@@ -173,8 +173,8 @@ export function DiscoveryTab() {
       </Card>
 
       {rules.data?.data.length ? (
-        <Card className="p-0">
-          <table className="w-full text-sm">
+        <Card className="overflow-x-auto p-0">
+          <table className="w-full min-w-[32rem] text-sm">
             <tbody>
               {rules.data.data.map((r) => (
                 <tr

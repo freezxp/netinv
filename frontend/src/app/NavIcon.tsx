@@ -72,6 +72,8 @@ const paths: Record<string, React.ReactNode> = {
       <path d="M10 8l-4 4 4 4M6 12h9" />
     </>
   ),
+  menu: <path d="M4 7h16M4 12h16M4 17h16" />,
+  close: <path d="M6 6l12 12M18 6L6 18" />,
   collapse: <path d="M14 6l-6 6 6 6" />,
   expand: <path d="M10 6l6 6-6 6" />,
 };

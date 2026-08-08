@@ -112,8 +112,8 @@ function ConfirmPurge({
 }) {
   const [typed, setTyped] = useState("");
   return (
-    <div className="fixed inset-0 z-30 flex items-center justify-center bg-black/50">
-      <Card title="Delete device permanently" className="w-[26rem]">
+    <div className="fixed inset-0 z-30 flex items-center justify-center bg-black/50 p-4">
+      <Card title="Delete device permanently" className="w-full max-w-[26rem]">
         <p className="text-sm">
           This removes <span className="font-medium">{device.name}</span> (
           <span className="mono">{device.mgmt_ip}</span>) and everything

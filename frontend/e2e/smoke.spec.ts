@@ -239,7 +239,9 @@ test("the sidebar collapses to icons and stays collapsed", async ({ page }) => {
 
   // Name comes from the sr-only span now that the label is not painted.
   await expect(inventory).toBeVisible();
-  await expect(page.getByText("NetInv")).toHaveCount(0);
+  // Scoped to the sidebar: the phone topbar carries the brand too, and it is
+  // in the DOM at every width, merely hidden by CSS on desktop.
+  await expect(page.locator("aside").getByText("NetInv")).toHaveCount(0);
   await inventory.click();
   await expect(page.getByRole("heading", { name: "Inventory" })).toBeVisible();
 
@@ -249,7 +251,7 @@ test("the sidebar collapses to icons and stays collapsed", async ({ page }) => {
   expect(still).toBeLessThan(wide);
 
   await page.getByRole("button", { name: "Expand sidebar" }).click();
-  await expect(page.getByText("NetInv")).toBeVisible();
+  await expect(page.locator("aside").getByText("NetInv")).toBeVisible();
 });
 
 // Alert rules are operator-authored now, so the two things that must hold are
@@ -388,6 +390,51 @@ test("a wireless device gets a Wireless tab with its client count", async ({
       page.getByRole("button", { name: "Wireless", exact: true }),
     ).toHaveCount(0);
   }
+});
+
+// Phone layout (NFR-60). The sidebar took 208px of a 393px screen, leaving
+// content in a squeezed column, and several pages could not be scrolled to
+// their right-hand columns at all.
+test("the portal is usable at phone width", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await login(page);
+
+  const aside = page.locator("aside");
+  const menu = page.getByRole("button", { name: "Open menu" });
+  await expect(menu).toBeVisible();
+
+  // Off-canvas until asked for, then on screen, then gone again after
+  // navigating — a drawer that stays open over the page it just opened is
+  // worse than no drawer.
+  expect((await aside.boundingBox())!.x).toBeLessThan(0);
+  await menu.click();
+  await expect
+    .poll(async () => (await aside.boundingBox())!.x)
+    .toBeGreaterThanOrEqual(0);
+  await page.getByRole("link", { name: "Inventory" }).click();
+  await expect
+    .poll(async () => (await aside.boundingBox())!.x)
+    .toBeLessThan(0);
+
+  // Nothing may scroll the page sideways; tables scroll inside their own card.
+  for (const path of ["/", "/inventory", "/alerts", "/maps", "/platform"]) {
+    await page.goto(path);
+    await expect(page.getByRole("button", { name: "Open menu" })).toBeVisible();
+    const over = await page.evaluate(
+      () => document.documentElement.scrollWidth - window.innerWidth,
+    );
+    expect(over, `${path} overflows by ${over}px`).toBeLessThanOrEqual(1);
+  }
+
+  // A dialog has to fit the screen it opens on.
+  await page.goto("/inventory");
+  await page.getByRole("button", { name: "Add device" }).click();
+  const dialog = page.getByText("Add device", { exact: true }).last();
+  await expect(dialog).toBeVisible();
+  const over = await page.evaluate(
+    () => document.documentElement.scrollWidth - window.innerWidth,
+  );
+  expect(over, "the add-device dialog overflows").toBeLessThanOrEqual(1);
 });
 
 test("admin sees role-gated nav (Users, Audit, Settings)", async ({ page }) => {

@@ -30,7 +30,7 @@ export function MapViewPage() {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="mb-2 flex items-center gap-3">
+      <div className="mb-2 flex flex-wrap items-center gap-3">
         <h1 className="text-lg font-semibold">Weathermap</h1>
         <span className="text-xs text-slate-500">
           {live.data ? `as of ${new Date(live.data.as_of).toLocaleTimeString()}` : "…"}

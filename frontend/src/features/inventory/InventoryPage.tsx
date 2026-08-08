@@ -78,7 +78,7 @@ export function InventoryPage() {
 
   return (
     <div className="mx-auto max-w-6xl">
-      <div className="mb-4 flex items-center justify-between">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-xl font-semibold">Inventory</h1>
         <div className="flex items-center gap-2">
           <span className="text-sm text-slate-500">
@@ -158,7 +158,7 @@ export function InventoryPage() {
       </div>
 
       <Card className="overflow-x-auto p-0">
-        <table className="w-full text-sm">
+        <table className="w-full min-w-[52rem] text-sm">
           <thead>
             <tr className="border-b border-slate-200 text-left text-xs uppercase text-slate-500 dark:border-slate-800">
               {[

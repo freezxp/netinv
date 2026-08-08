@@ -51,7 +51,7 @@ function ActiveTab() {
   const ack = useAckAlert();
   const [comment, setComment] = useState("");
   return (
-    <Card className="p-0">
+    <Card className="overflow-x-auto p-0">
       <div className="flex flex-col divide-y divide-slate-100 p-4 dark:divide-slate-800">
         {alerts.data?.data.length === 0 && (
           <EmptyState>No active alerts.</EmptyState>
@@ -152,7 +152,7 @@ function SilencesTab() {
           </Button>
         </div>
       </Card>
-      <Card className="p-0">
+      <Card className="overflow-x-auto p-0">
         <div className="flex flex-col divide-y divide-slate-100 p-4 dark:divide-slate-800">
           {silences.data?.data.length === 0 && (
             <EmptyState>No silences.</EmptyState>
@@ -224,8 +224,8 @@ function RulesTab() {
           <Button onClick={() => setEditing("new")}>New rule</Button>
         </div>
       )}
-      <Card className="p-0">
-        <table className="w-full text-sm">
+      <Card className="overflow-x-auto p-0">
+        <table className="w-full min-w-[34rem] text-sm">
           <tbody>
             {rules.data?.data.map((r) => (
               <tr
@@ -328,10 +328,10 @@ function RuleFormModal({
   });
 
   return (
-    <div className="fixed inset-0 z-30 flex items-center justify-center bg-black/50 whitespace-normal">
+    <div className="fixed inset-0 z-30 flex items-center justify-center bg-black/50 p-4 whitespace-normal">
       <Card
         title={rule ? `Edit ${rule.name}` : "New alert rule"}
-        className="w-[34rem]"
+        className="w-full max-w-[34rem]"
       >
         <div className="flex flex-col gap-3">
           <label className="flex flex-col gap-1">
@@ -427,8 +427,8 @@ function ConfirmDeleteRule({
     },
   });
   return (
-    <div className="fixed inset-0 z-30 flex items-center justify-center bg-black/50 whitespace-normal">
-      <Card title="Delete alert rule" className="w-[26rem]">
+    <div className="fixed inset-0 z-30 flex items-center justify-center bg-black/50 p-4 whitespace-normal">
+      <Card title="Delete alert rule" className="w-full max-w-[26rem]">
         <p className="text-sm">
           This removes <span className="font-medium">{rule.name}</span> and the
           alert history recorded against it. It cannot be undone.

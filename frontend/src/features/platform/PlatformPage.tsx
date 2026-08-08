@@ -79,8 +79,8 @@ function SitesTab() {
           </Button>
         </div>
       </Card>
-      <Card className="p-0">
-        <table className="w-full text-sm">
+      <Card className="overflow-x-auto p-0">
+        <table className="w-full min-w-[32rem] text-sm">
           <tbody>
             {sites.data?.data.map((s) => (
               <tr
@@ -169,8 +169,8 @@ function PollersTab() {
           </div>
         )}
       </Card>
-      <Card className="p-0">
-        <table className="w-full text-sm">
+      <Card className="overflow-x-auto p-0">
+        <table className="w-full min-w-[32rem] text-sm">
           <tbody>
             {pollers.data?.data.map((p) => (
               <tr
@@ -309,8 +309,8 @@ function CredentialsTab() {
           </Button>
         </div>
       </Card>
-      <Card className="p-0">
-        <table className="w-full text-sm">
+      <Card className="overflow-x-auto p-0">
+        <table className="w-full min-w-[32rem] text-sm">
           <tbody>
             {creds.data?.data.map((c) => (
               <tr

@@ -49,6 +49,10 @@ export function AppShell() {
   const { dark, toggle } = useTheme();
   const sidebar = useSidebar();
   const restored = useSessionRestore();
+  // On a phone the sidebar cannot hold a column of its own — at 208px it took
+  // over half a 393px screen — so below md it becomes an overlay drawer that
+  // is closed by default.
+  const [drawer, setDrawer] = useState(false);
 
   useEffect(() => {
     if (restored && !user) navigate("/login", { replace: true });
@@ -64,6 +68,9 @@ export function AppShell() {
   if (!user) return null;
 
   const collapsed = sidebar.collapsed;
+  // The drawer is always the full layout: an icon rail makes no sense as an
+  // overlay that was just opened deliberately.
+  const wide = !collapsed || drawer;
   const items = nav.filter(
     (item) =>
       !item.roles ||
@@ -71,28 +78,63 @@ export function AppShell() {
   );
 
   return (
-    <div className="flex h-full">
+    <div className="flex h-full flex-col md:flex-row">
+      {/* Phone chrome: the drawer needs a permanent way in, and the brand has
+          nowhere else to live once the sidebar is off-canvas. */}
+      <div className="flex items-center gap-2 border-b border-slate-200 px-3 py-2 md:hidden dark:border-slate-800">
+        <button
+          onClick={() => setDrawer(true)}
+          aria-label="Open menu"
+          aria-expanded={drawer}
+          className="rounded-md p-1.5 text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
+        >
+          <NavIcon name="menu" className="h-5 w-5" />
+        </button>
+        <span className="text-base font-bold text-sky-500">NetInv</span>
+      </div>
+
+      {drawer && (
+        <div
+          className="fixed inset-0 z-30 bg-black/50 md:hidden"
+          onClick={() => setDrawer(false)}
+          aria-hidden="true"
+        />
+      )}
+
       <aside
         className={cx(
-          "flex shrink-0 flex-col border-r border-slate-200 bg-white transition-[width] duration-150 dark:border-slate-800 dark:bg-slate-900",
-          collapsed ? "w-14" : "w-52",
+          "flex shrink-0 flex-col border-r border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900",
+          // Off-canvas below md, an ordinary column from md up.
+          "fixed inset-y-0 left-0 z-40 w-52 transition-transform duration-150",
+          drawer ? "translate-x-0" : "-translate-x-full",
+          "md:static md:z-auto md:translate-x-0 md:transition-[width]",
+          collapsed ? "md:w-14" : "md:w-52",
         )}
       >
         <div
           className={cx(
             "flex items-center py-4",
-            collapsed ? "justify-center px-0" : "justify-between px-4",
+            wide ? "justify-between px-4" : "justify-center px-0",
           )}
         >
-          {!collapsed && (
+          {wide && (
             <span className="text-lg font-bold text-sky-500">NetInv</span>
           )}
+          {/* Collapsing is a desktop affordance; on a phone the same spot
+              closes the drawer, which is what a reader expects there. */}
+          <button
+            onClick={() => setDrawer(false)}
+            aria-label="Close menu"
+            className="rounded-md p-1 text-slate-500 hover:bg-slate-100 md:hidden dark:hover:bg-slate-800"
+          >
+            <NavIcon name="close" />
+          </button>
           <button
             onClick={sidebar.toggle}
             aria-expanded={!collapsed}
             aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
             title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-            className="rounded-md p-1 text-slate-500 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-300"
+            className="hidden rounded-md p-1 text-slate-500 hover:bg-slate-100 hover:text-slate-700 md:block dark:hover:bg-slate-800 dark:hover:text-slate-300"
           >
             <NavIcon name={collapsed ? "expand" : "collapse"} />
           </button>
@@ -106,11 +148,12 @@ export function AppShell() {
               end={item.exact}
               // The label is the tooltip only while collapsed; leaving it on
               // when expanded duplicates text already on screen.
-              title={collapsed ? item.label : undefined}
+              title={wide ? undefined : item.label}
+              onClick={() => setDrawer(false)}
               className={({ isActive }) =>
                 cx(
                   "flex items-center rounded-md py-1.5 text-sm",
-                  collapsed ? "justify-center px-0" : "gap-2.5 px-3",
+                  wide ? "gap-2.5 px-3" : "justify-center px-0",
                   isActive
                     ? "bg-sky-600/10 font-medium text-sky-600 dark:text-sky-400"
                     : "text-slate-600 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800",
@@ -120,9 +163,7 @@ export function AppShell() {
               <NavIcon name={item.icon} />
               {/* Kept in the tree when collapsed so screen readers still get a
                   name for the link — just not painted. */}
-              <span className={collapsed ? "sr-only" : undefined}>
-                {item.label}
-              </span>
+              <span className={wide ? undefined : "sr-only"}>{item.label}</span>
             </NavLink>
           ))}
         </nav>
@@ -130,17 +171,17 @@ export function AppShell() {
         <div
           className={cx(
             "border-t border-slate-200 text-xs dark:border-slate-800",
-            collapsed ? "p-2" : "p-3",
+            wide ? "p-3" : "p-2",
           )}
         >
-          {!collapsed && (
+          {wide && (
             <div className="mb-2 flex items-center justify-between">
               <span className="font-medium">{user.display_name}</span>
               <span className="text-slate-500">{user.roles.join(", ")}</span>
             </div>
           )}
-          <div className={cx("flex gap-2", collapsed && "flex-col items-center")}>
-            {collapsed ? (
+          <div className={cx("flex gap-2", !wide && "flex-col items-center")}>
+            {!wide ? (
               <>
                 <IconButton
                   label={dark ? "Switch to light theme" : "Switch to dark theme"}
@@ -171,7 +212,7 @@ export function AppShell() {
           </div>
         </div>
       </aside>
-      <main className="flex-1 overflow-auto p-6">
+      <main className="min-w-0 flex-1 overflow-auto p-4 md:p-6">
         <Outlet />
       </main>
     </div>

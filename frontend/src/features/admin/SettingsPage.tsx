@@ -127,8 +127,8 @@ export function SettingsPage() {
       {testResult && (
         <div className="text-sm text-slate-500">Test result: {testResult}</div>
       )}
-      <Card className="p-0">
-        <table className="w-full text-sm">
+      <Card className="overflow-x-auto p-0">
+        <table className="w-full min-w-[30rem] text-sm">
           <tbody>
             {channels.data?.data.map((c) => (
               <tr

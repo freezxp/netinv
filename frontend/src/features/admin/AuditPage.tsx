@@ -39,7 +39,7 @@ export function AuditPage() {
         />
       </div>
       <Card className="overflow-x-auto p-0">
-        <table className="w-full text-sm">
+        <table className="w-full min-w-[42rem] text-sm">
           <thead>
             <tr className="border-b border-slate-200 text-left text-xs uppercase text-slate-500 dark:border-slate-800">
               {["When", "Actor", "Action", "Resource", "Source IP", "Trace"].map(

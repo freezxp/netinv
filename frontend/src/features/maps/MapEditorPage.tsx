@@ -139,7 +139,7 @@ export function MapEditorPage() {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="mb-2 flex items-center gap-3">
+      <div className="mb-2 flex flex-wrap items-center gap-3">
         <h1 className="text-lg font-semibold">Map editor</h1>
         <span
           className={cx(
@@ -177,7 +177,24 @@ export function MapEditorPage() {
           Draft not saved: {(save.error as Error).message}
         </div>
       )}
-      <div className="flex min-h-0 flex-1 gap-3">
+      {/* Editing is desktop-only (doc 30, NFR-60): dragging nodes and a fixed
+          side panel do not survive a phone. Say so plainly and point at the
+          viewer, which is fully usable there. */}
+      <div className="md:hidden">
+        <Card title="Editing needs a wider screen">
+          <p className="text-sm text-slate-600 dark:text-slate-400">
+            The map editor is desktop-only — placing nodes and dragging links
+            needs room and a pointer. The live map itself works fine here.
+          </p>
+          <div className="mt-3">
+            <Link to={`/maps/${id}`}>
+              <Button>View the live map</Button>
+            </Link>
+          </div>
+        </Card>
+      </div>
+
+      <div className="hidden min-h-0 flex-1 gap-3 md:flex">
         <div className="min-h-0 flex-1 rounded-lg border border-slate-200 dark:border-slate-800">
           <ReactFlow
             nodes={rfNodes}
