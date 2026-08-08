@@ -344,6 +344,52 @@ test("plain nodes can be placed, renamed and removed", async ({
   if (id) await deleteMap(request, id);
 });
 
+// The Wireless tab exists only for devices that actually report clients, and
+// the counts behind it come from two metrics combined with `or` — which
+// collapses them unless they are labelled apart, so "2 / 2" silently became
+// "—". Skips when nothing wireless is being polled.
+test("a wireless device gets a Wireless tab with its client count", async ({
+  page,
+  request,
+}) => {
+  const headers = await apiHeaders(request);
+  const res = await request.get(
+    "/api/v1/metrics/query_range?query=netinv_wireless_client_count" +
+      `&start=${Math.floor(Date.now() / 1000) - 3600}` +
+      `&end=${Math.floor(Date.now() / 1000)}&step=300s`,
+    { headers },
+  );
+  const series = (await res.json()).data.result;
+  test.skip(series.length === 0, "no wireless device is being polled");
+  const wirelessID = series[0].metric.device_id;
+
+  const devs = await (
+    await request.get("/api/v1/devices?limit=50", { headers })
+  ).json();
+  const wireless = devs.data.find((d: { id: string }) => d.id === wirelessID);
+  const other = devs.data.find((d: { id: string }) => d.id !== wirelessID);
+  expect(wireless).toBeTruthy();
+
+  await login(page);
+  await page.goto(`/devices/${wirelessID}`);
+  const tab = page.getByRole("button", { name: "Wireless", exact: true });
+  await expect(tab).toBeVisible();
+  await tab.click();
+  await expect(page.getByText("Connected clients", { exact: false }).first())
+    .toBeVisible();
+  // Both halves of the AP count must survive the query, not just the first.
+  await expect(page.getByText(/^\d+ \/ \d+$/)).toBeVisible();
+
+  // A device with no wireless metrics must not grow the tab.
+  if (other) {
+    await page.goto(`/devices/${other.id}`);
+    await expect(page.getByRole("button", { name: "Interfaces" })).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Wireless", exact: true }),
+    ).toHaveCount(0);
+  }
+});
+
 test("admin sees role-gated nav (Users, Audit, Settings)", async ({ page }) => {
   await login(page);
   await expect(page.getByRole("link", { name: "Users" })).toBeVisible();

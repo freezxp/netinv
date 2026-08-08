@@ -252,6 +252,23 @@ export function trafficExpr(deviceID: string, ifIndex: number | string) {
   );
 }
 
+// seriesExpr combines several metrics into one range query while keeping them
+// apart.
+//
+// `or` is a set operator that matches on labels *excluding* __name__, so two
+// metrics sharing only device_id collapse into one series and the second
+// silently disappears — a used/total pair comes back as used alone, and the
+// total reads as unknown. Each side gets an explicit `series` label to be
+// matched on instead.
+export function seriesExpr(
+  selector: string,
+  parts: Array<[name: string, metric: string]>,
+) {
+  return parts
+    .map(([name, metric]) => `label_set(${metric}${selector}, "series", "${name}")`)
+    .join(" or ");
+}
+
 // useQueryRange fetches a MetricsQL range through the scope-guarded proxy.
 export function useQueryRange(expr: string, rangeHours: number, stepS = 60) {
   return useQuery({

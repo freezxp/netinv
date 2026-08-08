@@ -10,6 +10,7 @@ import {
   useQueryRange,
   useSyncNow,
   trafficExpr,
+  seriesExpr,
 } from "../../api/hooks";
 import {
   Button,
@@ -23,7 +24,8 @@ import { TimeSeries, type PromMatrix } from "../../components/TimeSeries";
 import { OidBrowser } from "../inventory/OidBrowser";
 import { formatBps, formatDuration, formatMs } from "../../lib/format";
 
-const tabs = ["Interfaces", "Health", "Availability", "History", "Alerts"] as const;
+const baseTabs = ["Interfaces", "Health", "Availability", "History", "Alerts"] as const;
+type Tab = (typeof baseTabs)[number] | "Wireless";
 
 export function DeviceDetailPage() {
   const { id = "" } = useParams();
@@ -31,8 +33,19 @@ export function DeviceDetailPage() {
   const device = useDevice(id);
   const interfaces = useDeviceInterfaces(id);
   const sync = useSyncNow();
-  const [tab, setTab] = useState<(typeof tabs)[number]>("Interfaces");
+  const [tab, setTab] = useState<Tab>("Interfaces");
   const [browsing, setBrowsing] = useState(false);
+
+  // Wireless is only meaningful for a controller/AP, so the tab appears only
+  // when the device actually reports clients — no empty tab on a router.
+  const wirelessProbe = useQueryRange(
+    `netinv_wireless_client_count{device_id="${id}"}`,
+    1,
+    300,
+  );
+  const tabs: readonly Tab[] = (wirelessProbe.data?.length ?? 0)
+    ? ([...baseTabs.slice(0, 2), "Wireless", ...baseTabs.slice(2)] as Tab[])
+    : baseTabs;
 
   const focusIf = params.get("if") ?? "";
   const d = device.data;
@@ -114,6 +127,7 @@ export function DeviceDetailPage() {
         />
       )}
       {tab === "Health" && <HealthTab deviceID={id} />}
+      {tab === "Wireless" && <WirelessTab deviceID={id} />}
       {tab === "Availability" && <AvailabilityTab deviceID={id} />}
       {tab === "History" && <HistoryTab deviceID={id} />}
       {tab === "Alerts" && <AlertsTab deviceID={id} />}
@@ -264,6 +278,83 @@ function HealthStat({
   );
 }
 
+// Wireless tab: what a controller reports about its radio estate. Ruckus
+// Unleashed is the case in hand — it exposes client and AP counts but no
+// CPU/memory/temperature at all, so this is the only health signal it has.
+function WirelessTab({ deviceID }: { deviceID: string }) {
+  const sel = `{device_id="${deviceID}"}`;
+  const clients = useQueryRange(`netinv_wireless_client_count${sel}`, 24, 300);
+  const aps = useQueryRange(
+    seriesExpr(sel, [
+      ["up", "netinv_wireless_ap_up_count"],
+      ["total", "netinv_wireless_ap_total"],
+    ]),
+    24,
+    300,
+  );
+  const now = latest(clients.data);
+  const up = latest(aps.data, (m) => m.series === "up");
+  const total = latest(aps.data, (m) => m.series === "total");
+  const apsDown = up !== undefined && total !== undefined && up < total;
+
+  const peak = clients.data?.length
+    ? Math.max(...clients.data.flatMap((s) => s.values.map((v) => parseFloat(v[1]))))
+    : undefined;
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex flex-wrap gap-3">
+        <Card className="min-w-36 flex-1">
+          <div className="text-xs uppercase text-slate-500">Connected clients</div>
+          <div className="mt-1 text-2xl font-semibold text-sky-500">
+            {now === undefined ? "—" : now.toFixed(0)}
+          </div>
+        </Card>
+        <Card className="min-w-36 flex-1">
+          <div className="text-xs uppercase text-slate-500">Peak (24h)</div>
+          <div className="mt-1 text-2xl font-semibold">
+            {peak === undefined ? "—" : peak.toFixed(0)}
+          </div>
+        </Card>
+        <Card className="min-w-36 flex-1">
+          <div className="text-xs uppercase text-slate-500">Access points</div>
+          <div
+            className={cx(
+              "mt-1 text-2xl font-semibold",
+              apsDown ? "text-amber-500" : "text-green-500",
+            )}
+          >
+            {up === undefined || total === undefined
+              ? "—"
+              : `${up.toFixed(0)} / ${total.toFixed(0)}`}
+          </div>
+          {apsDown && (
+            <div className="mt-1 text-xs text-amber-500">
+              {(total! - up!).toFixed(0)} not reporting
+            </div>
+          )}
+        </Card>
+      </div>
+      <Card title="Connected clients (24h)">
+        <TimeSeries
+          result={clients.data ?? []}
+          windowHours={24}
+          format={(v) => v.toFixed(0)}
+          label={() => "clients"}
+        />
+      </Card>
+      <Card title="Access points up (24h)">
+        <TimeSeries
+          result={aps.data ?? []}
+          windowHours={24}
+          format={(v) => v.toFixed(0)}
+          label={(m) => m.series ?? "up"}
+        />
+      </Card>
+    </div>
+  );
+}
+
 // Health tab (doc 30 §5): CPU, memory, load and per-sensor temperature.
 // Sources are connector-dependent — vendor MIBs on Cisco/Juniper/Huawei,
 // UCD-SNMP + LM-SENSORS on net-snmp devices such as Ubiquiti UniFi gateways.
@@ -272,7 +363,10 @@ function HealthTab({ deviceID }: { deviceID: string }) {
   const cpu = useQueryRange(`netinv_device_cpu_percent${sel}`, 24, 300);
   const mem = useQueryRange(`netinv_device_memory_percent${sel}`, 24, 300);
   const memBytes = useQueryRange(
-    `netinv_device_memory_used_bytes${sel} or netinv_device_memory_total_bytes${sel}`,
+    seriesExpr(sel, [
+      ["used", "netinv_device_memory_used_bytes"],
+      ["total", "netinv_device_memory_total_bytes"],
+    ]),
     24,
     300,
   );
@@ -305,10 +399,10 @@ function HealthTab({ deviceID }: { deviceID: string }) {
       )
     : undefined;
   const usedBytes = latest(memBytes.data, (m) =>
-    m.__name__ === "netinv_device_memory_used_bytes",
+    m.series === "used",
   );
   const totalBytes = latest(memBytes.data, (m) =>
-    m.__name__ === "netinv_device_memory_total_bytes",
+    m.series === "total",
   );
 
   return (
