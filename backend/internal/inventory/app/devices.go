@@ -28,6 +28,8 @@ type DeviceRepo interface {
 	Create(ctx context.Context, d *domain.Device) error
 	Update(ctx context.Context, d *domain.Device) error
 	SetStatus(ctx context.Context, id string, status domain.DeviceStatus) error
+	// Purge hard-deletes a retired device and its owned rows.
+	Purge(ctx context.Context, id string) error
 	// RefsExist validates site/connector/credential/profile in one round trip.
 	RefsExist(ctx context.Context, siteID, connectorID, credentialID, profileID string) error
 }
@@ -138,6 +140,27 @@ func (s *DeviceService) SetStatus(ctx context.Context, deviceID string,
 		return err
 	}
 	s.Audit.Write(ctx, m.event("device."+string(status), "device", deviceID, nil, nil))
+	return nil
+}
+
+// Purge permanently removes a retired device and everything owned by it
+// (FR-DEV-08). Deliberately two-step: a device must be retired first, so a
+// single mis-click can never destroy history. Time-series samples are not
+// deleted — they age out under the retention policy (doc 11 §4).
+func (s *DeviceService) Purge(ctx context.Context, deviceID string, m Meta) error {
+	d, err := s.Repo.Get(ctx, deviceID)
+	if err != nil {
+		return err
+	}
+	if d.Status != domain.DeviceRetired {
+		return errx.New(errx.KindConflict,
+			"device must be retired before it can be permanently deleted")
+	}
+	if err := s.Repo.Purge(ctx, deviceID); err != nil {
+		return err
+	}
+	s.Audit.Write(ctx, m.event("device.purge", "device", deviceID,
+		map[string]any{"name": d.Name, "mgmt_ip": d.MgmtIP}, nil))
 	return nil
 }
 

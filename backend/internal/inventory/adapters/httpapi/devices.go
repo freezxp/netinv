@@ -43,6 +43,11 @@ func (h *DeviceHandler) Register(r chi.Router) {
 		pw.Post("/devices/{id}/disable", h.status(domain.DeviceDisabled))
 		pw.Post("/devices/{id}/sync", h.syncNow)
 	})
+	// Permanent deletion is Admin-only (doc 20 §5: devices:admin).
+	r.Group(func(pa chi.Router) {
+		pa.Use(httpx.RequirePerm(h.Checker, authz.DevicesAdmin))
+		pa.Delete("/devices/{id}", h.purge)
+	})
 }
 
 type deviceView struct {
@@ -195,6 +200,15 @@ func (h *DeviceHandler) neighbors(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"data": rows})
+}
+
+// purge permanently deletes a retired device (FR-DEV-08).
+func (h *DeviceHandler) purge(w http.ResponseWriter, r *http.Request) {
+	if err := h.Svc.Purge(r.Context(), chi.URLParam(r, "id"), h.meta(r)); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *DeviceHandler) syncNow(w http.ResponseWriter, r *http.Request) {

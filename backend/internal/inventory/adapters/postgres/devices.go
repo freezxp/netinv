@@ -212,3 +212,25 @@ func itoa(n int) string {
 	}
 	return string(rune('0'+n/10)) + string(rune('0'+n%10))
 }
+
+// Purge hard-deletes a device. Interfaces, components, schedules, sync runs,
+// group memberships and topology links go with it via ON DELETE CASCADE
+// (doc 08); alert instances keep their history with device_id nulled. Asset
+// history is append-only and deliberately unreferenced, so it is removed
+// explicitly here — a purged device should leave nothing behind in inventory.
+func (r *DeviceRepo) Purge(ctx context.Context, deviceID string) error {
+	return pgxp.InTx(ctx, r.Pool, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx,
+			`DELETE FROM inventory.asset_history WHERE device_id = $1`, deviceID); err != nil {
+			return errx.Wrap(errx.KindTransient, err, "purge asset history")
+		}
+		tag, err := tx.Exec(ctx, `DELETE FROM inventory.devices WHERE id = $1`, deviceID)
+		if err != nil {
+			return errx.Wrap(errx.KindTransient, err, "purge device")
+		}
+		if tag.RowsAffected() == 0 {
+			return errx.New(errx.KindNotFound, "device not found")
+		}
+		return nil
+	})
+}

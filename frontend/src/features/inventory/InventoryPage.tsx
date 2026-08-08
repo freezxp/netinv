@@ -13,6 +13,7 @@ import {
   StatusBadge,
 } from "../../components/ui";
 import { DeviceFormModal } from "./DeviceForm";
+import { DeviceActions } from "./DeviceActions";
 
 // Export uses a token-authorized fetch so the download carries auth.
 async function download(format: "csv" | "xlsx", filter: string, q: string) {
@@ -148,7 +149,7 @@ export function InventoryPage() {
           onChange={(e) => update("status", e.target.value)}
         >
           <option value="">All statuses</option>
-          {["active", "pending", "unreachable", "disabled"].map((s) => (
+          {["active", "pending", "unreachable", "disabled", "retired"].map((s) => (
             <option key={s} value={s}>
               {s}
             </option>
@@ -170,8 +171,9 @@ export function InventoryPage() {
                 "Memory",
                 "Temp",
                 "Tags",
-              ].map((h) => (
-                <th key={h} className="px-4 py-2.5 font-medium">
+                "",
+              ].map((h, i) => (
+                <th key={h + i} className="px-4 py-2.5 font-medium">
                   {h}
                 </th>
               ))}
@@ -205,6 +207,9 @@ export function InventoryPage() {
                 </td>
                 <td className="px-4 py-2 text-slate-500">
                   {d.tags.join(", ") || "—"}
+                </td>
+                <td className="whitespace-nowrap px-4 py-2 text-right">
+                  <DeviceActions device={d} />
                 </td>
               </tr>
             ))}
