@@ -1,6 +1,6 @@
 # 03 — Functional Requirement Specification (FRS)
 
-**Status:** draft · **Depends on:** 02
+**Status:** review · **Depends on:** 02
 
 Requirement IDs: `FR-<MODULE>-<nn>`. Every requirement is testable; acceptance criteria are implied by the MUST/SHOULD phrasing and verified per doc 24. Modules: AUTH, RBAC, DEV (device/inventory), CRED, COLL (collection), MET (metrics), SYNC, ALR (alerting), NOT (notification), MAP (weathermap), DASH, EXP (export), AUD (audit), SET (settings), PLT (platform mgmt), API.
 

@@ -1,6 +1,6 @@
 # 09 — REST API Specification
 
-**Status:** draft · **Depends on:** 03 (FR-API), 08, 20, 23
+**Status:** review · **Depends on:** 03 (FR-API), 08, 20, 23
 
 ## 1. Conventions (apply to every endpoint)
 
@@ -101,6 +101,7 @@ Below, one full worked example per resource family; sibling endpoints share shap
 | POST | `/devices/{id}/sync` (on-demand) | `devices:write` | 202 `{sync_run_id}` |
 | GET | `/devices/{id}/interfaces` | `devices:read` | 200 |
 | PATCH | `/devices/{id}/interfaces/{ifId}` (`monitor`, notes) | `devices:write` | 200 |
+| GET | `/devices/{id}/oids?root=…&limit=…` (live SNMP walk) | `devices:read` | 200, 503 (not configured) |
 | GET | `/devices/{id}/components` | `devices:read` | 200 |
 | GET | `/devices/{id}/history` (asset history) | `devices:read` | 200 |
 | GET | `/devices/{id}/neighbors` (topology) | `devices:read` | 200 |
@@ -118,9 +119,12 @@ Below, one full worked example per resource family; sibling endpoints share shap
    "serial_number": "WS012345", "os_version": "23.4R2",
    "sys_name": "core-sw-1.dceast", "sys_location": "DC-East row 4",
    "interface_count": 52, "active_alert_count": 1,
-   "tags": ["core", "prod"], "created_at": "…", "updated_at": "…"}],
+   "tags": ["core", "prod"], "wan_capacity_bps": 500000000,
+   "created_at": "…", "updated_at": "…"}],
  "next_cursor": "g2wAAAAB…", "total": null}
 ```
+
+`wan_capacity_bps` is the subscribed uplink rate in bits/s, `0` when nobody has stated it; PATCH accepts `0` to clear it (FR-MAP-08). `GET /devices/{id}/interfaces` rows carry `ever_up` — false for a port never observed operationally up, which is excluded from interface-down alerting (FR-ALR-08) and labelled as such in the UI so its silence is explainable. The OID walk runs live from the API against the device and is audited (`device.oid_walk`); it is the tool for answering "what does this platform actually support?" before writing a connector.
 
 ## 7. Metrics query — `/metrics` (proxy to VictoriaMetrics, scope-guarded)
 
@@ -154,9 +158,12 @@ Response = Prometheus API shape (`{"status":"success","data":{"resultType":"matr
 | POST | `/alerts/{id}/ack` `{"comment":"…"}` | `alerts:ack` | 200, 409 (already resolved) |
 | POST | `/alerts/{id}/unack` | `alerts:ack` | 200 |
 | GET/POST | `/alert-rules` | `alerts:read` / `alerts:admin` | 200/201 |
-| GET/PATCH/DELETE | `/alert-rules/{id}` | ″ | 200/204 (builtin rules: PATCH enable/scope only) |
-| POST | `/alert-rules/{id}/preview` (dry-run expr) | `alerts:admin` | 200 matching series now |
+| GET/PATCH/DELETE | `/alert-rules/{id}` | ″ | 200/204; **409 on DELETE of a builtin** |
+| POST | `/alert-rules/{id}/enable` · `/disable` | `alerts:admin` | 204 |
+| POST | `/alert-rules/{id}/preview` (dry-run expr) | `alerts:admin` | *not implemented* — expressions are instead validated against the metrics backend on create/update, which catches the case that matters (a rule stored with an unparseable expression never fires and says nothing) |
 | GET/POST | `/silences` · DELETE `/silences/{id}` | `alerts:read` / `alerts:ack` | 200/201/204 |
+
+Built-in rules (`is_builtin`, the FR-ALR-07 pack) are **fully editable** — thresholds and severity are exactly what an operator needs to tune — and disable-able, but not deletable: nothing short of a re-migration would restore one, and their ids appear in docs and runbooks. Deleting an operator's own rule takes its alert history with it, since `alert_instances` cannot be orphaned; the count is reported in the rule list as `firing` so a caller can warn first. Every mutation is audited with before/after, **including enable/disable** — that one silences monitoring (FR-ALR-09).
 
 **Alert object**
 ```json
@@ -193,11 +200,17 @@ Response = Prometheus API shape (`{"status":"success","data":{"resultType":"matr
    {"id": "n3", "kind": "label",  "x": 320, "y": 20, "text": "Backbone 2026"}],
  "links": [
    {"id": "l1", "from": "n1", "to": "n2", "width": 4,
+    "from_handle": "r", "to_handle": "l",
     "a_endpoint": {"device_id": "d_01J9AB…", "if_index": 12},
     "b_endpoint": {"device_id": "d_01J9CD…", "if_index": 3},
     "bandwidth_bps": 10000000000, "style": "curved"}]}
 ```
-**GET /maps/{id}/live** → `{"as_of":"…","nodes":[{"id":"n1","state":"up","worst_alert":"warning"}],"links":[{"id":"l1","in_bps":8.1e9,"out_bps":2.3e9,"util_in":81.0,"util_out":23.0,"state":"up"}]}`
+`from_handle`/`to_handle` (`t|r|b|l`) record which side of each node the operator drew the line from, so a map redraws as it was arranged; both are cosmetic and optional. Node `kind` is one of `device|site|cloud|label`; only `device` carries a live state, the rest stand for things NetInv does not poll (FR-MAP-02). Saved definitions are validated server-side — known kinds, unique ids, device nodes carrying a device, links joining nodes that exist — because the renderer silently skips anything malformed.
+
+**One bound endpoint is enough.** Rates come from `a_endpoint` when it is bound and from `b_endpoint` otherwise, mirrored so both stay relative to the link's A side. A link to something unpollable has only one real interface, and which slot it lands in depends only on the direction it was drawn (FR-MAP-03).
+**GET /maps/{id}/live** → `{"as_of":"…","nodes":[{"id":"n1","state":"up","worst_alert":"warning"}],"links":[{"id":"l1","in_bps":8.1e9,"out_bps":2.3e9,"util_in":81.0,"util_out":23.0,"capacity_bps":1.0e10,"state":"up"}]}`
+
+`capacity_bps` is whatever utilization was divided by, `0` when unknown — sent so a client can tell an idle link from one with no capacity to measure against, since both otherwise read 0%. Resolution order is link `bandwidth_bps` → A-side `ifSpeed` → `min()` of the two ends' `wan_capacity_bps` (FR-MAP-08). `nodes` and `links` are always arrays, never `null`.
 
 ## 11. Notifications — `/notification-channels`, `/notification-policies`
 

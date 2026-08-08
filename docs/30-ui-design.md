@@ -1,6 +1,6 @@
 # 30 — UI Design (every page)
 
-**Status:** draft · **Depends on:** 02, 09, 14 · Components/stack: doc 14
+**Status:** review · **Depends on:** 02, 09, 14 · Components/stack: doc 14
 
 The kickoff brief listed pages from a virtualization-flavored template; mapped to this product: *Asset Detail / Host Detail* → **Device Detail** (one page; future host monitoring reuses it), *Storage* → deferred with category 8/10 (doc 29), *Network* → **Topology & Weathermaps**. All listed concerns are covered below.
 

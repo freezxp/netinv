@@ -47,6 +47,7 @@ Decisions ADR-001 … ADR-017 were made with the product owner on **2026-08-07**
 **Status:** accepted
 **Decision:** v1 collects categories 1 (Interface/Traffic), 2 (Device Health), 3 (Availability/Latency), 12 (Inventory metadata + LLDP/CDP topology). Categories 4–5 (L2/L3) next; 6–11 (firewall, wireless, hosts, synthetic, facilities, flow) are roadmap (doc 29).
 **Rationale:** Categories 1/2/3/12 cover ~90% of NOC value and 100% of the weathermap's needs.
+**Amended (pilot):** superseded in one narrow respect by ADR-018 — a wireless *controller* connector reporting client and AP counts is in v1. The category-6 deferral stands for everything else wireless.
 
 ## ADR-008: Weathermap is the v1 flagship
 **Status:** accepted
@@ -97,3 +98,9 @@ Decisions ADR-001 … ADR-017 were made with the product owner on **2026-08-07**
 **Status:** accepted
 **Decision:** One Go module with clean bounded-context packages, deployed as **six processes** sharing that codebase (api, scheduler, poller, ingester, alerter, notifier). Contexts communicate through interfaces + events, never cross-package DB access.
 **Rationale:** Six binaries give independent scaling (the microservice benefit that matters here) without six repos/pipelines (the cost that kills solo devs). True service extraction later follows the seams.
+
+## ADR-018: Wireless controller counts are in scope, per-client wireless is not
+**Status:** accepted (pilot, supersedes part of ADR-007)
+**Decision:** A controller connector may report estate-level wireless gauges — connected clients, APs up/total — and the UI surfaces them on a Wireless tab that appears only for devices reporting them. Per-client tables, radio/RF metrics, roaming and WLAN configuration remain deferred to category 6 (doc 29).
+**Rationale:** The pilot runs a Ruckus Unleashed master that exposes *no* CPU, memory or temperature anywhere. Under the original scope it was monitorable only as an ICMP target, while the two numbers that describe its health — how many clients it carries, and whether every AP is up — were sitting in a MIB it already answered. Excluding them was a rule with no benefit.
+**Consequences:** The line is estate-level gauges only. Anything needing per-client or per-radio state still waits for category 6, so this does not quietly become a wireless product. `netinv_wireless_*` is the metric namespace; an AP-down alert is expressed as `netinv_wireless_ap_up_count < netinv_wireless_ap_total`.

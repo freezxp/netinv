@@ -1,8 +1,10 @@
 # NetInv — Network Asset Monitoring Platform
 
-Centralized, vendor-neutral network monitoring: SNMP (v2c/v3) collection from Cisco, Juniper, Huawei, ZTE, and Ubiquiti devices into a modern time-series stack, with a live topology **weathermap** as the flagship view. The spiritual successor to Cacti + Weathermap, rebuilt on VictoriaMetrics instead of MRTG/RRD.
+Centralized, vendor-neutral network monitoring: SNMP (v2c/v3) collection from Cisco, Juniper, Huawei, ZTE, Ubiquiti and Ruckus devices into a modern time-series stack, with a live topology **weathermap** as the flagship view. The spiritual successor to Cacti + Weathermap, rebuilt on VictoriaMetrics instead of MRTG/RRD.
 
-> **Status: Build phase — Sprints 1–19 of 20 complete.** Milestones M1 (collection pipeline), M2 (alerting), M3 (usable product), and M4 (weathermap flagship) are all achieved and verified against the simulated fleet. Remaining before v1.0: real-hardware connector validation, soak/chaos runs on a staging cluster, and the Sprint-20 pilot deployment (needs the production sites). Sprint log: `git log --oneline`.
+> **Status: pilot — all 20 sprints complete, running live.** Milestones M1 (collection pipeline), M2 (alerting), M3 (usable product) and M4 (weathermap flagship) are achieved, and the platform now monitors a real network: four UniFi gateways in an SD-WAN mesh plus a Ruckus Unleashed estate, with a live weathermap over the WireGuard tunnels between them.
+>
+> The `generic`, `ubiquiti` and `ruckus` connectors are validated against real hardware and documented in [doc 10](docs/10-connector-architecture.md) with what each device actually exposes — including what it does not. **`cisco-ios`, `juniper-junos`, `huawei-vrp` and `zte-zxr` are written against MIB specifications and recorded fixtures but have not yet met real units.** Also outstanding before v1.0: a 72 h soak and chaos run on staging, the security checklist against TLS, and a backup/restore drill. Sprint log: `git log --oneline`.
 
 ## Try it in one command
 

@@ -1,6 +1,6 @@
 # 08 — Database Design & ER Diagram
 
-**Status:** draft · **Depends on:** 05, 15, 16
+**Status:** review · **Depends on:** 05, 15, 16
 
 PostgreSQL 16. Conventions: PKs are ULIDs stored as `text` (sortable, generatable app-side, merge-safe) except append-heavy tables which use `bigint identity`. All timestamps `timestamptz` UTC. Every business table carries `tenant_id text NOT NULL DEFAULT 't_default'` (ADR-005; FK to `platform.tenants`; composite indexes lead with it only when multi-tenancy activates — v1 indexes omit it for size). Soft-state uses `status` enums (Postgres `CREATE TYPE`). Schemas per bounded context: `iam`, `platform`, `inventory`, `maps`, `alerting`, `notify`, `audit`, `config`. Migrations via `goose`, expand-migrate-contract (NFR-51). Time-series data lives in VictoriaMetrics, **not** here (doc 05 §6).
 
@@ -46,7 +46,7 @@ PostgreSQL 16. Conventions: PKs are ULIDs stored as `text` (sortable, generatabl
 Catalog of registered connector plugins (FR-PLT-03): `id` PK (e.g. `cisco-ios`) · `vendor` NN · `display_name` NN · `version` NN · `capabilities jsonb` NN (metric families, MIB deps) · `sys_object_id_prefixes jsonb` (auto-match, doc 11) · `enabled bool` NN. Seeded by app at startup from the compiled registry (code is source of truth; table exists for UI/joins).
 
 ### polling_profiles
-`id` PK · `tenant_id` · `name` UNIQUE NN · `traffic_interval_s int` NN DEFAULT 60 · `health_interval_s` NN 300 · `icmp_interval_s` NN 30 · `sync_interval_s` NN 21600 · `snmp_timeout_ms` NN 5000 · `snmp_retries` NN 2 · `bulk_max_repetitions` NN 25 · `families_enabled jsonb` NN · `is_default bool`. Referenced by devices; edits fan out on next scheduler tick.
+`id` PK · `tenant_id` · `name` UNIQUE NN · `traffic_interval_s int` NN DEFAULT 60 · `health_interval_s` NN 300 · `icmp_interval_s` NN 30 · `sync_interval_s` NN 21600 · `snmp_timeout_ms` NN 5000 · `snmp_retries` NN 2 · `bulk_max_repetitions` NN 25 · `families_enabled jsonb` NN DEFAULT `["traffic","health","icmp","sync"]` — the per-family switch (FR-COLL-04); a family absent from this list is not scheduled, and any existing schedule row for it is dropped when a device moves onto the profile. Intervals cannot express "off": their CHECK constraints require a positive value · `is_default bool`. Referenced by devices; edits fan out on next scheduler tick.
 
 ### polling_schedule
 One row per device × family — the scheduler's work source. `id bigint identity` PK · `device_id` FK inventory.devices CASCADE NN · `family` poll_family NN (`traffic`,`health`,`icmp`,`sync`) · `interval_s int` NN (denormalized from profile at write) · `next_due_at timestamptz` NN · `last_run_at` · `last_status` · **UNIQUE (device_id, family)** · **Index `(next_due_at) WHERE enabled`** — the hot scheduler scan. `enabled bool` NN.
@@ -83,13 +83,14 @@ Envelope-encrypted (ADR-011, doc 20 §7): `id` PK · `tenant_id` · `name` UNIQU
 | tags | jsonb | NN DEFAULT '[]' |
 | notes | text | |
 | attrs | jsonb | NN DEFAULT '{}' (connector-specific extras) |
+| wan_capacity_bps | bigint | NULL, CHECK > 0. Subscribed uplink rate, stated by an operator because SNMP cannot report one — a PPPoE interface returns 0 for both ifSpeed and ifHighSpeed. Weathermap links whose interfaces report no speed divide by `min()` of the two ends (FR-MAP-08) |
 | retired_at | timestamptz | NULL |
 | created_at / updated_at | timestamptz | NN |
 
 Indexes: UNIQUE `(tenant_id, mgmt_ip) WHERE status != 'retired'` · `(site_id)` · `(connector_id)` · `(status)` · GIN `(tags)` · search: GIN `to_tsvector(name || sys_name || sys_descr || model || serial_number)` (FR-DEV-03) + trigram on `name`, `serial_number`.
 
 ### interfaces
-`id` PK · `device_id` FK devices CASCADE NN · `if_index int` NN · `name` (ifName) · `alias` (ifAlias) · `descr` · `if_type int` · `mtu int` · `speed_bps bigint` (from ifHighSpeed×1e6) · `phys_address macaddr` NULL · `admin_status`/`oper_status` int (last synced snapshot; live state in VM) · `monitor bool` NN DEFAULT true (per-interface polling opt-out) · `state` NN (`present`,`missing`,`removed`) — FR-SYNC-03 · `missing_since` NULL · timestamps. **UNIQUE `(device_id, if_index)`**; index `(device_id)`, trigram `(alias)`.
+`id` PK · `device_id` FK devices CASCADE NN · `if_index int` NN · `name` (ifName) · `alias` (ifAlias) · `descr` · `if_type int` · `mtu int` · `speed_bps bigint` (ifHighSpeed×1e6 where the agent populates it, else ifSpeed — see doc 10) · `phys_address macaddr` NULL · `admin_status`/`oper_status` int (last synced snapshot; live state in VM) · `monitor bool` NN DEFAULT true (per-interface polling opt-out) · `state` NN (`present`,`missing`,`removed`) — FR-SYNC-03 · `missing_since` NULL · `ever_up bool` NN DEFAULT false — monotonic, set the first time sync observes the port operationally up and never cleared; interface-down alerts are suppressed while it is false (FR-ALR-08) · timestamps. **UNIQUE `(device_id, if_index)`**; index `(device_id)`, trigram `(alias)`.
 
 ### device_components
 Sensors/PSUs/fans/modules from ENTITY-MIB & vendor MIBs: `id` PK · `device_id` FK CASCADE · `kind` NN (`cpu`,`memory_pool`,`temp_sensor`,`fan`,`psu`,`module`,`stack_member`,`optic`) · `source_index` text NN (MIB index path) · `name` NN · `model`/`serial` · `state` (`present`,`missing`,`removed`) · `attrs jsonb` · timestamps. UNIQUE `(device_id, kind, source_index)`.
@@ -142,7 +143,7 @@ Append-only lifecycle log: `id bigint identity` PK · `alert_id` FK alert_instan
 ## Schema `audit`
 
 ### events
-Append-only (FR-AUD-02): `id bigint identity` PK · `tenant_id` NN · `at timestamptz` NN · `actor_kind` NN (`user`,`api_token`,`system`) · `actor_id` text NULL · `action` text NN (dot-namespaced: `auth.login.success`, `device.update`, `sync.completed`, `api.error`) · `resource_kind` / `resource_id` text · `before jsonb` / `after jsonb` (config diffs, secrets always redacted) · `source_ip inet` · `user_agent` text · `trace_id` text · `detail jsonb`. **Range-partitioned by month on `at`**; indexes per partition: `(at DESC)`, `(actor_id, at DESC)`, `(action, at DESC)`, `(resource_kind, resource_id)`. No UPDATE/DELETE grants to the app role; retention = detach+archive partition (doc 20 §10).
+Append-only (FR-AUD-02): `id bigint identity` PK · `tenant_id` NN · `at timestamptz` NN · `actor_kind` NN (`user`,`api_token`,`system`) · `actor_id` text NULL · `action` text NN (dot-namespaced: `auth.login.success`, `device.update`, `device.purge`, `device.oid_walk`, `sync.completed`, `map.delete`, `alert_rule.create` / `.update` / `.delete` / `.set_enabled`, `api.error`). Destructive acts capture the human-readable name in `before` — an audit row naming only an id nobody can resolve afterwards is close to useless — and `alert_rule.set_enabled` is audited because disabling a rule silences monitoring · `resource_kind` / `resource_id` text · `before jsonb` / `after jsonb` (config diffs, secrets always redacted) · `source_ip inet` · `user_agent` text · `trace_id` text · `detail jsonb`. **Range-partitioned by month on `at`**; indexes per partition: `(at DESC)`, `(actor_id, at DESC)`, `(action, at DESC)`, `(resource_kind, resource_id)`. No UPDATE/DELETE grants to the app role; retention = detach+archive partition (doc 20 §10).
 
 ## Schema `config`
 
@@ -200,3 +201,21 @@ erDiagram
 - Historical tables: `asset_history`, `alert_events`, `audit.events`, `sync_runs` are append-only; the two biggest are month-partitioned so retention is `DROP PARTITION`, not `DELETE`.
 - Purge/retention jobs (scheduler-owned): expired tokens, old sync_runs/deliveries, audit/asset partitions per doc 04 §4.
 - Seed data (migration 0002): default tenant, builtin roles, default polling profile, builtin alert rule pack, connector catalog rows, admin user (forced password change).
+
+## Migrations
+
+Goose, embedded in the binary and applied by the API at startup. Every change ships as a new numbered file; none are edited in place.
+
+| # | What | Why |
+|---|---|---|
+| 0001 | Full schema | Baseline |
+| 0002 | Seed | Default tenant, builtin roles, default polling profile, builtin alert rule pack, connector catalog, admin user (forced password change) |
+| 0003 | `users.must_change_password` | Bootstrap admin has to rotate its seeded password |
+| 0004 | `interfaces.miss_streak` | Deleted-asset detection needs consecutive-miss counting (FR-SYNC-03) |
+| 0005 | Builtin rules → MetricsQL | The metric families the shipped pack refers to now exist; rules whose event sources do not are disabled rather than left firing nothing |
+| 0006 | Memory rule as a percentage | The original expression divided two gauges that are not always both present |
+| 0007 | `discovered_devices.sys_name` | Discovery results are unreadable as bare IPs |
+| 0008 | `interfaces.ever_up` | Distinguishes "never worked" from "stopped working"; backfilled from the current `oper_status` so nothing goes quiet waiting for a first sync (FR-ALR-08) |
+| 0009 | `devices.wan_capacity_bps` | SNMP cannot report a PPPoE plan rate, so an operator states it (FR-MAP-08) |
+
+`TestMigrateUpDownUp` (`internal/platform/pgx`) applies every migration up, down to zero and up again in a throwaway database, so down-migrations stay real rather than decorative.

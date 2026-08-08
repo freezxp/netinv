@@ -1,6 +1,6 @@
 # 10 — Connector Architecture (Plugin Framework)
 
-**Status:** draft · **Depends on:** 05, ADR-014 · **Constrains:** 13, 17
+**Status:** review · **Depends on:** 05, ADR-014 · **Constrains:** 13, 17
 
 ## 1. Purpose & principle
 
@@ -58,15 +58,16 @@ type StorageCollector interface        { CollectStorage(ctx, Session) ([]Storage
 ## 3. Registration & loading
 
 ```go
-// connectors/registry/registry.go
+// connectors/registry/registry.go — imported ONLY by cmd/poller (doc 13 rule 5)
 package registry
 import (
-    _ "netinv/connectors/generic"   // side-effect registration via init()
-    _ "netinv/connectors/cisco"
-    _ "netinv/connectors/juniper"
-    _ "netinv/connectors/huawei"
-    _ "netinv/connectors/zte"
-    _ "netinv/connectors/ubiquiti"
+    _ "github.com/freezxp/netinv/connectors/generic"  // side-effect init()
+    _ "github.com/freezxp/netinv/connectors/cisco"
+    _ "github.com/freezxp/netinv/connectors/juniper"
+    _ "github.com/freezxp/netinv/connectors/huawei"
+    _ "github.com/freezxp/netinv/connectors/zte"
+    _ "github.com/freezxp/netinv/connectors/ubiquiti"
+    _ "github.com/freezxp/netinv/connectors/ruckus"
 )
 ```
 
