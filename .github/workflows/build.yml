@@ -11,6 +11,12 @@ permissions:
   contents: read
   packages: write
 
+# Serialize image pushes: concurrent runs (e.g. a branch push and its tag)
+# race on identical layer blobs in GHCR.
+concurrency:
+  group: build-images
+  cancel-in-progress: false
+
 jobs:
   backend-images:
     runs-on: ubuntu-latest
