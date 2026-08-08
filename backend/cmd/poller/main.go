@@ -10,6 +10,7 @@ package main
 import (
 	"context"
 	"os"
+	"strings"
 
 	_ "github.com/freezxp/netinv/connectors/registry"
 
@@ -36,7 +37,19 @@ func main() {
 			stateDir = "/var/lib/netinv-poller"
 		}
 
-		siteID := os.Getenv("NETINV_SITE_ID")
+		// Comma-separated: one host often covers several logical sites, and a
+		// site with no consumer is never polled at all — its jobs pile up in a
+		// queue nobody reads, with nothing else reporting a problem.
+		var siteIDs []string
+		for _, part := range strings.Split(os.Getenv("NETINV_SITE_ID"), ",") {
+			if p := strings.TrimSpace(part); p != "" {
+				siteIDs = append(siteIDs, p)
+			}
+		}
+		siteID := ""
+		if len(siteIDs) > 0 {
+			siteID = siteIDs[0]
+		}
 		pollerID := os.Getenv("NETINV_POLLER_ID")
 		var agent *pollerrt.Agent
 		if apiURL := os.Getenv("NETINV_API_URL"); apiURL != "" {
@@ -45,6 +58,7 @@ func main() {
 				return err
 			}
 			pollerID, siteID = agent.Identity.PollerID, agent.Identity.SiteID
+			siteIDs = []string{siteID} // an enrolled poller serves its own site
 		}
 		if siteID == "" {
 			rt.Log.Warn("no site identity (set NETINV_API_URL+NETINV_ENROLL_TOKEN or NETINV_SITE_ID) — idle")
@@ -67,7 +81,8 @@ func main() {
 			return err
 		}
 		runtime := &pollerrt.Runtime{
-			PollerID: pollerID, SiteID: siteID, Client: mq, Log: rt.Log,
+			PollerID: pollerID, SiteID: siteID, SiteIDs: siteIDs,
+			Client: mq, Log: rt.Log,
 			Buffer:         buffer,
 			ICMPPrivileged: os.Getenv("NETINV_ICMP_PRIVILEGED") == "1",
 		}
@@ -82,7 +97,7 @@ func main() {
 			})
 		}
 		rt.Health.SetReady(true)
-		rt.Log.Info("poller running", "site", siteID, "poller_id", pollerID)
+		rt.Log.Info("poller running", "sites", siteIDs, "poller_id", pollerID)
 		return runtime.Run(ctx)
 	})
 }

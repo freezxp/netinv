@@ -49,8 +49,12 @@ export function DashboardPage() {
   const ack = useAckAlert();
   const s = summary.data?.data;
 
+  // Split by site: one fleet-wide line answers "is it busy" but never "where",
+  // which is the question a multi-site operator actually has. `or vector(0)`
+  // is gone with it — that fallback existed to keep an empty chart from
+  // looking broken, and it cannot carry a site label.
   const bandwidth = useQueryRange(
-    `sum(rate(netinv_if_in_octets_total[5m])) * 8 or vector(0)`,
+    `sum by (site) (rate(netinv_if_in_octets_total[5m])) * 8`,
     24,
     300,
   );
@@ -137,12 +141,12 @@ export function DashboardPage() {
       </Card>
 
       <div className="grid gap-4 lg:grid-cols-2">
-        <Card title="Aggregate bandwidth (24h)">
+        <Card title="Bandwidth in, by site (24h)">
           <TimeSeries
             result={bandwidth.data ?? []}
             windowHours={24}
             format={formatBps}
-            label={() => "in"}
+            label={(m) => m.site || "unassigned"}
           />
         </Card>
         <Card title="Latency — ICMP avg RTT (24h)">

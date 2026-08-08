@@ -7,8 +7,8 @@ package dashboard
 import (
 	"context"
 	"encoding/json"
-
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -147,8 +147,11 @@ func (s *Service) summary(ctx context.Context) (any, error) {
 // ---- top-N ----
 
 var topQueries = map[string]string{
+	// group_left() is load-bearing: a plain `on(...)` division keeps only the
+	// listed labels, so device and site were dropped and every row rendered as
+	// a bare "if 5" with no way to tell which box it was on.
 	"if_utilization": `topk(10, 100 * rate(netinv_if_in_octets_total[5m]) * 8
-		/ on(device_id, if_index) (netinv_if_speed_bps > 0))`,
+		/ on(device_id, if_index) group_left() (netinv_if_speed_bps > 0))`,
 	"if_traffic": `topk(10, rate(netinv_if_in_octets_total[5m]) * 8)`,
 	"if_errors": `topk(10, rate(netinv_if_in_errors_total[15m])
 		+ rate(netinv_if_out_errors_total[15m]))`,
@@ -177,6 +180,7 @@ func (s *Service) top(w http.ResponseWriter, r *http.Request) {
 				"site": se.Labels["site"], "if_index": se.Labels["if_index"],
 			})
 		}
+		s.enrich(ctx, out)
 		return out, nil
 	})
 	if err != nil {
@@ -185,6 +189,77 @@ func (s *Service) top(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_, _ = w.Write(payload)
+}
+
+// enrich fills in the names a metric label set cannot carry: interfaces are
+// identified in VictoriaMetrics by if_index alone, and the `device` label holds
+// the operator's label rather than the device's own sysName. A row reading
+// "if 5" tells a reader nothing, so both are resolved from inventory in one
+// round trip and the device is named the way the inventory list names it —
+// sysName leading, operator label beside it (doc 30 §5).
+func (s *Service) enrich(ctx context.Context, rows []map[string]any) {
+	ids := map[string]bool{}
+	for _, r := range rows {
+		if id, _ := r["device_id"].(string); id != "" {
+			ids[id] = true
+		}
+	}
+	if len(ids) == 0 {
+		return
+	}
+	list := make([]string, 0, len(ids))
+	for id := range ids {
+		list = append(list, id)
+	}
+
+	type devName struct{ sysName, name string }
+	devs := map[string]devName{}
+	if drows, err := s.Pool.Query(ctx, `
+		SELECT id, coalesce(sys_name,''), name FROM inventory.devices
+		WHERE id = any($1)`, list); err == nil {
+		for drows.Next() {
+			var id, sys, name string
+			if drows.Scan(&id, &sys, &name) == nil {
+				devs[id] = devName{sys, name}
+			}
+		}
+		drows.Close()
+	}
+
+	ifNames := map[string]string{} // device_id|if_index → name
+	if irows, err := s.Pool.Query(ctx, `
+		SELECT device_id, if_index, coalesce(name,'') FROM inventory.interfaces
+		WHERE device_id = any($1) AND state != 'removed'`, list); err == nil {
+		for irows.Next() {
+			var dev, name string
+			var idx int
+			if irows.Scan(&dev, &idx, &name) == nil && name != "" {
+				ifNames[dev+"|"+strconv.Itoa(idx)] = name
+			}
+		}
+		irows.Close()
+	}
+
+	for _, r := range rows {
+		id, _ := r["device_id"].(string)
+		if d, ok := devs[id]; ok {
+			// Prefer what the device calls itself; keep the operator's label
+			// when it differs, since that is what a human searched for.
+			if d.sysName != "" {
+				r["device"] = d.sysName
+				if d.name != "" && d.name != d.sysName {
+					r["device_label"] = d.name
+				}
+			} else if d.name != "" {
+				r["device"] = d.name
+			}
+		}
+		if idx, _ := r["if_index"].(string); idx != "" {
+			if n, ok := ifNames[id+"|"+idx]; ok {
+				r["if_name"] = n
+			}
+		}
+	}
 }
 
 // ---- heatmap: one cell per device, worst current condition ----
@@ -277,7 +352,7 @@ func (s *Service) deviceHealth(ctx context.Context) (any, error) {
 func (s *Service) watchlist(ctx context.Context) (any, error) {
 	series, err := s.VM.Query(ctx, `
 		avg_over_time((100 * rate(netinv_if_in_octets_total[5m]) * 8
-			/ on(device_id, if_index) (netinv_if_speed_bps > 0))[24h:10m]) > 70`)
+			/ on(device_id, if_index) group_left() (netinv_if_speed_bps > 0))[24h:10m]) > 70`)
 	if err != nil {
 		return nil, err
 	}
@@ -289,6 +364,7 @@ func (s *Service) watchlist(ctx context.Context) (any, error) {
 			"avg_util_24h": round2(se.Value),
 		})
 	}
+	s.enrich(ctx, out)
 	return out, nil
 }
 

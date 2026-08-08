@@ -89,9 +89,14 @@ export interface TopRow {
   rank: number;
   value: number;
   device_id: string;
+  /** The device's own sysName where it has one. */
   device: string;
+  /** The operator's label, only when it differs from sysName. */
+  device_label?: string;
   site: string;
   if_index?: string;
+  /** Interface name from inventory; metrics carry only the index. */
+  if_name?: string;
 }
 
 export function useTop(list: string) {
@@ -141,7 +146,9 @@ export function useWatchlist() {
           Array<{
             device_id: string;
             device: string;
+            device_label?: string;
             if_index: string;
+            if_name?: string;
             site: string;
             avg_util_24h: number;
           }>

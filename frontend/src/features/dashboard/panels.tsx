@@ -46,10 +46,18 @@ export function TopNPanel() {
             <Link
               to={`/devices/${row.device_id}${row.if_index ? `?if=${row.if_index}` : ""}`}
               className="flex-1 truncate hover:text-sky-500"
+              title={row.device_label ? `${row.device} (${row.device_label})` : row.device}
             >
-              {row.device}
-              {row.if_index && (
-                <span className="text-slate-500"> · if {row.if_index}</span>
+              {/* An interface row has to say which box it is on: "if 5" alone
+                  identifies nothing. Name it, and fall back to the index only
+                  when inventory has no name for it. */}
+              {row.if_index ? (
+                <>
+                  <span className="mono">{row.if_name || `if ${row.if_index}`}</span>
+                  <span className="text-slate-500"> · {row.device}</span>
+                </>
+              ) : (
+                row.device
               )}
             </Link>
             <span className="mono text-xs">{tab.fmt(row.value)}</span>
@@ -110,8 +118,9 @@ export function WatchlistPanel() {
               to={`/devices/${row.device_id}?if=${row.if_index}`}
               className="flex-1 truncate hover:text-sky-500"
             >
-              {row.device} · if {row.if_index}
-              <span className="text-slate-500"> ({row.site})</span>
+              <span className="mono">{row.if_name || `if ${row.if_index}`}</span>
+              <span className="text-slate-500"> · {row.device}</span>
+              {row.site && <span className="text-slate-500"> ({row.site})</span>}
             </Link>
             <div className="h-2 w-32 overflow-hidden rounded bg-slate-200 dark:bg-slate-800">
               <div

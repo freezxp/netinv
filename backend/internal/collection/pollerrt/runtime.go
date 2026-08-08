@@ -20,8 +20,11 @@ import (
 )
 
 type Runtime struct {
-	PollerID       string
-	SiteID         string
+	PollerID string
+	SiteID   string
+	// SiteIDs lets one poller serve several logical sites on the same network.
+	// Empty falls back to SiteID.
+	SiteIDs        []string
 	Client         *amqpx.Client
 	Log            *slog.Logger
 	Workers        int // default 50
@@ -37,6 +40,19 @@ const (
 	batchFlushSize = 500
 	batchFlushAge  = 5 * time.Second
 )
+
+// sites returns every site this poller serves. SiteIDs wins when set; SiteID
+// remains the single-site form used by remote pollers, which are enrolled
+// against exactly one site.
+func (r *Runtime) sites() []string {
+	if len(r.SiteIDs) > 0 {
+		return r.SiteIDs
+	}
+	if r.SiteID != "" {
+		return []string{r.SiteID}
+	}
+	return nil
+}
 
 func (r *Runtime) Run(ctx context.Context) error {
 	if r.Workers == 0 {
@@ -61,45 +77,59 @@ func (r *Runtime) Run(ctx context.Context) error {
 			}
 		}()
 	}
-	// Job-stream supervisor: (re)establishes consumption across broker
-	// restarts — the delivery channel closes on connection loss (doc 07 §6).
-	go func() {
-		defer close(jobs)
-		for ctx.Err() == nil {
-			err := func() error {
-				if err := r.Client.DeclareJobTopology(); err != nil {
-					return err
-				}
-				if err := r.Client.EnsureSiteQueue(r.SiteID); err != nil {
-					return err
-				}
-				return r.Client.EnsureMetricsQueue()
-			}()
-			if err == nil {
-				var deliveries <-chan amqp.Delivery
-				deliveries, err = r.Client.Consume(amqpx.SiteQueue(r.SiteID), r.Workers*2)
-				if err == nil {
-					r.Log.Info("job stream established",
-						"queue", amqpx.SiteQueue(r.SiteID), "workers", r.Workers)
-					for d := range deliveries {
-						select {
-						case <-ctx.Done():
-							return
-						case jobs <- d:
-						}
+	// One supervisor per served site, all feeding the shared worker pool. Jobs
+	// go to a direct exchange keyed by site, so serving several sites means
+	// consuming several queues — there is no wildcard to bind. A single host
+	// commonly covers several *logical* sites (the pilot's four gateway sites
+	// are one flat network), and a device whose site has no consumer is
+	// silently never polled: its jobs just accumulate.
+	var supervisors sync.WaitGroup
+	for _, site := range r.sites() {
+		supervisors.Add(1)
+		go func() {
+			defer supervisors.Done()
+			queue := amqpx.SiteQueue(site)
+			for ctx.Err() == nil {
+				err := func() error {
+					if err := r.Client.DeclareJobTopology(); err != nil {
+						return err
 					}
-					r.Log.Warn("job stream closed — reconnecting")
+					if err := r.Client.EnsureSiteQueue(site); err != nil {
+						return err
+					}
+					return r.Client.EnsureMetricsQueue()
+				}()
+				if err == nil {
+					var deliveries <-chan amqp.Delivery
+					deliveries, err = r.Client.Consume(queue, r.Workers*2)
+					if err == nil {
+						r.Log.Info("job stream established",
+							"queue", queue, "workers", r.Workers)
+						for d := range deliveries {
+							select {
+							case <-ctx.Done():
+								return
+							case jobs <- d:
+							}
+						}
+						r.Log.Warn("job stream closed — reconnecting", "queue", queue)
+					}
+				}
+				if err != nil {
+					r.Log.Warn("job stream unavailable — retrying",
+						"queue", queue, "err", err)
+				}
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(3 * time.Second):
 				}
 			}
-			if err != nil {
-				r.Log.Warn("job stream unavailable — retrying", "err", err)
-			}
-			select {
-			case <-ctx.Done():
-				return
-			case <-time.After(3 * time.Second):
-			}
-		}
+		}()
+	}
+	go func() {
+		supervisors.Wait()
+		close(jobs)
 	}()
 	// Periodic flusher (age-based) + buffer drain loop (FR-COLL-08).
 	flushT := time.NewTicker(batchFlushAge)
