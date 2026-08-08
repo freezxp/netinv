@@ -95,6 +95,9 @@ export interface CactiEdgeData extends Record<string, unknown> {
   bound: boolean;
   /** Shown instead of rates when there is no live data — i.e. in the editor. */
   label?: string;
+  /** Node names, so the tooltip can say which way each figure runs. */
+  sourceLabel?: string;
+  targetLabel?: string;
 }
 
 // Cacti's weathermap signature: one line split at its midpoint, each half
@@ -158,29 +161,49 @@ export function CactiEdge({
   const inColor = utilColor(d.utilIn, d.state);
   const outColor = utilColor(d.utilOut, d.state);
 
-  // Arrowheads sit a little inside the endpoints so they don't disappear
-  // beneath the node boxes.
   const angle = Math.atan2(targetY - sourceY, targetX - sourceX);
-  const arrow = (x: number, y: number, dir: number, color: string) => {
-    const size = 7;
-    const a = angle + dir;
-    const p1 = [x, y];
-    const p2 = [x - size * Math.cos(a - 0.4), y - size * Math.sin(a - 0.4)];
-    const p3 = [x - size * Math.cos(a + 0.4), y - size * Math.sin(a + 0.4)];
-    return (
-      <polygon
-        points={`${p1[0]},${p1[1]} ${p2[0]},${p2[1]} ${p3[0]},${p3[1]}`}
-        fill={color}
-      />
-    );
-  };
   const inset = 14;
   const sxi = sourceX + inset * Math.cos(angle);
   const syi = sourceY + inset * Math.sin(angle);
   const txi = targetX - inset * Math.cos(angle);
   const tyi = targetY - inset * Math.sin(angle);
 
-  const pct = (v: number) => (d.hasCapacity ? ` ${v.toFixed(0)}%` : "");
+  // An arrowhead sitting on the node edge competes with the node box and gets
+  // lost. Placed partway along its own half it has clear space around it, and
+  // it is the thing the eye lands on first.
+  const arrowAt = (
+    fromX: number,
+    fromY: number,
+    toX: number,
+    toY: number,
+    color: string,
+  ) => {
+    const t = 0.55; // just past the midpoint of the half, in open space
+    const x = fromX + (toX - fromX) * t;
+    const y = fromY + (toY - fromY) * t;
+    const a = Math.atan2(toY - fromY, toX - fromX);
+    const size = 11;
+    const spread = 0.45;
+    return (
+      <polygon
+        points={[
+          `${x + size * 0.5 * Math.cos(a)},${y + size * 0.5 * Math.sin(a)}`,
+          `${x - size * Math.cos(a - spread)},${y - size * Math.sin(a - spread)}`,
+          `${x - size * Math.cos(a + spread)},${y - size * Math.sin(a + spread)}`,
+        ].join(" ")}
+        fill={color}
+        stroke="var(--map-arrow-edge, #0f172a)"
+        strokeWidth={0.75}
+      />
+    );
+  };
+
+  const pct = (v: number) => (d.hasCapacity ? ` · ${v.toFixed(0)}%` : "");
+  // Both halves run outward from the midpoint so the dash animation moves the
+  // way traffic does without a second set of keyframes.
+  const inPath = `M${mx},${my} L${sxi},${syi}`;
+  const outPath = `M${mx},${my} L${txi},${tyi}`;
+  const moving = (bps: number) => bps > 0;
 
   return (
     <g className="netinv-cacti-edge">
@@ -196,45 +219,93 @@ export function CactiEdge({
         fill="none"
         style={{ pointerEvents: "stroke" }}
       />
-      <path
-        d={`M${sxi},${syi} L${mx},${my}`}
-        stroke={inColor}
-        strokeWidth={5}
-        strokeLinecap="butt"
-        fill="none"
-      />
-      <path
-        d={`M${mx},${my} L${txi},${tyi}`}
-        stroke={outColor}
-        strokeWidth={5}
-        strokeLinecap="butt"
-        fill="none"
-      />
-      {arrow(sxi, syi, Math.PI, inColor)}
-      {arrow(txi, tyi, 0, outColor)}
-      <text
+      <path d={inPath} stroke={inColor} strokeWidth={5} fill="none" />
+      <path d={outPath} stroke={outColor} strokeWidth={5} fill="none" />
+      {/* Darker dashes crawling along the band, in the direction of travel. */}
+      {moving(d.inBps) && (
+        <path
+          className="netinv-flow"
+          d={inPath}
+          stroke="rgba(15,23,42,0.45)"
+          strokeWidth={5}
+          strokeDasharray="5 19"
+          fill="none"
+        />
+      )}
+      {moving(d.outBps) && (
+        <path
+          className="netinv-flow"
+          d={outPath}
+          stroke="rgba(15,23,42,0.45)"
+          strokeWidth={5}
+          strokeDasharray="5 19"
+          fill="none"
+        />
+      )}
+      {arrowAt(mx, my, sxi, syi, inColor)}
+      {arrowAt(mx, my, txi, tyi, outColor)}
+      <EdgeRate
         x={(sxi + mx) / 2}
-        y={(syi + my) / 2 - 7}
-        textAnchor="middle"
-        style={{ fontSize: 9, fill: "#94a3b8", pointerEvents: "none" }}
-      >
-        {formatBps(d.inBps)}
-        {pct(d.utilIn)}
-      </text>
-      <text
+        y={(syi + my) / 2}
+        angle={angle}
+        text={`${formatBps(d.inBps)}${pct(d.utilIn)}`}
+      />
+      <EdgeRate
         x={(mx + txi) / 2}
-        y={(my + tyi) / 2 - 7}
-        textAnchor="middle"
-        style={{ fontSize: 9, fill: "#94a3b8", pointerEvents: "none" }}
-      >
-        {formatBps(d.outBps)}
-        {pct(d.utilOut)}
-      </text>
-      <title>{`${formatBps(d.inBps)} in / ${formatBps(d.outBps)} out${
+        y={(my + tyi) / 2}
+        angle={angle}
+        text={`${formatBps(d.outBps)}${pct(d.utilOut)}`}
+      />
+      <title>{`${formatBps(d.inBps)} toward ${d.sourceLabel ?? "one end"}, ${formatBps(
+        d.outBps,
+      )} toward ${d.targetLabel ?? "the other"}${
         d.hasCapacity ? "" : " — no capacity set, so no utilisation colour"
       }`}</title>
       <desc>{id}</desc>
     </g>
+  );
+}
+
+// Rate text offset clear of the band it belongs to, always on the same side of
+// the line so the two directions never swap places as a map is rearranged.
+function EdgeRate({
+  x,
+  y,
+  angle,
+  text,
+}: {
+  x: number;
+  y: number;
+  angle: number;
+  text: string;
+}) {
+  // Perpendicular to the line. On a steep link that perpendicular is nearly
+  // horizontal, and a centred label straddles the band — its halo then paints
+  // over the arrowhead, which is the one thing that has to stay readable. So
+  // steep links get the text anchored fully to one side instead.
+  const px = Math.sin(angle);
+  const py = -Math.cos(angle);
+  const steep = Math.abs(px) > 0.5;
+  const off = steep ? 11 : 13;
+  return (
+    <text
+      x={x + px * off}
+      y={y + py * off}
+      textAnchor={steep ? (px > 0 ? "start" : "end") : "middle"}
+      dominantBaseline="middle"
+      style={{
+        fontSize: 10,
+        fill: "currentColor",
+        paintOrder: "stroke",
+        stroke: "var(--map-label-halo, #020617)",
+        strokeWidth: 3,
+        strokeLinejoin: "round",
+        pointerEvents: "none",
+      }}
+      className="text-slate-500 dark:text-slate-300"
+    >
+      {text}
+    </text>
   );
 }
 
@@ -258,6 +329,9 @@ export function toFlow(
       state: liveNodes.get(n.id) ?? "unknown",
     },
   }));
+  const nodeLabels = new Map(
+    (def.nodes ?? []).map((n) => [n.id, n.label || n.text || n.id]),
+  );
   const edges = (def.links ?? []).map((l) => {
     const lv = liveLinks.get(l.id);
     return {
@@ -282,6 +356,8 @@ export function toFlow(
           : l.a_endpoint
             ? `if ${l.a_endpoint.if_index}`
             : "unbound",
+        sourceLabel: nodeLabels.get(l.from),
+        targetLabel: nodeLabels.get(l.to),
       } satisfies CactiEdgeData,
     } satisfies Edge;
   });

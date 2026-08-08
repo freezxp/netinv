@@ -8,6 +8,18 @@
   --status-unreachable: #94a3b8;
   --status-muted: #475569;
   --status-info: #0ea5e9;
+
+  /* Weathermap link chrome. Rate labels sit on top of the coloured band, so
+     they carry a halo in the page background colour to stay legible against
+     any utilisation colour; arrowheads take a thin outline for the same
+     reason. */
+  --map-label-halo: #f1f5f9;
+  --map-arrow-edge: #f1f5f9;
+}
+
+.dark {
+  --map-label-halo: #020617;
+  --map-arrow-edge: #020617;
 }
 
 @custom-variant dark (&:where(.dark, .dark *));
@@ -30,4 +42,27 @@ body {
 code,
 .mono {
   font-family: "JetBrains Mono", ui-monospace, monospace;
+}
+
+/* Weathermap link flow: dashes crawl along each half in the direction that
+   traffic is moving. Colour already says how busy a link is; motion is what
+   makes the direction readable at a glance, on a diagonal as much as a
+   horizontal. Both halves are drawn outward from the midpoint, so one
+   animation serves either direction. */
+@keyframes netinv-flow {
+  to {
+    stroke-dashoffset: -24;
+  }
+}
+
+.netinv-flow {
+  animation: netinv-flow 1s linear infinite;
+}
+
+/* Motion is decoration here — the arrowheads and labels carry the same
+   information — so it goes away for anyone who asked for less of it. */
+@media (prefers-reduced-motion: reduce) {
+  .netinv-flow {
+    animation: none;
+  }
 }

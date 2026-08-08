@@ -128,6 +128,13 @@ test("a published link renders in the viewer", async ({ page, request }) => {
 
   const devs = await (await request.get("/api/v1/devices?limit=2", { headers })).json();
   expect(devs.data.length).toBeGreaterThanOrEqual(2);
+  // Bind one end so the link renders as a live band rather than the dashed
+  // placeholder — the direction affordances only exist on a bound link.
+  const ifs = await (
+    await request.get(`/api/v1/devices/${devs.data[0].id}/interfaces`, { headers })
+  ).json();
+  expect(ifs.data.length).toBeGreaterThan(0);
+  const ifIndex = ifs.data[0].if_index;
 
   const name = `e2e-link-${Date.now()}`;
   const created = await (
@@ -141,7 +148,16 @@ test("a published link renders in the viewer", async ({ page, request }) => {
         { id: "a", kind: "device", device_id: devs.data[0].id, label: "A", x: 60, y: 60 },
         { id: "b", kind: "device", device_id: devs.data[1].id, label: "B", x: 380, y: 60 },
       ],
-      links: [{ id: "l1", from: "a", to: "b", from_handle: "r", to_handle: "l" }],
+      links: [
+        {
+          id: "l1",
+          from: "a",
+          to: "b",
+          from_handle: "r",
+          to_handle: "l",
+          a_endpoint: { device_id: devs.data[0].id, if_index: ifIndex },
+        },
+      ],
     },
   });
   expect(draft.ok()).toBeTruthy();
@@ -159,6 +175,13 @@ test("a published link renders in the viewer", async ({ page, request }) => {
   await expect(page.getByRole("heading", { name: "Weathermap" })).toBeVisible();
   await expect(page.locator(".react-flow__node")).toHaveCount(2);
   await expect(page.locator(".react-flow__edge")).toHaveCount(1);
+
+  // Direction has to be readable without hovering: one arrowhead per
+  // direction, and a rate figure for each.
+  const edge = page.locator("g.netinv-cacti-edge");
+  await expect(edge).toHaveCount(1);
+  await expect(edge.locator("polygon")).toHaveCount(2);
+  await expect(edge.locator("text")).toHaveCount(2);
 
   await deleteMap(request, created.id);
 });
