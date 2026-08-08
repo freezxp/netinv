@@ -37,11 +37,14 @@ export function DeviceNode({
   data: DeviceNodeData;
   isConnectable?: boolean;
 }) {
-  // Nodes with no device behind them never take a live state, so a solid
-  // status border would be a lie — a caption is not "unknown", it is simply
-  // not monitored. Dashed and muted says that without a legend.
-  const plain = data.kind !== "device";
+  // A site or cloud node usually stands for something real that simply is not
+  // pollable — a mesh AP with no SNMP agent, an ISP — so it is drawn exactly
+  // like a device node. Only its border colour differs, staying muted because
+  // there is no live state to report; dashing it as well made a real part of
+  // the topology look provisional. A label is the exception: it is a caption,
+  // not a thing, so it gets no box at all.
   const caption = data.kind === "label";
+  const plain = data.kind !== "device";
 
   return (
     <div
@@ -50,7 +53,6 @@ export function DeviceNode({
         caption
           ? "text-slate-600 dark:text-slate-300"
           : "rounded-md border-2 bg-white shadow-sm dark:bg-slate-900 dark:text-slate-200",
-        plain && !caption && "border-dashed",
       )}
       style={
         caption
@@ -351,10 +353,13 @@ export function toFlow(
         // against — both read as 0%, but only one is worth colouring.
         hasCapacity: (lv?.capacity_bps ?? 0) > 0,
         bound: !!lv && !!l.a_endpoint,
+        // Either end counts as bound now, so a B-only link must not be
+        // labelled "unbound" — it reads correctly, it was just drawn the
+        // other way round.
         label: lv
           ? undefined
-          : l.a_endpoint
-            ? `if ${l.a_endpoint.if_index}`
+          : (l.a_endpoint ?? l.b_endpoint)
+            ? `if ${(l.a_endpoint ?? l.b_endpoint)!.if_index}`
             : "unbound",
         sourceLabel: nodeLabels.get(l.from),
         targetLabel: nodeLabels.get(l.to),
