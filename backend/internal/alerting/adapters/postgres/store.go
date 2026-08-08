@@ -14,6 +14,7 @@ import (
 	"github.com/freezxp/netinv/backend/internal/alerting/app"
 	"github.com/freezxp/netinv/backend/internal/alerting/domain"
 	"github.com/freezxp/netinv/backend/internal/platform/errx"
+	pgxp "github.com/freezxp/netinv/backend/internal/platform/pgx"
 )
 
 type Store struct{ Pool *pgxpool.Pool }
@@ -138,6 +139,30 @@ func (s *Store) AppendEvent(ctx context.Context, instID, event, actorID string, 
 		INSERT INTO alerting.alert_events (alert_id, event, actor_id, detail)
 		VALUES ($1,$2,nullif($3,''),$4)`, instID, event, actorID, raw)
 	return errx.Wrap(errx.KindTransient, err, "append alert event")
+}
+
+// DeleteRule removes a rule and the alert history belonging to it.
+//
+// alert_instances.rule_id has no ON DELETE action, so the rule cannot go while
+// instances reference it; alert_events then cascade from the instances. Both
+// steps run in one transaction so a rule can never be left half-deleted with
+// its history detached.
+func (s *Store) DeleteRule(ctx context.Context, ruleID string) error {
+	return pgxp.InTx(ctx, s.Pool, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx,
+			`DELETE FROM alerting.alert_instances WHERE rule_id = $1`, ruleID); err != nil {
+			return errx.Wrap(errx.KindTransient, err, "delete alert history")
+		}
+		tag, err := tx.Exec(ctx,
+			`DELETE FROM alerting.alert_rules WHERE id = $1`, ruleID)
+		if err != nil {
+			return errx.Wrap(errx.KindTransient, err, "delete rule")
+		}
+		if tag.RowsAffected() == 0 {
+			return errx.New(errx.KindNotFound, "rule not found")
+		}
+		return nil
+	})
 }
 
 // ---- read side + ack (API) ----

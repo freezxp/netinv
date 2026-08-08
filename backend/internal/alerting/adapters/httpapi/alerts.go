@@ -1,8 +1,8 @@
-// Package httpapi — alerts/silences routes (doc 09 §9). Rule CRUD beyond
-// enable/disable lands with the admin UI sprint.
+// Package httpapi — alerts, alert-rule CRUD and silences routes (doc 09 §9).
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -12,7 +12,9 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	alertpg "github.com/freezxp/netinv/backend/internal/alerting/adapters/postgres"
+	"github.com/freezxp/netinv/backend/internal/alerting/app"
 	"github.com/freezxp/netinv/backend/internal/alerting/domain"
+	"github.com/freezxp/netinv/backend/internal/audit"
 	"github.com/freezxp/netinv/backend/internal/platform/authz"
 	"github.com/freezxp/netinv/backend/internal/platform/errx"
 	"github.com/freezxp/netinv/backend/internal/platform/httpx"
@@ -23,6 +25,12 @@ type Handler struct {
 	Store   *alertpg.Store
 	Pool    *pgxpool.Pool
 	Checker authz.Checker
+	// Audit records rule changes. Disabling a rule silences monitoring, which
+	// is exactly the kind of act an operator needs to be able to trace later.
+	Audit audit.Writer
+	// Exprs validates rule expressions against the metrics backend before a
+	// rule is stored. Optional; nil skips the check.
+	Exprs app.ExprValidator
 }
 
 func (h *Handler) Register(r chi.Router) {
@@ -42,6 +50,9 @@ func (h *Handler) Register(r chi.Router) {
 	})
 	r.Group(func(pw chi.Router) {
 		pw.Use(httpx.RequirePerm(h.Checker, authz.AlertsAdmin))
+		pw.Post("/alert-rules", h.createRule)
+		pw.Patch("/alert-rules/{id}", h.updateRule)
+		pw.Delete("/alert-rules/{id}", h.deleteRule)
 		pw.Post("/alert-rules/{id}/enable", h.setRuleEnabled(true))
 		pw.Post("/alert-rules/{id}/disable", h.setRuleEnabled(false))
 	})
@@ -158,29 +169,200 @@ func (h *Handler) unack(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) rules(w http.ResponseWriter, r *http.Request) {
-	rows, err := h.Pool.Query(r.Context(), `
-		SELECT id, name, kind, severity, coalesce(expr,''), enabled, is_builtin, annotations
-		FROM alerting.alert_rules ORDER BY name`)
+	out, err := h.loadRules(r.Context(), "")
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	defer rows.Close()
-	out := []map[string]any{}
-	for rows.Next() {
-		var id, name, kind, sev, expr string
-		var enabled, builtin bool
-		var ann map[string]any
-		if err := rows.Scan(&id, &name, &kind, &sev, &expr, &enabled, &builtin, &ann); err != nil {
-			httpx.WriteError(w, r, err)
-			return
-		}
-		out = append(out, map[string]any{
-			"id": id, "name": name, "kind": kind, "severity": sev, "expr": expr,
-			"enabled": enabled, "is_builtin": builtin, "annotations": ann,
-		})
-	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"data": out})
+}
+
+// loadRules returns every rule, or just one when id is given. The live count
+// comes along so the UI can warn before disabling a rule that is currently
+// reporting something.
+func (h *Handler) loadRules(ctx context.Context, id string) ([]*app.RuleSummary, error) {
+	q := `
+		SELECT r.id, r.name, r.kind, r.severity, coalesce(r.expr,''), r.condition,
+		       r.annotations, r.enabled, r.is_builtin,
+		       (SELECT count(*) FROM alerting.alert_instances ai
+		        WHERE ai.rule_id = r.id AND ai.state != 'resolved')
+		FROM alerting.alert_rules r`
+	args := []any{}
+	if id != "" {
+		q += ` WHERE r.id = $1`
+		args = append(args, id)
+	}
+	q += ` ORDER BY r.name`
+	rows, err := h.Pool.Query(ctx, q, args...)
+	if err != nil {
+		return nil, errx.Wrap(errx.KindTransient, err, "list alert rules")
+	}
+	defer rows.Close()
+	out := []*app.RuleSummary{}
+	for rows.Next() {
+		v := &app.RuleSummary{}
+		if err := rows.Scan(&v.ID, &v.Name, &v.Kind, &v.Severity, &v.Expr,
+			&v.Condition, &v.Annotations, &v.Enabled, &v.Builtin, &v.Firing); err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
+}
+
+func (h *Handler) oneRule(ctx context.Context, id string) (*app.RuleSummary, error) {
+	rules, err := h.loadRules(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if len(rules) == 0 {
+		return nil, errx.New(errx.KindNotFound, "rule not found")
+	}
+	return rules[0], nil
+}
+
+func (h *Handler) createRule(w http.ResponseWriter, r *http.Request) {
+	var in app.RuleInput
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		httpx.WriteError(w, r, errx.New(errx.KindInvalid, "malformed JSON body"))
+		return
+	}
+	if err := in.Validate(r.Context(), h.Exprs, true); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	enabled := true
+	if in.Enabled != nil {
+		enabled = *in.Enabled
+	}
+	rid := id.New("ar")
+	_, err := h.Pool.Exec(r.Context(), `
+		INSERT INTO alerting.alert_rules
+			(id, tenant_id, name, kind, severity, expr, condition, annotations, enabled)
+		VALUES ($1,'t_default',$2,$3::alerting.rule_kind,$4::alerting.severity,
+		        nullif($5,''),$6::jsonb,$7::jsonb,$8)`,
+		rid, in.Name, in.Kind, in.Severity, in.Expr,
+		jsonbOr(in.Condition, "{}"), jsonbOr(in.Annotations, "{}"), enabled)
+	if err != nil {
+		httpx.WriteError(w, r, errx.Wrap(errx.KindConflict, err,
+			"could not create rule — the name may already be in use"))
+		return
+	}
+	h.auditRule(r, "alert_rule.create", rid, nil, map[string]any{
+		"name": in.Name, "severity": in.Severity, "expr": in.Expr, "enabled": enabled,
+	})
+	rule, err := h.oneRule(r.Context(), rid)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusCreated, rule)
+}
+
+func (h *Handler) updateRule(w http.ResponseWriter, r *http.Request) {
+	rid := chi.URLParam(r, "id")
+	before, err := h.oneRule(r.Context(), rid)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	var in app.RuleInput
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		httpx.WriteError(w, r, errx.New(errx.KindInvalid, "malformed JSON body"))
+		return
+	}
+	if err := in.Validate(r.Context(), h.Exprs, false); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	// Every field is optional: coalesce keeps whatever the caller left out.
+	// A built-in rule is tunable — thresholds and severity are exactly what an
+	// operator needs to adjust — it simply cannot be deleted.
+	_, err = h.Pool.Exec(r.Context(), `
+		UPDATE alerting.alert_rules SET
+			name       = coalesce(nullif($2,''), name),
+			kind       = coalesce(nullif($3,'')::alerting.rule_kind, kind),
+			severity   = coalesce(nullif($4,'')::alerting.severity, severity),
+			expr       = coalesce(nullif($5,''), expr),
+			condition  = coalesce($6::jsonb, condition),
+			annotations= coalesce($7::jsonb, annotations),
+			enabled    = coalesce($8, enabled),
+			updated_at = now()
+		WHERE id = $1`,
+		rid, in.Name, in.Kind, in.Severity, in.Expr,
+		jsonbOr(in.Condition, ""), jsonbOr(in.Annotations, ""), in.Enabled)
+	if err != nil {
+		httpx.WriteError(w, r, errx.Wrap(errx.KindConflict, err,
+			"could not update rule — the name may already be in use"))
+		return
+	}
+	after, err := h.oneRule(r.Context(), rid)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	h.auditRule(r, "alert_rule.update", rid,
+		map[string]any{"name": before.Name, "severity": before.Severity,
+			"expr": before.Expr, "enabled": before.Enabled},
+		map[string]any{"name": after.Name, "severity": after.Severity,
+			"expr": after.Expr, "enabled": after.Enabled})
+	httpx.WriteJSON(w, http.StatusOK, after)
+}
+
+func (h *Handler) deleteRule(w http.ResponseWriter, r *http.Request) {
+	rid := chi.URLParam(r, "id")
+	rule, err := h.oneRule(r.Context(), rid)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if err := app.DeleteGuard(rule); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	// Takes the rule's alert history with it: instances reference the rule and
+	// cannot be orphaned, so the confirmation upstream says how many go.
+	if err := h.Store.DeleteRule(r.Context(), rid); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	h.auditRule(r, "alert_rule.delete", rid,
+		map[string]any{"name": rule.Name, "severity": rule.Severity,
+			"expr": rule.Expr, "firing": rule.Firing}, nil)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// jsonbOr renders a map for a ::jsonb parameter. Empty maps are ambiguous to
+// the planner inside coalesce, so the caller states the fallback: "{}" to
+// store an empty document, "" to mean "leave the stored value alone".
+func jsonbOr(v map[string]any, fallback string) any {
+	if v == nil {
+		if fallback == "" {
+			return nil
+		}
+		return fallback
+	}
+	raw, err := json.Marshal(v)
+	if err != nil {
+		return fallback
+	}
+	return string(raw)
+}
+
+func (h *Handler) auditRule(r *http.Request, action, rid string, before, after map[string]any) {
+	if h.Audit == nil {
+		return
+	}
+	ip := r.RemoteAddr
+	if i := strings.LastIndex(ip, ":"); i > 0 {
+		ip = ip[:i]
+	}
+	h.Audit.Write(r.Context(), audit.Event{
+		ActorKind: "user", ActorID: httpx.ClaimsFrom(r.Context()).Subject,
+		Action: action, ResourceKind: "alert_rule", ResourceID: rid,
+		Before: before, After: after,
+		SourceIP: ip, UserAgent: r.UserAgent(), TraceID: httpx.TraceID(r.Context()),
+	})
 }
 
 func (h *Handler) setRuleEnabled(enabled bool) http.HandlerFunc {
@@ -196,6 +378,8 @@ func (h *Handler) setRuleEnabled(enabled bool) http.HandlerFunc {
 			httpx.WriteError(w, r, errx.New(errx.KindNotFound, "rule not found"))
 			return
 		}
+		h.auditRule(r, "alert_rule.set_enabled", chi.URLParam(r, "id"),
+			map[string]any{"enabled": !enabled}, map[string]any{"enabled": enabled})
 		w.WriteHeader(http.StatusNoContent)
 	}
 }

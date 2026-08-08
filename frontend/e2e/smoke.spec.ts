@@ -229,6 +229,54 @@ test("the sidebar collapses to icons and stays collapsed", async ({ page }) => {
   await expect(page.getByText("NetInv")).toBeVisible();
 });
 
+// Alert rules are operator-authored now, so the two things that must hold are
+// that a bad expression is refused before it can be stored (a stored typo just
+// never fires, silently), and that built-ins cannot be deleted.
+test("alert rules can be created, edited and deleted", async ({ page }) => {
+  await login(page);
+  await page.getByRole("link", { name: "Alerts" }).click();
+  await page.getByRole("button", { name: "Rules" }).click();
+  await expect(page.getByText("Interface down")).toBeVisible();
+
+  // Built-ins are tunable but not removable: no Delete on that row.
+  const builtin = page
+    .locator("tr")
+    .filter({ hasText: "Interface down" })
+    .first();
+  await expect(builtin.getByRole("button", { name: "Delete" })).toHaveCount(0);
+  await expect(builtin.getByRole("button", { name: "Edit" })).toBeVisible();
+
+  const name = `e2e-rule-${Date.now()}`;
+  await page.getByRole("button", { name: "New rule" }).click();
+  await page.getByPlaceholder("Temperature above 75C").fill(name);
+  const expr = page.getByPlaceholder(/max_over_time/);
+
+  // A typo must be refused here rather than stored and never fire.
+  await expr.fill("netinv_device_cpu_percent >");
+  await page.getByRole("button", { name: "Create rule" }).click();
+  await expect(page.getByText(/rejected this expression/)).toBeVisible();
+
+  await expr.fill("netinv_device_cpu_percent > 99");
+  await page.getByRole("button", { name: "Create rule" }).click();
+  await expect(page.getByText(name)).toBeVisible();
+
+  // Edit it: severity only, expression left alone.
+  const row = page.locator("tr").filter({ hasText: name }).first();
+  await row.getByRole("button", { name: "Edit" }).click();
+  await page.getByRole("combobox").last().selectOption("critical");
+  await page.getByRole("button", { name: "Save" }).click();
+  await expect(row.getByText("critical")).toBeVisible();
+
+  // Delete needs the name typed out.
+  await row.getByRole("button", { name: "Delete" }).click();
+  const confirm = page.getByRole("button", { name: "Delete permanently" });
+  await expect(confirm).toBeDisabled();
+  await page.getByPlaceholder(name).fill(name);
+  await expect(confirm).toBeEnabled();
+  await confirm.click();
+  await expect(page.getByText(name)).toHaveCount(0);
+});
+
 test("admin sees role-gated nav (Users, Audit, Settings)", async ({ page }) => {
   await login(page);
   await expect(page.getByRole("link", { name: "Users" })).toBeVisible();

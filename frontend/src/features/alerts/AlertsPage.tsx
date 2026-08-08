@@ -9,9 +9,11 @@ import {
   Card,
   EmptyState,
   Input,
+  Select,
   SeverityPill,
   cx,
 } from "../../components/ui";
+import { hasPermissionRole, useAuthStore } from "../auth/store";
 import { formatDuration } from "../../lib/format";
 
 const tabs = ["Active", "Silences", "Rules"] as const;
@@ -190,12 +192,19 @@ interface Rule {
   kind: string;
   severity: string;
   expr: string;
+  condition?: Record<string, unknown>;
+  annotations?: Record<string, string>;
   enabled: boolean;
   is_builtin: boolean;
+  /** Live alerts from this rule — shown before disabling or deleting it. */
+  firing: number;
 }
 
 function RulesTab() {
   const qc = useQueryClient();
+  const canEdit = hasPermissionRole(useAuthStore((s) => s.user), "operator");
+  const [editing, setEditing] = useState<Rule | "new" | null>(null);
+  const [deleting, setDeleting] = useState<Rule | null>(null);
   const rules = useQuery({
     queryKey: ["alert-rules"],
     queryFn: () => api<{ data: Rule[] }>("/alert-rules"),
@@ -207,39 +216,263 @@ function RulesTab() {
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["alert-rules"] }),
   });
+
   return (
-    <Card className="p-0">
-      <table className="w-full text-sm">
-        <tbody>
-          {rules.data?.data.map((r) => (
-            <tr
-              key={r.id}
-              className="border-b border-slate-100 dark:border-slate-800/60"
-            >
-              <td className="px-4 py-2">
-                <SeverityPill severity={r.severity} />
-              </td>
-              <td className="px-4 py-2 font-medium">
-                {r.name}
-                {r.is_builtin && (
-                  <span className="ml-2 text-xs text-slate-500">builtin</span>
+    <div className="flex flex-col gap-3">
+      {canEdit && (
+        <div className="flex justify-end">
+          <Button onClick={() => setEditing("new")}>New rule</Button>
+        </div>
+      )}
+      <Card className="p-0">
+        <table className="w-full text-sm">
+          <tbody>
+            {rules.data?.data.map((r) => (
+              <tr
+                key={r.id}
+                className={cx(
+                  "border-b border-slate-100 dark:border-slate-800/60",
+                  !r.enabled && "opacity-60",
                 )}
-              </td>
-              <td className="mono max-w-md truncate px-4 py-2 text-xs text-slate-500">
-                {r.expr || r.kind}
-              </td>
-              <td className="px-4 py-2 text-right">
-                <Button
-                  variant="ghost"
-                  onClick={() => toggle.mutate({ id: r.id, enable: !r.enabled })}
-                >
-                  {r.enabled ? "Disable" : "Enable"}
-                </Button>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </Card>
+              >
+                <td className="px-4 py-2">
+                  <SeverityPill severity={r.severity} />
+                </td>
+                <td className="px-4 py-2 font-medium">
+                  {r.name}
+                  {r.is_builtin && (
+                    <span className="ml-2 text-xs text-slate-500">builtin</span>
+                  )}
+                  {!r.enabled && (
+                    <span className="ml-2 text-xs text-amber-500">disabled</span>
+                  )}
+                </td>
+                <td className="mono max-w-md truncate px-4 py-2 text-xs text-slate-500">
+                  {r.expr || r.kind}
+                </td>
+                <td className="px-4 py-2 text-xs text-slate-500">
+                  {r.firing > 0 ? `${r.firing} firing` : ""}
+                </td>
+                <td className="whitespace-nowrap px-4 py-2 text-right">
+                  {canEdit && (
+                    <Button variant="ghost" onClick={() => setEditing(r)}>
+                      Edit
+                    </Button>
+                  )}
+                  <Button
+                    variant="ghost"
+                    disabled={!canEdit || toggle.isPending}
+                    onClick={() => toggle.mutate({ id: r.id, enable: !r.enabled })}
+                  >
+                    {r.enabled ? "Disable" : "Enable"}
+                  </Button>
+                  {/* Built-ins are tunable but not removable — nothing short of
+                      a re-migration would bring one back. */}
+                  {canEdit && !r.is_builtin && (
+                    <Button variant="danger" onClick={() => setDeleting(r)}>
+                      Delete
+                    </Button>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {rules.data?.data.length === 0 && (
+          <EmptyState>No alert rules yet.</EmptyState>
+        )}
+      </Card>
+      {editing && (
+        <RuleFormModal
+          rule={editing === "new" ? undefined : editing}
+          onClose={() => setEditing(null)}
+        />
+      )}
+      {deleting && (
+        <ConfirmDeleteRule rule={deleting} onClose={() => setDeleting(null)} />
+      )}
+    </div>
+  );
+}
+
+const severities = ["critical", "warning", "info"];
+
+function RuleFormModal({
+  rule,
+  onClose,
+}: {
+  rule?: Rule;
+  onClose: () => void;
+}) {
+  const qc = useQueryClient();
+  const [name, setName] = useState(rule?.name ?? "");
+  const [severity, setSeverity] = useState(rule?.severity ?? "warning");
+  const [expr, setExpr] = useState(rule?.expr ?? "");
+  const [summary, setSummary] = useState(rule?.annotations?.summary ?? "");
+
+  const save = useMutation({
+    mutationFn: () =>
+      api<Rule>(rule ? `/alert-rules/${rule.id}` : "/alert-rules", {
+        method: rule ? "PATCH" : "POST",
+        body: JSON.stringify({
+          name,
+          severity,
+          expr,
+          annotations: summary ? { summary } : {},
+        }),
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["alert-rules"] });
+      onClose();
+    },
+  });
+
+  return (
+    <div className="fixed inset-0 z-30 flex items-center justify-center bg-black/50 whitespace-normal">
+      <Card
+        title={rule ? `Edit ${rule.name}` : "New alert rule"}
+        className="w-[34rem]"
+      >
+        <div className="flex flex-col gap-3">
+          <label className="flex flex-col gap-1">
+            <span className="text-xs text-slate-500">Name</span>
+            <Input
+              value={name}
+              autoFocus
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Temperature above 75C"
+            />
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="text-xs text-slate-500">Severity</span>
+            <Select
+              value={severity}
+              onChange={(e) => setSeverity(e.target.value)}
+            >
+              {severities.map((s) => (
+                <option key={s} value={s}>
+                  {s}
+                </option>
+              ))}
+            </Select>
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="text-xs text-slate-500">
+              Expression (MetricsQL) — checked against the metrics backend
+              before saving, so a typo is refused here rather than silently
+              never firing
+            </span>
+            <textarea
+              value={expr}
+              onChange={(e) => setExpr(e.target.value)}
+              rows={3}
+              spellCheck={false}
+              placeholder="max_over_time(netinv_sensor_temperature_celsius[10m]) > 75"
+              className="mono rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
+            />
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="text-xs text-slate-500">
+              Summary — {"{{device}}"} and {"{{if_name}}"} are filled in per alert
+            </span>
+            <Input
+              value={summary}
+              onChange={(e) => setSummary(e.target.value)}
+              placeholder="{{device}} sensor above 75C"
+            />
+          </label>
+          {rule?.is_builtin && (
+            <p className="text-xs text-slate-500">
+              This is a built-in rule. Tuning it is fine — the change sticks
+              across restarts — but it cannot be deleted, only disabled.
+            </p>
+          )}
+          {save.isError && (
+            <div className="text-sm text-red-500">
+              {(save.error as Error).message}
+            </div>
+          )}
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button
+              disabled={!name || !expr || save.isPending}
+              onClick={() => save.mutate()}
+            >
+              {save.isPending ? "Saving…" : rule ? "Save" : "Create rule"}
+            </Button>
+          </div>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+function ConfirmDeleteRule({
+  rule,
+  onClose,
+}: {
+  rule: Rule;
+  onClose: () => void;
+}) {
+  const qc = useQueryClient();
+  const [typed, setTyped] = useState("");
+  const del = useMutation({
+    mutationFn: () => api<void>(`/alert-rules/${rule.id}`, { method: "DELETE" }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["alert-rules"] });
+      qc.invalidateQueries({ queryKey: ["alerts"] });
+      onClose();
+    },
+  });
+  return (
+    <div className="fixed inset-0 z-30 flex items-center justify-center bg-black/50 whitespace-normal">
+      <Card title="Delete alert rule" className="w-[26rem]">
+        <p className="text-sm">
+          This removes <span className="font-medium">{rule.name}</span> and the
+          alert history recorded against it. It cannot be undone.
+        </p>
+        {rule.firing > 0 && (
+          <p className="mt-2 text-sm text-amber-500">
+            {rule.firing} alert{rule.firing === 1 ? "" : "s"} from this rule
+            {rule.firing === 1 ? " is" : " are"} live right now and will
+            disappear. Disable the rule instead if you only want it to stop
+            firing.
+          </p>
+        )}
+        <p className="mt-2 text-xs text-slate-500">
+          Nothing stops being monitored by anything else; only this rule's own
+          evaluations end. Audit records of the rule and its deletion are kept.
+        </p>
+        <label className="mt-3 block text-xs text-slate-500">
+          Type the rule name to confirm:
+          <Input
+            className="mt-1 w-full"
+            value={typed}
+            autoFocus
+            onChange={(e) => setTyped(e.target.value)}
+            placeholder={rule.name}
+          />
+        </label>
+        {del.isError && (
+          <div className="mt-2 text-sm text-red-500">
+            {(del.error as Error).message}
+          </div>
+        )}
+        <div className="mt-3 flex justify-end gap-2">
+          <Button variant="ghost" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            variant="danger"
+            disabled={typed !== rule.name || del.isPending}
+            onClick={() => del.mutate()}
+          >
+            {del.isPending ? "Deleting…" : "Delete permanently"}
+          </Button>
+        </div>
+      </Card>
+    </div>
   );
 }

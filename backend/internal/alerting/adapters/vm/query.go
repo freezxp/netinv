@@ -5,9 +5,11 @@ package vm
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/freezxp/netinv/backend/internal/alerting/app"
@@ -36,6 +38,15 @@ func (r *Reader) Query(ctx context.Context, expr string) ([]app.Series, error) {
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusUnprocessableEntity ||
 		resp.StatusCode == http.StatusBadRequest {
+		// Carry VictoriaMetrics' own words: "missing operand" tells the author
+		// what to fix, a status code does not.
+		var e struct {
+			Error string `json:"error"`
+		}
+		_ = json.NewDecoder(io.LimitReader(resp.Body, 4096)).Decode(&e)
+		if reason := strings.TrimSpace(e.Error); reason != "" {
+			return nil, errx.New(errx.KindInvalid, "%s", reason)
+		}
 		return nil, errx.New(errx.KindInvalid, "vm rejected expression (status %d)", resp.StatusCode)
 	}
 	if resp.StatusCode >= 300 {

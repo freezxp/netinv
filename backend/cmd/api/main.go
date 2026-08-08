@@ -189,7 +189,15 @@ func main() {
 		pollerH := &colhttp.PollerHandler{Svc: pollerSvc, Checker: checker}
 		// Wired below only when AMQP is available (sweeps need a poller).
 		discH := &colhttp.DiscoveryHandler{Checker: checker}
-		alertH := &alerthttp.Handler{Store: &alertpg.Store{Pool: pool}, Pool: pool, Checker: checker}
+		alertH := &alerthttp.Handler{
+			Store: &alertpg.Store{Pool: pool}, Pool: pool, Checker: checker,
+			Audit: auditor,
+		}
+		// Rule expressions are checked against VictoriaMetrics before they are
+		// stored; without it a typo is accepted and simply never fires.
+		if vmURL := os.Getenv("NETINV_VM_URL"); vmURL != "" {
+			alertH.Exprs = alertvm.New(vmURL)
+		}
 		channelH := &notifhttp.Handler{
 			Repo: &notifpg.ChannelRepo{Pool: pool, Keys: keys},
 			Senders: map[string]notifapp.Sender{
