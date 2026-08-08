@@ -29,7 +29,8 @@ func (b *Base) Info() sdk.Info {
 func (b *Base) Match(sdk.SysInfo) sdk.MatchScore { return 1 }
 
 func (b *Base) Capabilities() []sdk.Capability {
-	return []sdk.Capability{sdk.CapInventory, sdk.CapInterfaces, sdk.CapTopology}
+	return []sdk.Capability{sdk.CapInventory, sdk.CapInterfaces,
+		sdk.CapTopology, sdk.CapHealth}
 }
 
 // OIDs (IF-MIB, SNMPv2-MIB).

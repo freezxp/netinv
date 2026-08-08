@@ -25,9 +25,19 @@ interface Props {
   height?: number;
   label?: (metric: Record<string, string>) => string;
   format?: (v: number) => string;
+  /** Requested window in hours. Pins the time axis so a chart with one or two
+   * samples still reads as "the last N hours" instead of letting uPlot
+   * auto-scale to an arbitrary multi-year span. */
+  windowHours?: number;
 }
 
-export function TimeSeries({ result, height = 220, label, format }: Props) {
+export function TimeSeries({
+  result,
+  height = 220,
+  label,
+  format,
+  windowHours,
+}: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const plotRef = useRef<uPlot | null>(null);
 
@@ -84,6 +94,19 @@ export function TimeSeries({ result, height = 220, label, format }: Props) {
             },
           ],
           cursor: { drag: { x: false, y: false } },
+          ...(windowHours
+            ? {
+                scales: {
+                  x: {
+                    time: true,
+                    range: (): [number, number] => {
+                      const now = Date.now() / 1000;
+                      return [now - windowHours * 3600, now];
+                    },
+                  },
+                },
+              }
+            : {}),
         },
         data,
         el,
@@ -101,7 +124,7 @@ export function TimeSeries({ result, height = 220, label, format }: Props) {
       plotRef.current?.destroy();
       plotRef.current = null;
     };
-  }, [data, names, height, format]);
+  }, [data, names, height, format, windowHours]);
 
   if (result.length === 0) {
     return (

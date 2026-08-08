@@ -140,6 +140,7 @@ export function DashboardPage() {
         <Card title="Aggregate bandwidth (24h)">
           <TimeSeries
             result={bandwidth.data ?? []}
+            windowHours={24}
             format={formatBps}
             label={() => "in"}
           />
@@ -147,6 +148,7 @@ export function DashboardPage() {
         <Card title="Latency — ICMP avg RTT (24h)">
           <TimeSeries
             result={latency.data ?? []}
+            windowHours={24}
             format={formatMs}
             label={(m) => m.device ?? "device"}
           />

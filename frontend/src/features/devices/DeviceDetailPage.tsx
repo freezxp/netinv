@@ -18,10 +18,10 @@ import {
   StatusBadge,
   cx,
 } from "../../components/ui";
-import { TimeSeries } from "../../components/TimeSeries";
+import { TimeSeries, type PromMatrix } from "../../components/TimeSeries";
 import { formatBps, formatDuration, formatMs } from "../../lib/format";
 
-const tabs = ["Interfaces", "Availability", "History", "Alerts"] as const;
+const tabs = ["Interfaces", "Health", "Availability", "History", "Alerts"] as const;
 
 export function DeviceDetailPage() {
   const { id = "" } = useParams();
@@ -100,6 +100,7 @@ export function DeviceDetailPage() {
           }}
         />
       )}
+      {tab === "Health" && <HealthTab deviceID={id} />}
       {tab === "Availability" && <AvailabilityTab deviceID={id} />}
       {tab === "History" && <HistoryTab deviceID={id} />}
       {tab === "Alerts" && <AlertsTab deviceID={id} />}
@@ -192,10 +193,159 @@ function InterfacesTab({
       >
         <TimeSeries
           result={traffic.data ?? []}
+          windowHours={6}
           format={formatBps}
           label={(m) => (m.__name__?.includes("out") ? "out" : "in")}
         />
       </Card>
+    </div>
+  );
+}
+
+// Latest value of a range series, or undefined when the device reports none.
+function latest(result: PromMatrix[] | undefined, match?: (m: Record<string, string>) => boolean) {
+  const series = match ? result?.filter((r) => match(r.metric)) : result;
+  const values = series?.flatMap((s) => s.values) ?? [];
+  if (values.length === 0) return undefined;
+  return parseFloat(values[values.length - 1][1]);
+}
+
+function HealthStat({
+  label,
+  value,
+  unit,
+  warn,
+  crit,
+}: {
+  label: string;
+  value?: number;
+  unit: string;
+  warn?: number;
+  crit?: number;
+}) {
+  const tone =
+    value === undefined
+      ? ""
+      : crit !== undefined && value >= crit
+        ? "text-red-500"
+        : warn !== undefined && value >= warn
+          ? "text-amber-500"
+          : "text-green-500";
+  return (
+    <Card className="flex-1 min-w-36">
+      <div className="text-xs uppercase text-slate-500">{label}</div>
+      <div className={`mt-1 text-2xl font-semibold ${tone}`}>
+        {value === undefined ? "—" : `${value.toFixed(1)}${unit}`}
+      </div>
+    </Card>
+  );
+}
+
+// Health tab (doc 30 §5): CPU, memory, load and per-sensor temperature.
+// Sources are connector-dependent — vendor MIBs on Cisco/Juniper/Huawei,
+// UCD-SNMP + LM-SENSORS on net-snmp devices such as Ubiquiti UniFi gateways.
+function HealthTab({ deviceID }: { deviceID: string }) {
+  const sel = `{device_id="${deviceID}"}`;
+  const cpu = useQueryRange(`netinv_device_cpu_percent${sel}`, 24, 300);
+  const mem = useQueryRange(`netinv_device_memory_percent${sel}`, 24, 300);
+  const memBytes = useQueryRange(
+    `netinv_device_memory_used_bytes${sel} or netinv_device_memory_total_bytes${sel}`,
+    24,
+    300,
+  );
+  const load = useQueryRange(`netinv_device_load_average${sel}`, 24, 300);
+  const temp = useQueryRange(`netinv_sensor_temperature_celsius${sel}`, 24, 300);
+
+  const loading = cpu.isLoading || mem.isLoading || temp.isLoading;
+  const hasAny =
+    (cpu.data?.length ?? 0) +
+      (mem.data?.length ?? 0) +
+      (load.data?.length ?? 0) +
+      (temp.data?.length ?? 0) >
+    0;
+
+  if (!loading && !hasAny) {
+    return (
+      <Card>
+        <EmptyState>
+          No health metrics for this device yet. Either its connector doesn't
+          expose CPU/memory/temperature, or the first health poll (every 5
+          minutes by default) hasn't completed.
+        </EmptyState>
+      </Card>
+    );
+  }
+
+  const hottest = temp.data?.length
+    ? Math.max(
+        ...temp.data.map((s) => parseFloat(s.values[s.values.length - 1][1])),
+      )
+    : undefined;
+  const usedBytes = latest(memBytes.data, (m) =>
+    m.__name__ === "netinv_device_memory_used_bytes",
+  );
+  const totalBytes = latest(memBytes.data, (m) =>
+    m.__name__ === "netinv_device_memory_total_bytes",
+  );
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex flex-wrap gap-3">
+        <HealthStat label="CPU" value={latest(cpu.data)} unit="%" warn={70} crit={85} />
+        <HealthStat label="Memory" value={latest(mem.data)} unit="%" warn={80} crit={90} />
+        <HealthStat
+          label="Load (1m)"
+          value={latest(load.data, (m) => m.period === "1m")}
+          unit=""
+        />
+        <HealthStat label="Hottest sensor" value={hottest} unit="°C" warn={70} crit={85} />
+        {usedBytes !== undefined && totalBytes !== undefined && (
+          <Card className="flex-1 min-w-36">
+            <div className="text-xs uppercase text-slate-500">Memory used</div>
+            <div className="mt-1 text-2xl font-semibold">
+              {(usedBytes / 1024 ** 3).toFixed(1)} GB
+            </div>
+            <div className="text-xs text-slate-500">
+              of {(totalBytes / 1024 ** 3).toFixed(1)} GB
+            </div>
+          </Card>
+        )}
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <Card title="CPU utilization (24h)">
+          <TimeSeries
+            result={cpu.data ?? []}
+            windowHours={24}
+            format={(v) => `${v.toFixed(0)}%`}
+            label={(m) => (m.cpu ? `cpu ${m.cpu}` : "cpu")}
+          />
+        </Card>
+        <Card title="Memory utilization (24h)">
+          <TimeSeries
+            result={mem.data ?? []}
+            windowHours={24}
+            format={(v) => `${v.toFixed(0)}%`}
+            label={() => "memory"}
+          />
+        </Card>
+        <Card title="Temperature by sensor (24h)">
+          <TimeSeries
+            result={temp.data ?? []}
+            windowHours={24}
+            format={(v) => `${v.toFixed(1)}°C`}
+            label={(m) => m.sensor ?? "sensor"}
+          />
+        </Card>
+        <Card title="Load average (24h)">
+          <TimeSeries
+            result={load.data ?? []}
+            windowHours={24}
+            format={(v) => v.toFixed(2)}
+            label={(m) => m.period ?? "load"}
+          />
+        </Card>
+      </div>
     </div>
   );
 }
@@ -216,6 +366,7 @@ function AvailabilityTab({ deviceID }: { deviceID: string }) {
       <Card title="RTT min/avg/max (24h)">
         <TimeSeries
           result={rtt.data ?? []}
+            windowHours={24}
           format={formatMs}
           label={(m) => m.stat ?? "rtt"}
         />
@@ -223,6 +374,7 @@ function AvailabilityTab({ deviceID }: { deviceID: string }) {
       <Card title="Packet loss % (24h)">
         <TimeSeries
           result={loss.data ?? []}
+            windowHours={24}
           format={(v) => `${v.toFixed(1)}%`}
           label={() => "loss"}
         />

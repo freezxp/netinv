@@ -95,12 +95,12 @@ Go composition: `type cisco struct { generic.Base }` — override `CollectHealth
 
 | Connector | sysObjectID prefix | Health sources (beyond IF-MIB) | Notes |
 |---|---|---|---|
-| `generic` | * (fallback) | ENTITY-SENSOR-MIB, HOST-RESOURCES best-effort | matches anything, lowest score |
+| `generic` | * (fallback) | **UCD-SNMP-MIB** (CPU idle→busy, load average, memory with buffers/cache excluded) and **LM-SENSORS** temperatures — every net-snmp agent exposes these, so Linux-based appliances and servers get health for free | matches anything, lowest score |
 | `cisco-ios` | .1.3.6.1.4.1.9 | CISCO-PROCESS-MIB (cpmCPUTotal5minRev), CISCO-MEMORY-POOL / CISCO-ENHANCED-MEMPOOL, CISCO-ENVMON + CISCO-ENTITY-SENSOR (temp/fan/PSU), CISCO-ENTITY-FRU-CONTROL, CISCO-STACK, optics via entSensor | covers IOS/IOS-XE; NX-OS quirks via sub-profile field in `attrs` |
 | `juniper-junos` | .1.3.6.1.4.1.2636 | JUNIPER-MIB jnxOperatingTable (CPU/mem/temp per FRU), jnxFruTable (PSU/fan), JUNIPER-DOM-MIB (optics dBm) | |
 | `huawei-vrp` | .1.3.6.1.4.1.2011 | HUAWEI-ENTITY-EXTENT-MIB (hwEntityCpuUsage/MemUsage/Temperature), HUAWEI-ENERGY, hwOpticalModuleInfo | |
 | `zte-zxr` | .1.3.6.1.4.1.3902 | ZTE-AN / zxr10 system MIBs (CPU/mem/temp); ENTITY-SENSOR fallback is load-bearing — ZTE MIB coverage varies by line; validate against real units Sprint 17 (risk R-07) | |
-| `ubiquiti` | .1.3.6.1.4.1.41112 (+ .10002 airOS) | UBNT-UniFi-MIB / airOS FROGFOOT/UBNT MIBs (best-effort health); EdgeSwitch uses standard + Broadcom MIBs | SNMP-first; UniFi Controller REST API connector is roadmap (ADR/C3) |
+| `ubiquiti` | .1.3.6.1.4.1.41112 (+ .10002 airOS), **plus sysDescr match** | inherits the generic UCD-SNMP/LM-SENSORS health set | **Validated against real UDM-Pro hardware**: UniFi OS consoles run stock net-snmp and report sysObjectID `.1.3.6.1.4.1.8072.3.2.10`, so prefix matching alone misses them — hence the sysDescr fallback. They expose UCD-SNMP + LM-SENSORS but *not* the UniFi MIB, HOST-RESOURCES, or LLDP. UniFi Controller REST connector is roadmap (ADR/C3) |
 
 Each connector ships: OID map file, recorded-walk test fixtures from real hardware (`testdata/*.snmpwalk`), capability declaration, and a `docs/` note listing verified models/OS versions.
 
