@@ -65,6 +65,10 @@ type SyncSnapshot struct {
 	SysLocation string          `json:"sys_location"`
 	SysContact  string          `json:"sys_contact"`
 	UptimeS     int64           `json:"uptime_s"`
+	Vendor      string          `json:"vendor,omitempty"`
+	Model       string          `json:"model,omitempty"`
+	Serial      string          `json:"serial,omitempty"`
+	OSVersion   string          `json:"os_version,omitempty"`
 	Interfaces  []SyncInterface `json:"interfaces"`
 	Adjacencies []SyncAdjacency `json:"adjacencies,omitempty"`
 }

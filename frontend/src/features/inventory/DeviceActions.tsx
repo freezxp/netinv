@@ -7,12 +7,14 @@ import { api } from "../../api/client";
 import type { Device } from "../../api/types";
 import { hasPermissionRole, useAuthStore } from "../auth/store";
 import { Button, Card, Input } from "../../components/ui";
+import { OidBrowser } from "./OidBrowser";
 
 export function DeviceActions({ device }: { device: Device }) {
   const qc = useQueryClient();
   const user = useAuthStore((s) => s.user);
   const isAdmin = hasPermissionRole(user);
   const [confirming, setConfirming] = useState(false);
+  const [browsing, setBrowsing] = useState(false);
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ["devices"] });
@@ -60,14 +62,26 @@ export function DeviceActions({ device }: { device: Device }) {
   }
 
   return (
-    <Button
-      variant="ghost"
-      disabled={retire.isPending}
-      onClick={() => retire.mutate()}
-      title="Stop polling and hide from inventory. History is kept and it can be restored."
-    >
-      Retire
-    </Button>
+    <>
+      <Button
+        variant="ghost"
+        onClick={() => setBrowsing(true)}
+        title="Show every SNMP object this device exposes"
+      >
+        OIDs
+      </Button>
+      <Button
+        variant="ghost"
+        disabled={retire.isPending}
+        onClick={() => retire.mutate()}
+        title="Stop polling and hide from inventory. History is kept and it can be restored."
+      >
+        Retire
+      </Button>
+      {browsing && (
+        <OidBrowser device={device} onClose={() => setBrowsing(false)} />
+      )}
+    </>
   );
 }
 

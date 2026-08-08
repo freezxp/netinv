@@ -24,10 +24,13 @@ func (r *SyncRepo) LoadState(ctx context.Context, deviceID string) (*app.DeviceS
 	st := &app.DeviceState{DeviceID: deviceID}
 	err := r.Pool.QueryRow(ctx, `
 		SELECT coalesce(sys_name,''), coalesce(sys_descr,''), coalesce(sys_object_id,''),
-		       coalesce(sys_location,''), coalesce(sys_contact,''), uptime_basis
+		       coalesce(sys_location,''), coalesce(sys_contact,''),
+		       coalesce(vendor,''), coalesce(model,''), coalesce(serial_number,''),
+		       coalesce(os_version,''), uptime_basis
 		FROM inventory.devices WHERE id = $1 AND status != 'retired'`, deviceID).
 		Scan(&st.SysName, &st.SysDescr, &st.SysObjectID, &st.SysLocation,
-			&st.SysContact, &st.UptimeBasis)
+			&st.SysContact, &st.Vendor, &st.Model, &st.Serial, &st.OSVersion,
+			&st.UptimeBasis)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, errx.New(errx.KindNotFound, "device not found")
 	}

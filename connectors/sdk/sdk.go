@@ -95,7 +95,13 @@ type InventorySnapshot struct {
 	SysLocation string
 	SysContact  string
 	UptimeS     int64
-	Interfaces  []InterfaceRecord
+	// Vendor identity, when the connector can read it from vendor MIBs. The
+	// generic layer leaves these empty; sync only writes non-empty values.
+	Vendor    string
+	Model     string
+	Serial    string
+	OSVersion string
+	Interfaces []InterfaceRecord
 }
 
 type Adjacency struct {

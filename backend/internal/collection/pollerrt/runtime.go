@@ -268,6 +268,8 @@ func (r *Runtime) executeSync(ctx context.Context, conn sdk.Connector, job wire.
 				SysName: snap.SysName, SysDescr: snap.SysDescr,
 				SysObjectID: snap.SysObjectID, SysLocation: snap.SysLocation,
 				SysContact: snap.SysContact, UptimeS: snap.UptimeS,
+				Vendor: snap.Vendor, Model: snap.Model,
+				Serial: snap.Serial, OSVersion: snap.OSVersion,
 			}
 			for _, i := range snap.Interfaces {
 				ws.Interfaces = append(ws.Interfaces, wire.SyncInterface{

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -42,6 +43,8 @@ func (h *DeviceHandler) Register(r chi.Router) {
 		pw.Post("/devices/{id}/enable", h.status(domain.DeviceActive))
 		pw.Post("/devices/{id}/disable", h.status(domain.DeviceDisabled))
 		pw.Post("/devices/{id}/sync", h.syncNow)
+		// Live SNMP walk: read-only, but it loads the device, so operator+.
+		pw.Get("/devices/{id}/oids", h.oids)
 	})
 	// Permanent deletion is Admin-only (doc 20 §5: devices:admin).
 	r.Group(func(pa chi.Router) {
@@ -200,6 +203,25 @@ func (h *DeviceHandler) neighbors(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"data": rows})
+}
+
+// oids dumps what the device actually exposes over SNMP (doc 30 §5) — the
+// tool for discovering which MIBs a platform supports.
+func (h *DeviceHandler) oids(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	limit := 1000
+	if n, err := strconv.Atoi(q.Get("limit")); err == nil && n > 0 {
+		limit = n
+	}
+	values, err := h.Svc.WalkOIDs(r.Context(), chi.URLParam(r, "id"),
+		q.Get("root"), limit, h.meta(r))
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"data": values, "truncated": len(values) >= limit,
+	})
 }
 
 // purge permanently deletes a retired device (FR-DEV-08).

@@ -37,6 +37,9 @@ type DeviceRepo interface {
 type DeviceService struct {
 	Repo  DeviceRepo
 	Audit audit.Writer
+	// Optional, for the OID browser; nil disables the feature.
+	Vault  CredentialVault
+	Walker OIDWalker
 }
 
 type DeviceInput struct {
@@ -234,4 +237,55 @@ func (s *DeviceService) ImportCSV(ctx context.Context, r io.Reader, m Meta) ([]I
 		return nil, errx.New(errx.KindInvalid, "CSV contains no data rows")
 	}
 	return results, nil
+}
+
+// ---- OID browser (doc 30 §5) ----
+
+// OIDValue is one object returned by a live SNMP walk.
+type OIDValue struct {
+	OID   string `json:"oid"`
+	Type  string `json:"type"`
+	Value string `json:"value"`
+}
+
+// OIDWalker performs a live walk against a device.
+type OIDWalker interface {
+	Walk(ctx context.Context, target string, port int, kind domain.CredentialKind,
+		secret domain.Secret, root string, limit int) ([]OIDValue, error)
+}
+
+// WalkOIDs dumps what a device actually exposes — the tool for working out
+// which MIBs a new platform supports before writing a connector for it.
+func (s *DeviceService) WalkOIDs(ctx context.Context, deviceID, root string,
+	limit int, m Meta) ([]OIDValue, error) {
+	if s.Walker == nil || s.Vault == nil {
+		return nil, errx.New(errx.KindTransient, "OID browsing is not configured")
+	}
+	if root == "" {
+		root = ".1.3.6.1.2.1" // mib-2: the standard starting point
+	}
+	d, err := s.Repo.Get(ctx, deviceID)
+	if err != nil {
+		return nil, err
+	}
+	cred, err := s.Vault.Get(ctx, d.CredentialID)
+	if err != nil {
+		return nil, err
+	}
+	secret, err := s.Vault.Decrypt(ctx, d.CredentialID)
+	if err != nil {
+		return nil, err
+	}
+	port := 161
+	if v, ok := d.Attrs["snmp_port"].(float64); ok && v > 0 {
+		port = int(v)
+	}
+	values, err := s.Walker.Walk(ctx, d.MgmtIP, port, cred.Kind, secret, root, limit)
+	if err != nil && len(values) == 0 {
+		return nil, err
+	}
+	// Walking is a read, but it puts load on the device — worth an audit trail.
+	s.Audit.Write(ctx, m.event("device.oid_walk", "device", deviceID, nil,
+		map[string]any{"root": root, "returned": len(values)}))
+	return values, nil
 }

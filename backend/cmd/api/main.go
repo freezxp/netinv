@@ -147,20 +147,23 @@ func main() {
 		}
 		// Connector catalog (doc 08): static mirror of the compiled registry —
 		// the API deliberately does not import connectors (doc 13 rule 5).
-		for _, c := range [][4]string{
-			{"generic", "Generic", "Generic SNMP (IF-MIB)", `["inventory","interfaces","topology","icmp"]`},
-			{"cisco-ios", "Cisco", "Cisco IOS / IOS-XE", `["inventory","interfaces","topology","icmp","health"]`},
-			{"juniper-junos", "Juniper", "Juniper JunOS", `["inventory","interfaces","topology","icmp","health"]`},
-			{"huawei-vrp", "Huawei", "Huawei VRP", `["inventory","interfaces","topology","icmp","health"]`},
-			{"zte-zxr", "ZTE", "ZTE ZXR10 (best-effort)", `["inventory","interfaces","topology","icmp"]`},
-			{"ubiquiti", "Ubiquiti", "Ubiquiti (SNMP)", `["inventory","interfaces","topology","icmp"]`},
+		for _, c := range [][5]string{
+			{"generic", "Generic", "Generic SNMP (IF-MIB)", `["inventory","interfaces","topology","icmp","health"]`, `[]`},
+			{"cisco-ios", "Cisco", "Cisco IOS / IOS-XE", `["inventory","interfaces","topology","icmp","health"]`, `[".1.3.6.1.4.1.9."]`},
+			{"juniper-junos", "Juniper", "Juniper JunOS", `["inventory","interfaces","topology","icmp","health"]`, `[".1.3.6.1.4.1.2636."]`},
+			{"huawei-vrp", "Huawei", "Huawei VRP", `["inventory","interfaces","topology","icmp","health"]`, `[".1.3.6.1.4.1.2011."]`},
+			{"zte-zxr", "ZTE", "ZTE ZXR10 (best-effort)", `["inventory","interfaces","topology","icmp"]`, `[".1.3.6.1.4.1.3902."]`},
+			{"ubiquiti", "Ubiquiti", "Ubiquiti (SNMP)", `["inventory","interfaces","topology","icmp","health"]`, `[".1.3.6.1.4.1.41112.",".1.3.6.1.4.1.10002."]`},
+			{"ruckus", "Ruckus", "Ruckus Wireless (Unleashed / ZoneFlex)", `["inventory","interfaces","topology","icmp","wireless"]`, `[".1.3.6.1.4.1.25053"]`},
 		} {
 			if _, err := pool.Exec(ctx, `
-				INSERT INTO platform.connectors (id, vendor, display_name, version, capabilities)
-				VALUES ($1,$2,$3,'0.2.0',$4::jsonb)
+				INSERT INTO platform.connectors
+					(id, vendor, display_name, version, capabilities, sys_object_id_prefixes)
+				VALUES ($1,$2,$3,'0.3.0',$4::jsonb,$5::jsonb)
 				ON CONFLICT (id) DO UPDATE SET display_name = excluded.display_name,
-					capabilities = excluded.capabilities`,
-				c[0], c[1], c[2], c[3]); err != nil {
+					capabilities = excluded.capabilities,
+					sys_object_id_prefixes = excluded.sys_object_id_prefixes`,
+				c[0], c[1], c[2], c[3], c[4]); err != nil {
 				return err
 			}
 		}
@@ -169,7 +172,10 @@ func main() {
 		credSvc := &invapp.CredentialService{
 			Vault: vault, Tester: snmptest.Tester{}, Audit: auditor,
 		}
-		devSvc := &invapp.DeviceService{Repo: &invpg.DeviceRepo{Pool: pool}, Audit: auditor}
+		devSvc := &invapp.DeviceService{
+			Repo: &invpg.DeviceRepo{Pool: pool}, Audit: auditor,
+			Vault: vault, Walker: snmptest.Tester{},
+		}
 		pollerSvc := &colapp.PollerService{Repo: &colpg.PollerRepo{Pool: pool}, Audit: auditor}
 
 		authH := &httpapi.Handler{

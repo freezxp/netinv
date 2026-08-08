@@ -21,46 +21,7 @@ type Tester struct{}
 func (Tester) Test(ctx context.Context, target string, port int,
 	kind domain.CredentialKind, secret domain.Secret) invapp.TestResult {
 
-	g := &gosnmp.GoSNMP{
-		Target:  target,
-		Port:    uint16(port),
-		Timeout: 3 * time.Second,
-		Retries: 1,
-		Context: ctx,
-	}
-	switch kind {
-	case domain.SNMPv2c:
-		g.Version = gosnmp.Version2c
-		g.Community = secret.Community
-	case domain.SNMPv3:
-		g.Version = gosnmp.Version3
-		g.SecurityModel = gosnmp.UserSecurityModel
-		usm := &gosnmp.UsmSecurityParameters{UserName: secret.Username}
-		switch secret.AuthProtocol {
-		case "sha256":
-			usm.AuthenticationProtocol = gosnmp.SHA256
-		case "sha1":
-			usm.AuthenticationProtocol = gosnmp.SHA
-		case "md5":
-			usm.AuthenticationProtocol = gosnmp.MD5
-		}
-		usm.AuthenticationPassphrase = secret.AuthPassword
-		g.MsgFlags = gosnmp.AuthNoPriv
-		if secret.PrivProtocol != "" {
-			switch secret.PrivProtocol {
-			case "aes256":
-				usm.PrivacyProtocol = gosnmp.AES256
-			case "aes128":
-				usm.PrivacyProtocol = gosnmp.AES
-			case "des":
-				usm.PrivacyProtocol = gosnmp.DES
-			}
-			usm.PrivacyPassphrase = secret.PrivPassword
-			g.MsgFlags = gosnmp.AuthPriv
-		}
-		g.SecurityParameters = usm
-		g.ContextName = secret.Context
-	}
+	g := newClient(ctx, target, port, kind, secret, 3*time.Second)
 
 	start := time.Now()
 	if err := g.Connect(); err != nil {
@@ -99,4 +60,49 @@ func classify(err error, latency int64) invapp.TestResult {
 	default:
 		return invapp.TestResult{Result: "error", LatencyMS: latency, Detail: msg}
 	}
+}
+
+// newClient builds a gosnmp client for a credential (shared by Test and Walk).
+func newClient(ctx context.Context, target string, port int,
+	kind domain.CredentialKind, secret domain.Secret, timeout time.Duration) *gosnmp.GoSNMP {
+	g := &gosnmp.GoSNMP{
+		Target: target, Port: uint16(port), Timeout: timeout, Retries: 1,
+		MaxRepetitions: 25, Context: ctx,
+	}
+	switch kind {
+	case domain.SNMPv2c:
+		g.Version = gosnmp.Version2c
+		g.Community = secret.Community
+	case domain.SNMPv3:
+		g.Version = gosnmp.Version3
+		g.SecurityModel = gosnmp.UserSecurityModel
+		usm := &gosnmp.UsmSecurityParameters{
+			UserName:                 secret.Username,
+			AuthenticationPassphrase: secret.AuthPassword,
+			PrivacyPassphrase:        secret.PrivPassword,
+		}
+		switch secret.AuthProtocol {
+		case "sha256":
+			usm.AuthenticationProtocol = gosnmp.SHA256
+		case "sha1":
+			usm.AuthenticationProtocol = gosnmp.SHA
+		case "md5":
+			usm.AuthenticationProtocol = gosnmp.MD5
+		}
+		g.MsgFlags = gosnmp.AuthNoPriv
+		switch secret.PrivProtocol {
+		case "aes256":
+			usm.PrivacyProtocol = gosnmp.AES256
+			g.MsgFlags = gosnmp.AuthPriv
+		case "aes128":
+			usm.PrivacyProtocol = gosnmp.AES
+			g.MsgFlags = gosnmp.AuthPriv
+		case "des":
+			usm.PrivacyProtocol = gosnmp.DES
+			g.MsgFlags = gosnmp.AuthPriv
+		}
+		g.SecurityParameters = usm
+		g.ContextName = secret.Context
+	}
+	return g
 }

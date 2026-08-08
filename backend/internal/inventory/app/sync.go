@@ -43,6 +43,10 @@ type DeviceState struct {
 	SysObjectID string
 	SysLocation string
 	SysContact  string
+	Vendor      string
+	Model       string
+	Serial      string
+	OSVersion   string
 	UptimeBasis *time.Time
 	Interfaces  []IfState
 }
@@ -87,6 +91,12 @@ func Diff(cur DeviceState, snap wire.SyncSnapshot, collectedAt time.Time) DiffRe
 		{"sys_object_id", cur.SysObjectID, snap.SysObjectID},
 		{"sys_location", cur.SysLocation, snap.SysLocation},
 		{"sys_contact", cur.SysContact, snap.SysContact},
+		// Vendor identity: only connectors that can read it report it, so an
+		// empty value means "not reported", never "cleared".
+		{"vendor", cur.Vendor, orKeep(cur.Vendor, snap.Vendor)},
+		{"model", cur.Model, orKeep(cur.Model, snap.Model)},
+		{"serial_number", cur.Serial, orKeep(cur.Serial, snap.Serial)},
+		{"os_version", cur.OSVersion, orKeep(cur.OSVersion, snap.OSVersion)},
 	}
 	for _, f := range devFields {
 		if f.new != f.old {
@@ -215,6 +225,14 @@ func Diff(cur DeviceState, snap wire.SyncSnapshot, collectedAt time.Time) DiffRe
 		}
 	}
 	return res
+}
+
+// orKeep keeps the stored value when the connector reported nothing.
+func orKeep(current, reported string) string {
+	if reported == "" {
+		return current
+	}
+	return reported
 }
 
 func changeKind(old string) string {
