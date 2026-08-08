@@ -4,6 +4,7 @@
 #   docker compose --profile app up → everything in containers
 services:
   postgres:
+    restart: unless-stopped
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: netinv
@@ -20,6 +21,7 @@ services:
       retries: 10
 
   redis:
+    restart: unless-stopped
     image: redis:7-alpine
     ports: ["6379:6379"]
     healthcheck:
@@ -29,6 +31,7 @@ services:
       retries: 10
 
   rabbitmq:
+    restart: unless-stopped
     image: rabbitmq:3.13-management-alpine
     environment:
       RABBITMQ_DEFAULT_USER: netinv
@@ -41,6 +44,7 @@ services:
       retries: 10
 
   victoriametrics:
+    restart: unless-stopped
     image: victoriametrics/victoria-metrics:v1.103.0
     command: ["-retentionPeriod=90d", "-storageDataPath=/storage"]
     ports: ["8428:8428"]
@@ -52,16 +56,19 @@ services:
       retries: 10
 
   snmpsim:
+    restart: unless-stopped
     image: tandrup/snmpsim
     ports: ["1161:161/udp"]
     volumes:
       - ./tools/snmpsim/data:/usr/local/snmpsim/data:ro
 
   mailhog:
+    restart: unless-stopped
     image: mailhog/mailhog
     ports: ["1025:1025", "8025:8025"] # SMTP sink + web UI for email testing
 
   api:
+    restart: unless-stopped
     profiles: [app]
     build: { context: ., dockerfile: backend/Dockerfile, args: { SERVICE: api } }
     environment: &appenv
@@ -73,22 +80,27 @@ services:
       rabbitmq: { condition: service_healthy }
       victoriametrics: { condition: service_healthy }
   scheduler:
+    restart: unless-stopped
     profiles: [app]
     build: { context: ., dockerfile: backend/Dockerfile, args: { SERVICE: scheduler } }
     environment: *appenv
   poller:
+    restart: unless-stopped
     profiles: [app]
     build: { context: ., dockerfile: backend/Dockerfile, args: { SERVICE: poller } }
     environment: *appenv
   ingester:
+    restart: unless-stopped
     profiles: [app]
     build: { context: ., dockerfile: backend/Dockerfile, args: { SERVICE: ingester } }
     environment: *appenv
   alerter:
+    restart: unless-stopped
     profiles: [app]
     build: { context: ., dockerfile: backend/Dockerfile, args: { SERVICE: alerter } }
     environment: *appenv
   notifier:
+    restart: unless-stopped
     profiles: [app]
     build: { context: ., dockerfile: backend/Dockerfile, args: { SERVICE: notifier } }
     environment: *appenv

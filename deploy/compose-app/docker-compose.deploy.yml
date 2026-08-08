@@ -12,6 +12,7 @@
 # frontend with real connection strings and secrets.
 services:
   api:
+    restart: unless-stopped
     profiles: [app]
     environment:
       NETINV_LOG_LEVEL: info
@@ -27,6 +28,7 @@ services:
       NETINV_INSECURE_COOKIES: ${NETINV_INSECURE_COOKIES:-1}
 
   scheduler:
+    restart: unless-stopped
     profiles: [app]
     environment:
       NETINV_PG_DSN: postgres://netinv:${PG_PASSWORD}@postgres:5432/netinv
@@ -36,6 +38,7 @@ services:
     depends_on: { api: { condition: service_started } }
 
   poller:
+    restart: unless-stopped
     profiles: [app]
     environment:
       NETINV_AMQP_URL: amqp://netinv:${RABBIT_PASSWORD}@rabbitmq:5672/
@@ -46,9 +49,16 @@ services:
     # on a single host, tmpfs gives the non-root user a writable state dir.
     # The buffer is ephemeral overflow only, and with the broker local it is
     # rarely used — acceptable to not persist it here.
-    tmpfs: ["/var/lib/netinv-poller"]
+    #
+    # mode is explicit because Docker applies the tmpfs default (1777) when a
+    # container is *created* but not when an existing one is *started*: after a
+    # reboot the mount came back root-owned and the poller died on every start
+    # with "mkdir /var/lib/netinv-poller/buffer: permission denied". Collection
+    # stopped fleet-wide and nothing else in the stack reported a problem.
+    tmpfs: ["/var/lib/netinv-poller:mode=1777"]
 
   ingester:
+    restart: unless-stopped
     profiles: [app]
     environment:
       NETINV_AMQP_URL: amqp://netinv:${RABBIT_PASSWORD}@rabbitmq:5672/
@@ -56,6 +66,7 @@ services:
       NETINV_VM_URL: http://victoriametrics:8428
 
   alerter:
+    restart: unless-stopped
     profiles: [app]
     environment:
       NETINV_PG_DSN: postgres://netinv:${PG_PASSWORD}@postgres:5432/netinv
@@ -65,6 +76,7 @@ services:
       NETINV_UI_URL: ${NETINV_UI_URL:-http://localhost:8090}
 
   notifier:
+    restart: unless-stopped
     profiles: [app]
     environment:
       NETINV_PG_DSN: postgres://netinv:${PG_PASSWORD}@postgres:5432/netinv
@@ -72,6 +84,7 @@ services:
       NETINV_MASTER_KEY: ${NETINV_MASTER_KEY}
 
   frontend:
+    restart: unless-stopped
     profiles: [app]
     # Context is resolved against the compose project directory (repo root).
     build: { context: frontend }
