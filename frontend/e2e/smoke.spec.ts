@@ -557,63 +557,69 @@ test("admin sees role-gated nav (Users, Audit, Settings)", async ({ page }) => {
   await expect(page.getByRole("link", { name: "Settings" })).toBeVisible();
 });
 
-test("the graph time range selector applies across pages", async ({ page }) => {
+test("the graph time range selector applies across pages", async ({
+  page,
+  request,
+}) => {
   await login(page);
 
-  const picker = page.getByRole("group", {
-    name: "Dashboard graph time range",
-  });
+  const picker = page.getByLabel("Dashboard graph time range");
   await expect(picker).toBeVisible();
 
-  // Default is 24h, and the chart titles say so — a chart whose window is not
-  // stated is a chart you cannot reason about.
-  await expect(page.getByText("Bandwidth in, by site (24h)")).toBeVisible();
+  // Presets are Cacti's, defaulting to Cacti's own "Last Day". Chart titles
+  // state the window — a chart whose span is not stated cannot be reasoned
+  // about, and two charts on different spans read as comparable when they are
+  // not, which is what this replaced.
+  await expect(picker).toHaveValue("1d");
+  await expect(page.getByText("Bandwidth in, by site (1d)")).toBeVisible();
 
-  await picker.getByRole("button", { name: "7d", exact: true }).click();
-  await expect(page.getByText("Bandwidth in, by site (7d)")).toBeVisible();
-  await expect(page.getByText("Latency — ICMP avg RTT (7d)")).toBeVisible();
-  await expect(
-    picker.getByRole("button", { name: "7d", exact: true }),
-  ).toHaveAttribute("aria-pressed", "true");
+  await picker.selectOption("1w");
+  await expect(page.getByText("Bandwidth in, by site (1w)")).toBeVisible();
+  await expect(page.getByText("Latency — ICMP avg RTT (1w)")).toBeVisible();
 
   // The selection is one operator question ("what did last week look like?"),
   // so it must survive navigating into a device rather than resetting.
-  await page.getByRole("link", { name: "Inventory" }).click();
-  const firstDevice = page.locator("table tbody tr a").first();
-  if ((await firstDevice.count()) === 0) test.skip(true, "no devices seeded");
-  await firstDevice.click();
+  //
+  // The device is resolved through the API rather than by clicking the
+  // inventory table: that table renders empty often enough that the guard on
+  // it turned this whole test into a silent skip, which is close to not having
+  // the test at all.
+  const headers = await apiHeaders(request);
+  const devs = await (
+    await request.get("/api/v1/devices?limit=1", { headers })
+  ).json();
+  test.skip(!devs.data?.length, "no devices exist to open");
+  await page.goto(`/devices/${devs.data[0].id}`);
 
   await page.getByRole("button", { name: "Health" }).click();
-  await expect(page.getByText("CPU utilization (7d)")).toBeVisible();
-  await expect(
-    page.getByRole("group", { name: "Graph time range" }),
-  ).toBeVisible();
+  await expect(page.getByText("CPU utilization (1w)")).toBeVisible();
+  await expect(page.getByLabel("Graph time range")).toBeVisible();
 
   // ...and a reload, since it is a preference rather than page state.
   await page.reload();
   await page.getByRole("button", { name: "Health" }).click();
-  await expect(page.getByText("CPU utilization (7d)")).toBeVisible();
+  await expect(page.getByText("CPU utilization (1w)")).toBeVisible();
 });
 
 test("the range selector is hidden on tabs that show no graphs", async ({
   page,
+  request,
 }) => {
-  await login(page);
-  await page.getByRole("link", { name: "Inventory" }).click();
-  const firstDevice = page.locator("table tbody tr a").first();
-  if ((await firstDevice.count()) === 0) test.skip(true, "no devices seeded");
-  await firstDevice.click();
+  const headers = await apiHeaders(request);
+  const devs = await (
+    await request.get("/api/v1/devices?limit=1", { headers })
+  ).json();
+  test.skip(!devs.data?.length, "no devices exist to open");
 
-  await expect(
-    page.getByRole("group", { name: "Graph time range" }),
-  ).toBeVisible();
+  await login(page);
+  await page.goto(`/devices/${devs.data[0].id}`);
+
+  await expect(page.getByLabel("Graph time range")).toBeVisible();
 
   // History is a table of change events with their own timestamps. Showing a
   // range control over it would imply it filters those rows, which it does not.
   await page.getByRole("button", { name: "History" }).click();
-  await expect(
-    page.getByRole("group", { name: "Graph time range" }),
-  ).toHaveCount(0);
+  await expect(page.getByLabel("Graph time range")).toHaveCount(0);
 });
 
 // The weathermap's hover graph follows the shared range, but the card is a
@@ -638,12 +644,10 @@ test("the weathermap viewer can change the link graph range", async ({
   await card.getByRole("button", { name: "View" }).click();
   await expect(page.getByRole("heading", { name: "Weathermap" })).toBeVisible();
 
-  const picker = page.getByRole("group", { name: "Link graph time range" });
+  const picker = page.getByLabel("Link graph time range");
   await expect(picker).toBeVisible();
-  await picker.getByRole("button", { name: "1h", exact: true }).click();
-  await expect(
-    picker.getByRole("button", { name: "1h", exact: true }),
-  ).toHaveAttribute("aria-pressed", "true");
+  await picker.selectOption("1h");
+  await expect(picker).toHaveValue("1h");
 
   // The choice is global, so it must be the one the dashboard shows too.
   await page.getByRole("link", { name: "Dashboard" }).click();

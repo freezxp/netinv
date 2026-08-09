@@ -154,7 +154,7 @@ export function DashboardPage() {
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
-        <Card title={`Bandwidth in, by site (${range.label})`}>
+        <Card title={`Bandwidth in, by site (${range.short})`}>
           <TimeSeries
             result={bandwidth.data ?? []}
             windowHours={range.hours}
@@ -162,7 +162,7 @@ export function DashboardPage() {
             label={(m) => m.site || "unassigned"}
           />
         </Card>
-        <Card title={`Latency — ICMP avg RTT (${range.label})`}>
+        <Card title={`Latency — ICMP avg RTT (${range.short})`}>
           <TimeSeries
             result={latency.data ?? []}
             windowHours={range.hours}

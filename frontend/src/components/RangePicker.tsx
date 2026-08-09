@@ -1,12 +1,21 @@
-// Time range selector. A segmented control rather than a dropdown: there are
-// four options, they are the most-changed control on the page, and a dropdown
-// would cost two clicks to do what one should.
+// Graph time range selector.
+//
+// A dropdown rather than the segmented buttons this started as: the presets
+// are now Cacti's nineteen timespans, which is more than a button row can
+// carry, and a dropdown is what Cacti itself uses — so the control looks the
+// way the people migrating from it expect.
+//
+// Spans beyond the default 90-day retention are grouped separately rather than
+// hidden. Retention is a deploy-time flag the browser cannot read, so removing
+// them would be guessing on the operator's behalf; a graph that stops early
+// explains itself, a missing menu entry does not.
 import {
+  DEFAULT_RETENTION_HOURS,
   TIME_RANGES,
   useTimeRangeStore,
   type RangeKey,
 } from "../api/timerange";
-import { cx } from "./ui";
+import { Select } from "./ui";
 
 interface Props {
   className?: string;
@@ -14,43 +23,32 @@ interface Props {
   ariaLabel?: string;
 }
 
+const within = TIME_RANGES.filter((r) => r.hours <= DEFAULT_RETENTION_HOURS);
+const beyond = TIME_RANGES.filter((r) => r.hours > DEFAULT_RETENTION_HOURS);
+
 export function RangePicker({ className, ariaLabel = "Time range" }: Props) {
   const key = useTimeRangeStore((s) => s.key);
   const setRange = useTimeRangeStore((s) => s.setRange);
 
   return (
-    <div
-      role="group"
+    <Select
       aria-label={ariaLabel}
-      className={cx(
-        "inline-flex shrink-0 overflow-hidden rounded-md border border-slate-300",
-        "dark:border-slate-700",
-        className,
-      )}
+      className={className}
+      value={key}
+      onChange={(e) => setRange(e.target.value as RangeKey)}
     >
-      {TIME_RANGES.map((r) => {
-        const active = r.key === key;
-        return (
-          <button
-            key={r.key}
-            type="button"
-            onClick={() => setRange(r.key as RangeKey)}
-            aria-pressed={active}
-            // The label is "1h", which reads as a duration but not as a
-            // direction; the title says which way it points.
-            title={`Last ${r.label}`}
-            className={cx(
-              "px-2.5 py-1.5 text-sm tabular-nums transition-colors",
-              "border-r border-slate-300 last:border-r-0 dark:border-slate-700",
-              active
-                ? "bg-sky-600 font-medium text-white"
-                : "bg-white text-slate-600 hover:bg-slate-100 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800",
-            )}
-          >
+      {within.map((r) => (
+        <option key={r.key} value={r.key}>
+          {r.label}
+        </option>
+      ))}
+      <optgroup label="Beyond default retention (90d)">
+        {beyond.map((r) => (
+          <option key={r.key} value={r.key}>
             {r.label}
-          </button>
-        );
-      })}
-    </div>
+          </option>
+        ))}
+      </optgroup>
+    </Select>
   );
 }

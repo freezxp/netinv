@@ -60,7 +60,7 @@ export function LinkGraph({
         <span className="text-xs font-medium">
           {nodeLabel(link?.from)} ⇄ {nodeLabel(link?.to)}
         </span>
-        <span className="text-[10px] text-slate-500">last {range.label}</span>
+        <span className="text-[10px] text-slate-500">last {range.short}</span>
       </div>
       {!a ? (
         <div className="px-1 pb-2 text-xs text-slate-500">

@@ -99,7 +99,7 @@ Requirement IDs: `FR-<MODULE>-<nn>`. Every requirement is testable; acceptance c
 ## DASH — Dashboard
 
 - **FR-DASH-01..08** One requirement per panel in PRD §4.2; all panels MUST render from cached aggregates (Redis, ≤30 s staleness) — the dashboard MUST NOT fan out live queries per widget per viewer (doc 05 §caching).
-- **FR-DASH-09** Time-series panels support range presets (1h/6h/24h/7d/30d/custom) and honor the retention/downsampling tiers in doc 04. *Partially implemented:* 1h/6h/24h/7d ship as a single shared selector applying to every chart in the portal, persisted across pages (doc 30 §0). 30d awaits downsampling — a month at raw resolution is the per-viewer fan-out FR-DASH-01..08 exists to prevent — and custom ranges await URL state so a window can be shared in a link. Query step and `rate()` lookback scale with the selected range.
+- **FR-DASH-09** Time-series panels support range presets (1h/6h/24h/7d/30d/custom) and honor the retention/downsampling tiers in doc 04. *Implemented, except custom:* the presets are Cacti's nineteen graph timespans (Half Hour → 2 Years, default "Last Day") as a single shared selector applying to every chart in the portal and persisting across pages (doc 30 §0). Query step and `rate()` lookback scale with the span, never finer than the 60 s poll interval. Spans past the deployment's 90-day retention are offered but grouped as such. Custom start/end awaits URL state, so a window can be shared in a link.
 - **FR-DASH-10** Every panel deep-links: alert → graph, top-N row → device/interface detail, heatmap cell → device detail.
 
 ## EXP — Export

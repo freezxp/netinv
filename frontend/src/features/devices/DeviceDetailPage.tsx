@@ -380,7 +380,7 @@ function WirelessTab({ deviceID }: { deviceID: string }) {
           )}
         </Card>
       </div>
-      <Card title={`Connected clients (${range.label})`}>
+      <Card title={`Connected clients (${range.short})`}>
         <TimeSeries
           result={clients.data ?? []}
           windowHours={range.hours}
@@ -388,7 +388,7 @@ function WirelessTab({ deviceID }: { deviceID: string }) {
           label={() => "clients"}
         />
       </Card>
-      <Card title={`Access points up (${range.label})`}>
+      <Card title={`Access points up (${range.short})`}>
         <TimeSeries
           result={aps.data ?? []}
           windowHours={range.hours}
@@ -506,7 +506,7 @@ function HealthTab({ deviceID }: { deviceID: string }) {
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
-        <Card title={`CPU utilization (${range.label})`}>
+        <Card title={`CPU utilization (${range.short})`}>
           <TimeSeries
             result={cpu.data ?? []}
             windowHours={range.hours}
@@ -514,7 +514,7 @@ function HealthTab({ deviceID }: { deviceID: string }) {
             label={(m) => (m.cpu ? `cpu ${m.cpu}` : "cpu")}
           />
         </Card>
-        <Card title={`Memory utilization (${range.label})`}>
+        <Card title={`Memory utilization (${range.short})`}>
           <TimeSeries
             result={mem.data ?? []}
             windowHours={range.hours}
@@ -522,7 +522,7 @@ function HealthTab({ deviceID }: { deviceID: string }) {
             label={() => "memory"}
           />
         </Card>
-        <Card title={`Temperature by sensor (${range.label})`}>
+        <Card title={`Temperature by sensor (${range.short})`}>
           <TimeSeries
             result={temp.data ?? []}
             windowHours={range.hours}
@@ -530,7 +530,7 @@ function HealthTab({ deviceID }: { deviceID: string }) {
             label={(m) => m.sensor ?? "sensor"}
           />
         </Card>
-        <Card title={`Load average (${range.label})`}>
+        <Card title={`Load average (${range.short})`}>
           <TimeSeries
             result={load.data ?? []}
             windowHours={range.hours}
@@ -557,7 +557,7 @@ function AvailabilityTab({ deviceID }: { deviceID: string }) {
   );
   return (
     <div className="grid gap-4 lg:grid-cols-2">
-      <Card title={`RTT min/avg/max (${range.label})`}>
+      <Card title={`RTT min/avg/max (${range.short})`}>
         <TimeSeries
           result={rtt.data ?? []}
           windowHours={range.hours}
@@ -565,7 +565,7 @@ function AvailabilityTab({ deviceID }: { deviceID: string }) {
           label={(m) => m.stat ?? "rtt"}
         />
       </Card>
-      <Card title={`Packet loss % (${range.label})`}>
+      <Card title={`Packet loss % (${range.short})`}>
         <TimeSeries
           result={loss.data ?? []}
           windowHours={range.hours}
