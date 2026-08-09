@@ -27,7 +27,8 @@ import { Button, Card, Input, Select, cx } from "../../components/ui";
 import { ApiError } from "../../api/client";
 
 let nextId = 1;
-const genId = (prefix: string) => `${prefix}${Date.now().toString(36)}${nextId++}`;
+const genId = (prefix: string) =>
+  `${prefix}${Date.now().toString(36)}${nextId++}`;
 
 export function MapEditorPage() {
   const { id = "" } = useParams();
@@ -86,6 +87,16 @@ export function MapEditorPage() {
   );
   const [rfNodes, setRfNodes] = useState(flow.nodes);
   useEffect(() => setRfNodes(flow.nodes), [flow.nodes]);
+
+  // Edges carry their selected flag from our own state rather than relying on
+  // React Flow's internal selection. toFlow rebuilds every edge object from
+  // the definition on each render, which wiped that internal flag — so the
+  // Delete key had nothing selected to remove, and only the side panel button
+  // worked.
+  const rfEdges = useMemo(
+    () => flow.edges.map((e) => ({ ...e, selected: e.id === selectedLink })),
+    [flow.edges, selectedLink],
+  );
 
   const onNodesChange = useCallback(
     (changes: NodeChange<(typeof flow.nodes)[number]>[]) => {
@@ -198,7 +209,7 @@ export function MapEditorPage() {
         <div className="min-h-0 flex-1 rounded-lg border border-slate-200 dark:border-slate-800">
           <ReactFlow
             nodes={rfNodes}
-            edges={flow.edges}
+            edges={rfEdges}
             nodeTypes={nodeTypes}
             edgeTypes={edgeTypes}
             onNodesChange={onNodesChange}
@@ -237,6 +248,7 @@ export function MapEditorPage() {
           selectedLink={selectedLink}
           selectedNode={selectedNode}
           onNodeRemoved={() => setSelectedNode(null)}
+          onLinkRemoved={() => setSelectedLink(null)}
         />
       </div>
     </div>
@@ -250,6 +262,7 @@ function SidePanel({
   selectedLink,
   selectedNode,
   onNodeRemoved,
+  onLinkRemoved,
 }: {
   def: MapDefinition;
   change: (fn: (d: MapDefinition) => MapDefinition) => void;
@@ -257,6 +270,7 @@ function SidePanel({
   selectedLink: string | null;
   selectedNode: string | null;
   onNodeRemoved: () => void;
+  onLinkRemoved: () => void;
 }) {
   const devices = useDevices({});
   const suggestions = useSuggestions(mapID);
@@ -300,7 +314,11 @@ function SidePanel({
   return (
     <div className="flex w-72 shrink-0 flex-col gap-3 overflow-auto">
       <Card title="Add device node">
-        <Select className="w-full" value="" onChange={(e) => addDevice(e.target.value)}>
+        <Select
+          className="w-full"
+          value=""
+          onChange={(e) => addDevice(e.target.value)}
+        >
           <option value="">Pick a device…</option>
           {devices.data?.data.map((d) => (
             <option key={d.id} value={d.id}>
@@ -309,16 +327,18 @@ function SidePanel({
           ))}
         </Select>
         <div className="mt-2 text-xs text-slate-500">
-          Drag from a dot on any side of one node to any side of another to
-          draw a link, then bind its interface below. Delete removes selected
-          items.
+          Drag from a dot on any side of one node to any side of another to draw
+          a link, then bind its interface below. Delete removes selected items.
         </div>
         <div className="mt-3 border-t border-slate-200 pt-3 dark:border-slate-800">
           <div className="mb-1.5 text-xs text-slate-500">
             Or place something NetInv doesn't poll:
           </div>
           <div className="flex flex-wrap gap-2">
-            <Button variant="ghost" onClick={() => addPlain("cloud", "Internet")}>
+            <Button
+              variant="ghost"
+              onClick={() => addPlain("cloud", "Internet")}
+            >
               ☁ Cloud
             </Button>
             <Button variant="ghost" onClick={() => addPlain("site", "Site")}>
@@ -341,13 +361,21 @@ function SidePanel({
       )}
 
       {link && (
-        <LinkPanel key={link.id} def={def} link={link} change={change} />
+        <LinkPanel
+          key={link.id}
+          def={def}
+          link={link}
+          change={change}
+          onRemoved={onLinkRemoved}
+        />
       )}
 
       <Card title="LLDP suggestions">
         <div className="flex flex-col gap-1 text-xs">
           {suggestions.data?.data.length === 0 && (
-            <span className="text-slate-500">No adjacencies discovered yet.</span>
+            <span className="text-slate-500">
+              No adjacencies discovered yet.
+            </span>
           )}
           {suggestions.data?.data.map((s, i) => (
             <div key={i} className="text-slate-600 dark:text-slate-400">
@@ -373,8 +401,13 @@ function NodePanel({
   onRemoved: () => void;
 }) {
   const kindWord =
-    node.kind === "device" ? "Device" : node.kind === "cloud" ? "Cloud"
-      : node.kind === "site" ? "Site" : "Label";
+    node.kind === "device"
+      ? "Device"
+      : node.kind === "cloud"
+        ? "Cloud"
+        : node.kind === "site"
+          ? "Site"
+          : "Label";
   return (
     <Card title={`${kindWord} node`}>
       <label className="flex flex-col gap-1">
@@ -421,10 +454,12 @@ function LinkPanel({
   def,
   link,
   change,
+  onRemoved,
 }: {
   def: MapDefinition;
   link: MapLink;
   change: (fn: (d: MapDefinition) => MapDefinition) => void;
+  onRemoved: () => void;
 }) {
   const fromNode = def.nodes.find((n) => n.id === link.from);
   const toNode = def.nodes.find((n) => n.id === link.to);
@@ -455,11 +490,16 @@ function LinkPanel({
   const reportedSpeed = aIf?.speed_bps ?? 0;
   const devices = useDevices({});
   const wanOf = (nodeDeviceID?: string) =>
-    devices.data?.data.find((d) => d.id === nodeDeviceID)?.wan_capacity_bps ?? 0;
+    devices.data?.data.find((d) => d.id === nodeDeviceID)?.wan_capacity_bps ??
+    0;
   const wanA = wanOf(fromNode?.device_id);
   const wanB = wanOf(toNode?.device_id);
   const derivedFromWAN =
-    wanA > 0 && wanB > 0 ? Math.min(wanA, wanB) : wanA > 0 && !toNode?.device_id ? wanA : 0;
+    wanA > 0 && wanB > 0
+      ? Math.min(wanA, wanB)
+      : wanA > 0 && !toNode?.device_id
+        ? wanA
+        : 0;
 
   const inherited =
     reportedSpeed > 0
@@ -536,11 +576,29 @@ function LinkPanel({
             onChange={(e) => {
               const mbps = Number(e.target.value);
               patch({
-                bandwidth_bps: e.target.value && mbps > 0 ? mbps * 1e6 : undefined,
+                bandwidth_bps:
+                  e.target.value && mbps > 0 ? mbps * 1e6 : undefined,
               });
             }}
           />
         </label>
+      </div>
+      <div className="mt-3 flex items-center justify-between gap-2">
+        <span className="text-xs text-slate-500">
+          Or press Delete with the link selected.
+        </span>
+        <Button
+          variant="danger"
+          onClick={() => {
+            change((d) => ({
+              ...d,
+              links: d.links.filter((l) => l.id !== link.id),
+            }));
+            onRemoved();
+          }}
+        >
+          Remove link
+        </Button>
       </div>
     </Card>
   );

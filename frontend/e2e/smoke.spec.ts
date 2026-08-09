@@ -775,3 +775,64 @@ test("the dashboard can be customised and the layout persists", async ({
   await expect(page.getByText(/^Latency — ICMP avg RTT/)).toBeVisible();
   await expect(page.getByText("Unexpected Application Error")).toHaveCount(0);
 });
+
+// A link could only be removed by deleting one of the nodes it joined, which
+// takes every other link on that node with it. Rebuilding a node to drop one
+// link is not a workflow.
+test("a weathermap link can be removed on its own", async ({
+  page,
+  request,
+}) => {
+  const headers = await apiHeaders(request);
+  const name = `e2e-unlink-${Date.now()}`;
+  const created = await (
+    await request.post("/api/v1/maps", { headers, data: { name } })
+  ).json();
+
+  // Two non-device nodes and two links between them: removing one must leave the
+  // other, and must leave both nodes alone.
+  await request.put(`/api/v1/maps/${created.id}/draft`, {
+    headers,
+    data: {
+      schema: "netinv.map/1",
+      nodes: [
+        { id: "a", kind: "cloud", label: "A", x: 60, y: 60 },
+        { id: "b", kind: "cloud", label: "B", x: 380, y: 60 },
+      ],
+      links: [
+        { id: "l1", from: "a", to: "b" },
+        { id: "l2", from: "b", to: "a" },
+      ],
+    },
+  });
+
+  await login(page);
+  await page.goto(`/maps/${created.id}/edit`);
+  await expect(page.getByText("Add device node")).toBeVisible();
+
+  const edges = page.locator(".react-flow__edge");
+  await expect(edges).toHaveCount(2);
+
+  // Selecting a link opens its panel, which now offers removal directly.
+  await edges.first().click({ force: true });
+  const remove = page.getByRole("button", { name: "Remove link" });
+  await expect(remove).toBeVisible();
+  await remove.click();
+
+  await expect(edges).toHaveCount(1);
+  // Both nodes survive — that is the whole point.
+  await expect(page.locator(".react-flow__node")).toHaveCount(2);
+
+  // The Delete key must work too, and did not until edge selection stopped
+  // relying on React Flow's internal flag: toFlow rebuilds every edge object
+  // from the definition on each render, wiping it, so the key had nothing
+  // selected to act on while the panel button worked fine.
+  await edges.first().click({ force: true });
+  await expect(page.getByRole("button", { name: "Remove link" })).toBeVisible();
+  await page.keyboard.press("Delete");
+  await expect(edges).toHaveCount(0);
+  await expect(page.locator(".react-flow__node")).toHaveCount(2);
+  await expect(page.getByText("Unexpected Application Error")).toHaveCount(0);
+
+  await deleteMap(request, created.id);
+});
