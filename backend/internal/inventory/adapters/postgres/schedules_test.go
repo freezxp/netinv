@@ -33,6 +33,10 @@ func TestProfileFamiliesEnabledGatesScheduling(t *testing.T) {
 		t.Fatalf("seed connector: %v", err)
 	}
 
+	// No per-row cleanup below: pgxtest.Throwaway drops the whole database, so
+	// deleting rows first is redundant, and the deferred Execs discarded their
+	// errors — which is how an earlier version of this test silently failed to
+	// clean up after itself against a live deployment.
 	profID := id.New("pp")
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO platform.polling_profiles
@@ -40,7 +44,6 @@ func TestProfileFamiliesEnabledGatesScheduling(t *testing.T) {
 		VALUES ($1,'t_default',$2,30,'["icmp"]')`, profID, "icmp-only-"+profID); err != nil {
 		t.Fatalf("seed profile: %v", err)
 	}
-	defer pool.Exec(ctx, `DELETE FROM platform.polling_profiles WHERE id=$1`, profID)
 
 	credID := id.New("cr")
 	if _, err := pool.Exec(ctx, `
@@ -49,7 +52,6 @@ func TestProfileFamiliesEnabledGatesScheduling(t *testing.T) {
 		credID, "sched-test-"+credID); err != nil {
 		t.Fatalf("seed credential: %v", err)
 	}
-	defer pool.Exec(ctx, `DELETE FROM inventory.credentials WHERE id=$1`, credID)
 
 	repo := &DeviceRepo{Pool: pool}
 	dev := &domain.Device{
@@ -61,7 +63,6 @@ func TestProfileFamiliesEnabledGatesScheduling(t *testing.T) {
 	if err := repo.Create(ctx, dev); err != nil {
 		t.Fatalf("create device on an icmp-only profile: %v", err)
 	}
-	defer pool.Exec(ctx, `DELETE FROM inventory.devices WHERE id=$1`, dev.ID)
 
 	rows, err := pool.Query(ctx,
 		`SELECT family, interval_s FROM platform.polling_schedule WHERE device_id=$1`, dev.ID)

@@ -65,6 +65,13 @@ func (s *DeviceService) validate(ctx context.Context, in DeviceInput) error {
 	if _, err := netip.ParseAddr(in.MgmtIP); err != nil {
 		return errx.New(errx.KindInvalid, "mgmt_ip is not a valid IP address")
 	}
+	// Rejected here rather than clamped later: the poller narrows this to a
+	// uint16, so an out-of-range port wraps silently and polls a different one
+	// — 99999 becomes 33999, and the device simply never answers with no
+	// indication why.
+	if in.SNMPPort < 0 || in.SNMPPort > 65535 {
+		return errx.New(errx.KindInvalid, "snmp_port must be between 1 and 65535")
+	}
 	return s.Repo.RefsExist(ctx, in.SiteID, in.ConnectorID, in.CredentialID, in.ProfileID)
 }
 

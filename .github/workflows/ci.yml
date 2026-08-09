@@ -53,6 +53,18 @@ jobs:
       - name: Vet
         working-directory: backend
         run: go vet ./...
+      - name: golangci-lint (backend)
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: v1.62.2
+          working-directory: backend
+          args: --timeout 5m -c ../.golangci.yml
+      - name: golangci-lint (connectors)
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: v1.62.2
+          working-directory: connectors
+          args: --timeout 5m -c ../.golangci.yml
       - name: Test (unit + PG integration)
         working-directory: backend
         env:
@@ -63,6 +75,35 @@ jobs:
         run: go test ./...
       - name: Connector plugin contract (doc 10 §6)
         run: make connector-lint
+      - name: Coverage ratchet
+        working-directory: backend
+        env:
+          NETINV_TEST_PG_DSN: postgres://netinv:ci@localhost:5432/netinv
+        run: ../scripts/coverage.sh
+
+  helm:
+    needs: changes
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+        with: { version: v3.16.3 }
+      - name: helm lint
+        run: helm lint deploy/helm/netinv deploy/helm/netinv-poller
+      # lint alone accepts a chart whose templates cannot produce valid
+      # manifests; rendering is what catches a broken range or a missing value.
+      - name: helm template renders
+        run: |
+          for chart in netinv netinv-poller; do
+            helm template ci "deploy/helm/$chart" > "/tmp/$chart.yaml"
+            echo "$chart: $(grep -c '^kind:' "/tmp/$chart.yaml") resources"
+          done
+      - name: kubeconform (validate against Kubernetes schemas)
+        run: |
+          curl -sSL https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz \
+            | tar xz -C /tmp kubeconform
+          /tmp/kubeconform -strict -summary -ignore-missing-schemas \
+            /tmp/netinv.yaml /tmp/netinv-poller.yaml
 
   security:
     needs: changes

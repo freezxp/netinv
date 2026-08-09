@@ -1,6 +1,6 @@
 # NetInv developer entrypoints (doc 25 §6). `make dev` boots infra; run Go
 # services on the host for the fast inner loop.
-.PHONY: dev dev-down build test lint fmt run-% compose-app frontend-dev licenses connector-lint
+.PHONY: dev dev-down build test lint fmt run-% compose-app frontend-dev licenses connector-lint coverage
 
 dev: ## start infra stack (PG, Redis, RabbitMQ, VictoriaMetrics, snmpsim)
 	docker compose up -d --wait postgres redis rabbitmq victoriametrics snmpsim
@@ -26,7 +26,10 @@ test:
 
 lint:
 	cd backend && go vet ./...
-	@command -v golangci-lint >/dev/null && (cd backend && golangci-lint run) || echo "golangci-lint not installed — go vet only"
+	@command -v golangci-lint >/dev/null \
+		&& (cd backend && golangci-lint run -c ../.golangci.yml ./... \
+		    && cd ../connectors && golangci-lint run -c ../.golangci.yml ./...) \
+		|| echo "golangci-lint not installed — go vet only (CI runs it; see .golangci.yml)"
 
 fmt:
 	cd backend && gofmt -w .
@@ -42,3 +45,6 @@ licenses: ## inventory every dependency licence; fails on copyleft (see NOTICE)
 
 connector-lint: ## enforce the connector plugin contract (doc 10 §6)
 	./scripts/connector-lint.sh
+
+coverage: ## backend coverage ratchet (doc 24 §1.1)
+	cd backend && ../scripts/coverage.sh

@@ -1,0 +1,67 @@
+# golangci-lint configuration for NetInv (doc 25 §5.1).
+#
+# The default linter set runs clean, so the interesting question is which
+# additions earn their keep on a codebase that holds SNMP credentials for other
+# people's network equipment. Everything enabled below has caught something
+# real or guards a failure mode this project has actually hit.
+
+run:
+  timeout: 5m
+
+linters:
+  enable:
+    # Credentials at rest, a metrics proxy, and SNMP transport all live here.
+    - gosec
+    # Every one of these guards a silent resource leak against Postgres,
+    # VictoriaMetrics or RabbitMQ — the failure mode is a service that runs
+    # fine for a week and then stops accepting connections.
+    - bodyclose
+    - rowserrcheck
+    - sqlclosecheck
+    # An outbound HTTP call without a context ignores poll deadlines, which is
+    # how one slow device stalls a whole collection cycle.
+    - noctx
+  # Deliberately absent: misspell. Its locale settings treat British and
+  # American spellings as errors in whichever direction you pick, and this
+  # codebase is legitimately both — comments lean British, while identifiers
+  # and metric names ("netinv_if_utilization") are American because that is
+  # what the wider ecosystem uses. Neither locale is correct here, so a linter
+  # that must choose one would only generate churn.
+
+linters-settings:
+  gosec:
+    excludes:
+      # G404 (math/rand): used only for retry backoff and poll-schedule jitter,
+      # where predictability is harmless and crypto/rand's cost is not. No
+      # secret, token, key or ID is generated with math/rand — IDs come from
+      # oklog/ulid and keys from crypto/rand. Revisit if that ever changes.
+      - G404
+issues:
+  # Default is 3 per linter, which hides the shape of a problem behind "and 47
+  # more". A gate that reports partial results trains people to distrust it.
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  exclude-rules:
+    - path: _test\.go
+      linters: [gosec]
+      # G101 fires on the deliberate sentinel passphrases in the secret-leak
+      # test — strings that exist precisely to be searched for in the database
+      # — and G107 on httptest server URLs, which are variable by construction.
+      text: "(G101|G107)"
+    - path: internal/inventory/adapters/postgres/store.go
+      linters: [gosec]
+      # G101 on a SQL column list that happens to contain "cred". It is a
+      # projection of inventory.credentials, not a credential.
+      text: "G101"
+    - path: _test\.go
+      linters: [noctx]
+      # http.Get against an httptest server. There is no deadline to respect
+      # and no poll cycle to stall; the rule targets production call sites.
+    - path: (internal/platform/authn/password\.go|internal/platform/amqpx/amqpx\.go|internal/inventory/adapters/snmptest/snmptest\.go)
+      linters: [gosec]
+      # G115 integer-overflow conversions that are provably bounded: an Argon2
+      # digest length, a compile-time 15-minute TTL in milliseconds, and a test
+      # helper's port. The one G115 that was *not* bounded — a user-supplied
+      # SNMP port narrowed to uint16 — is now rejected at the write path in
+      # inventory/app/devices.go rather than silently wrapping.
+      text: "G115"

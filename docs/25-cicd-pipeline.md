@@ -55,7 +55,17 @@ GitHub side holds **no** cluster credentials; GHCR pull secrets in-cluster. Acti
 
 ### 5.1 What is actually wired today
 
-§2's diagram is the target shape; the pipeline as built is a subset, and the gap is recorded here rather than left to be discovered. Implemented in `ci.yml`: paths-filter, backend build/vet/test (`-race`, with a PostgreSQL service for integration tests), connector tests, `make connector-lint`, frontend typecheck/lint/build, gitleaks, `make licenses`, govulncheck, `npm audit`, and a Playwright E2E smoke. **Not yet wired:** golangci-lint as a blocking gate (it runs locally when installed), go-arch-lint boundary rules, coverage gates, OpenAPI drift check, bundle-size budget, helm lint/kubeconform, and the docs link/mermaid checks.
+§2's diagram is the target shape; the pipeline as built is a subset, and the gap is recorded here rather than left to be discovered.
+
+**Implemented in `ci.yml`:** paths-filter; backend build/vet/test (`-race`, with a PostgreSQL service for integration tests); golangci-lint over both Go modules (config in `/.golangci.yml`); connector tests and `make connector-lint`; the coverage ratchet (`scripts/coverage.sh`); frontend typecheck/lint/build; gitleaks, `make licenses`, govulncheck and `npm audit`; `helm lint` plus template rendering and kubeconform validation; and a Playwright E2E smoke against PostgreSQL, VictoriaMetrics and Redis.
+
+**Not wired, and why:**
+
+- **OpenAPI drift check** — blocked, not deferred. There is no OpenAPI document in the repository: doc 09 specifies the API in Markdown tables, and handlers are written by hand. A drift check needs a generated spec to diff against, so wiring one means first choosing whether the spec is generated from code or the code from the spec. That is an ADR, not a CI step.
+- **go-arch-lint boundary rules** — docs 12/13 define the layering, and nothing mechanically enforces it. Worth adding; needs a rules file written to match the actual package graph.
+- **Bundle-size budget** — doc 14 sets one; no measurement is wired.
+- **Docs link and mermaid checks** — lychee and a mermaid compile step. Cheap; simply not done.
+- **The 70% coverage bar** — the gate is deliberately a ratchet instead. See doc 24 §1.1 for the measured position and the reasoning.
 
 Two notes for anyone reading a red or absent build:
 

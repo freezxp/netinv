@@ -23,6 +23,14 @@ func NewSNMPSession(job wire.PollJob) (*SNMPSession, error) {
 	if timeout == 0 {
 		timeout = 5 * time.Second
 	}
+	// The API rejects out-of-range ports on the way in, but this runs against
+	// whatever is already in the database — including rows written before that
+	// check existed. Narrowing to uint16 without a guard turns port 99999 into
+	// 33999 and polls a port nobody configured, which surfaces as a device that
+	// times out for no visible reason. Failing loudly is the cheaper outcome.
+	if job.Port < 1 || job.Port > 65535 {
+		return nil, fmt.Errorf("snmp port %d is out of range for device %s", job.Port, job.DeviceID)
+	}
 	g := &gosnmp.GoSNMP{
 		Target:             job.MgmtIP,
 		Port:               uint16(job.Port),

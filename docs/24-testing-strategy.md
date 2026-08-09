@@ -12,6 +12,24 @@
 ```
 Overall backend ≥70% lines; `domain/` + SyncDiffer + RuleEvaluator + DerivationService ≥90%; connectors ≥90% of mapping code. Coverage is a CI gate but reviewed for meaning, not gamed.
 
+### 1.1 Where coverage actually stands (2026-08-09)
+
+Those are targets, and the distance to them is large enough that stating it plainly is more useful than restating the goal:
+
+| Scope | Target | Measured |
+|---|---|---|
+| Backend overall | ≥70% | **14.9%** |
+| `connectors/` module | ≥90% of mapping code | 71.6% |
+| `domain/` packages | ≥90% | 82.1% |
+| SyncDiffer (`inventory/app/sync`) | ≥90% | 62.3% |
+| RuleEvaluator (`alerting/app/evaluator`) | ≥90% | 51.8% |
+| Rule validation (`alerting/app/rules`) | ≥90% | 90.2% |
+| DerivationService | ≥90% | not implemented |
+
+The shape is what one would expect from a codebase built outside-in against a live pilot: domain logic and connector mapping are reasonably covered, while adapters — HTTP handlers, Postgres stores, AMQP publishers, the six `cmd/` entrypoints — sit near zero and dominate the total.
+
+The CI gate is therefore a **ratchet, not the 70% bar**: `scripts/coverage.sh` fails when coverage falls below `scripts/coverage-floor.txt`, currently 14.5%. Gating at 70% today would produce a permanently red build, which teaches everyone to ignore CI and is worse than no gate. Raising the floor is a deliberate commit, so progress shows up in history instead of being asserted here. The 70% target stands; this records the honest starting point for closing it.
+
 ## 2. The SNMP problem — simulate, then verify on real iron
 
 - **Recorded-walk fixtures:** every connector ships `testdata/*.snmpwalk` recorded from real devices (`scripts/walk-recorder`, scrubs serials/locations on request). Unit tests replay fixtures through a fake `Session` — connector tests need no network, run in ms, and lock in vendor behavior forever (a regression = a diff in normalized output).
