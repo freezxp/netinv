@@ -88,6 +88,10 @@ export function useMapDef(id: string, rev: "draft" | "published") {
     queryKey: ["map", id, rev],
     queryFn: () =>
       api<{ rev: number; definition: MapDefinition }>(`/maps/${id}?rev=${rev}`),
+    // A dashboard panel can exist before a map has been chosen for it, and an
+    // empty id would request /maps/?rev=published — a 404 rendered as a broken
+    // panel rather than the "pick a map" prompt the operator needs.
+    enabled: id !== "",
   });
 }
 

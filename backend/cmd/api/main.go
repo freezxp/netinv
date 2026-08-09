@@ -332,6 +332,7 @@ func main() {
 			channelH.Register(g)
 			exportH.Register(g)
 			(&audit.Handler{Pool: pool, Checker: checker}).Register(g)
+			(&httpapi.PreferencesHandler{Pool: pool}).Register(g)
 			(&polling.Handler{
 				Store: &polling.Store{Pool: pool}, Checker: checker, Audit: auditor,
 			}).Register(g)

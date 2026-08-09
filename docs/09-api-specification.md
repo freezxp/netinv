@@ -232,7 +232,9 @@ Async job (RabbitMQ worker in API deployment); audit-logged per FR-EXP-03.
 
 ## 14. Settings — `/settings` (Admin)
 
-`GET /settings` → typed map · `PUT /settings/{key}` (schema-validated, audited) · `GET/PUT /users/me/preferences` (theme etc., any authenticated user).
+`GET /settings` → typed map · `PUT /settings/{key}` (schema-validated, audited) · `GET/PUT /users/me/preferences` (any authenticated user).
+
+`/users/me/preferences` stores opaque JSON per user in `iam.user_preferences` — the dashboard layout is its first consumer (doc 30 §2). The body must be a JSON **object** and is capped at 64 KB: a bare array or string would persist happily and then break every client that reads a key from it. `GET` returns `{}` rather than 404 before anything is saved, since first use is a normal state. Clients merge rather than replace, so saving a layout cannot drop a theme.
 
 ## 15. Platform meta
 
@@ -241,6 +243,10 @@ Async job (RabbitMQ worker in API deployment); audit-logged per FR-EXP-03.
 `GET` requires `platform:read`; `PUT` requires `platform:write`, because changing the cadence alters SNMP load on every monitored device. Body: `{"traffic_interval_s": 300}`, restricted to `allowed_traffic_interval_s` (60/300/600/900) — 422 otherwise.
 
 Writes the default polling profile **and** the `polling_schedule` rows in one transaction. The scheduler reads the schedule, not the profile, so updating one alone would leave the UI reporting a cadence collection was not using. Health is raised to match when traffic overtakes it; ICMP and inventory sync are untouched. Audited as `platform.polling.update`.
+
+### `GET /metrics/names` — metric names available to chart
+
+Permission `metrics:read`. Lists `netinv_*` series names from the metrics store, sorted. VictoriaMetrics' internal `vm_*` metrics are filtered out. Exists so a dashboard builder need not hard-code a list that goes stale the moment a connector publishes something new.
 
 ### `GET /metrics/limits` — query ceiling and poll cadence
 

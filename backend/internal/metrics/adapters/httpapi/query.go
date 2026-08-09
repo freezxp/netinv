@@ -2,10 +2,13 @@
 package httpapi
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -44,6 +47,7 @@ func (q *QueryProxy) Register(r chi.Router) {
 		g.Get("/metrics/query", q.instant)
 		g.Get("/metrics/query_range", q.rangeQuery)
 		g.Get("/metrics/limits", q.limits)
+		g.Get("/metrics/names", q.names)
 	})
 }
 
@@ -76,6 +80,43 @@ func (q *QueryProxy) limits(w http.ResponseWriter, r *http.Request) {
 		"max_range_s":     int64(q.maxRange().Seconds()),
 		"poll_interval_s": int64(poll.Seconds()),
 	})
+}
+
+// names lists the metric names available to build a panel from. Without it a
+// dashboard builder has to hard-code a list, which goes stale the moment a
+// connector starts publishing something new — exactly the metrics an operator
+// would most want to chart.
+func (q *QueryProxy) names(w http.ResponseWriter, r *http.Request) {
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet,
+		q.VMURL+"/api/v1/label/__name__/values", nil)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	resp, err := q.client().Do(req)
+	if err != nil {
+		httpx.WriteError(w, r, errx.Wrap(errx.KindTransient, err, "metrics store"))
+		return
+	}
+	defer resp.Body.Close()
+
+	var out struct {
+		Data []string `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		httpx.WriteError(w, r, errx.Wrap(errx.KindTransient, err, "decode metric names"))
+		return
+	}
+	// Only NetInv's own series. VictoriaMetrics also reports its internal vm_*
+	// metrics, which are not what anyone is trying to graph.
+	names := []string{}
+	for _, n := range out.Data {
+		if strings.HasPrefix(n, "netinv_") {
+			names = append(names, n)
+		}
+	}
+	sort.Strings(names)
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"data": names})
 }
 
 func (q *QueryProxy) instant(w http.ResponseWriter, r *http.Request) {

@@ -32,6 +32,13 @@ func RequireAuth(verifier authn.TokenVerifier) func(http.Handler) http.Handler {
 }
 
 // ClaimsFrom returns claims stored by RequireAuth (zero value if absent).
+// WithClaims attaches claims to a context the way the auth middleware does.
+// Exported so handlers can be tested without minting and signing a JWT, which
+// would test the token library rather than the handler.
+func WithClaims(ctx context.Context, c *authn.Claims) context.Context {
+	return context.WithValue(ctx, claimsKey{}, c)
+}
+
 func ClaimsFrom(ctx context.Context) *authn.Claims {
 	if c, ok := ctx.Value(claimsKey{}).(*authn.Claims); ok {
 		return c

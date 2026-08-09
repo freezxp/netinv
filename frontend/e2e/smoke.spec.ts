@@ -732,3 +732,46 @@ test("the polling interval can be changed for the whole fleet", async ({
   await expect(picker).toHaveValue(original);
   await expect(page.getByText("Unexpected Application Error")).toHaveCount(0);
 });
+
+// The dashboard is assembled from a per-user layout. It must still look
+// untouched for someone who never opens the editor, and a saved layout has to
+// survive a reload — it lives on the account, not in the browser.
+test("the dashboard can be customised and the layout persists", async ({
+  page,
+}) => {
+  await login(page);
+
+  // Default layout: the panels the dashboard had before it was customisable.
+  await expect(page.getByText(/^Bandwidth in, by site/)).toBeVisible();
+  await expect(page.getByText("Devices up")).toBeVisible();
+
+  await page.getByRole("button", { name: "Customise" }).click();
+  await expect(page.getByText("Customise dashboard")).toBeVisible();
+
+  // Add a weathermap panel and choose a map for it.
+  await page.getByLabel("Panel to add").selectOption("weathermap");
+  await page.getByRole("button", { name: "Add panel" }).click();
+  const mapPick = page.getByLabel("Weathermap to show");
+  await expect(mapPick).toBeVisible();
+  const opts = await mapPick.locator("option").count();
+  if (opts > 1) {
+    await mapPick.selectOption({ index: 1 });
+  }
+
+  // Removing a panel takes it off the dashboard.
+  await page.getByRole("button", { name: "Remove Latency (ICMP RTT)" }).click();
+  await page.getByRole("button", { name: "Done" }).first().click();
+  await expect(page.getByText(/^Latency — ICMP avg RTT/)).toHaveCount(0);
+
+  // Stored on the account, so a reload keeps it.
+  await page.reload();
+  await expect(page.getByText(/^Latency — ICMP avg RTT/)).toHaveCount(0);
+  await expect(page.getByText(/^Bandwidth in, by site/)).toBeVisible();
+
+  // Reset puts everything back, so a bad layout is never a trap.
+  await page.getByRole("button", { name: "Customise" }).click();
+  await page.getByRole("button", { name: "Reset to default" }).click();
+  await page.getByRole("button", { name: "Done" }).first().click();
+  await expect(page.getByText(/^Latency — ICMP avg RTT/)).toBeVisible();
+  await expect(page.getByText("Unexpected Application Error")).toHaveCount(0);
+});
