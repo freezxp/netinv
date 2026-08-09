@@ -236,6 +236,23 @@ Async job (RabbitMQ worker in API deployment); audit-logged per FR-EXP-03.
 
 ## 15. Platform meta
 
+### `GET /platform/capacity` — storage capacity and retention headroom
+
+Permission `platform:read`. Reports what the metrics store holds and how long the volume can sustain it. Every value is measured from the running system rather than read from configuration.
+
+| Field | Meaning |
+|---|---|
+| `retention_s` | Configured retention (`NETINV_VM_RETENTION`) |
+| `disk.used_bytes` / `disk.free_bytes` | Metrics data size, and free space on its volume as VictoriaMetrics reports it |
+| `metrics.bytes_per_sample` | Measured compression — around 0.8 in practice |
+| `metrics.samples_per_day`, `metrics.effective_interval_s` | Write rate, counted from the last hour of stored data |
+| `growth.bytes_per_day`, `growth.bytes_per_device_per_year` | Growth; the per-device figure is the one to plan a fleet with |
+| `growth.days_until_full` | At the current rate; `-1` when not yet measurable |
+| `growth.max_retention_s` | What the whole volume could sustain, as opposed to what is configured |
+| `warnings` | Plain-language problems, most serious first. Always an array, never null |
+
+Degrades rather than fails: if VictoriaMetrics answers `/metrics` but not queries, the disk figures are still returned and the projections read as unknown.
+
 `GET /connectors` (`platform:read`) → catalog with capabilities · `GET /system/info` → version, build, component health summary · `GET /healthz`, `/readyz` (public, no auth, no detail) · `GET /metrics` (Prometheus, cluster-internal only — doc 22).
 
 ## 16. Discovery (P1) — `/discovery`

@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"github.com/freezxp/netinv/backend/internal/platform/capacity"
 	"github.com/freezxp/netinv/backend/internal/platform/config"
 	"os"
 	"time"
@@ -335,6 +336,12 @@ func main() {
 					VMURL:    vmURL,
 					Checker:  checker,
 					MaxRange: config.Retention(),
+				}).Register(g)
+				(&capacity.Handler{
+					Collector: &capacity.Collector{
+						VMURL: vmURL, Pool: pool, Retention: config.Retention(),
+					},
+					Checker: checker,
 				}).Register(g)
 				(&dashboard.Service{
 					Pool: pool, VM: alertvm.New(vmURL), Redis: redisClient,

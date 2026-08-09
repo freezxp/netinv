@@ -657,3 +657,27 @@ test("the weathermap viewer can change the link graph range", async ({
   const id = page.url().match(/\/maps\/([^/]+)/)?.[1];
   if (id) await deleteMap(request, id);
 });
+
+// Capacity answers a question the retention default raises but cannot answer
+// on its own: whether this disk can actually hold two years of samples.
+test("platform capacity reports storage and what the disk sustains", async ({
+  page,
+}) => {
+  await login(page);
+  await page.getByRole("link", { name: "Platform" }).click();
+  await page.getByRole("button", { name: "Capacity", exact: true }).click();
+
+  await expect(page.getByText("How long data can be kept")).toBeVisible();
+  await expect(page.getByText("Retention setting")).toBeVisible();
+  await expect(page.getByText("This volume sustains")).toBeVisible();
+
+  // Numbers, not placeholders: a capacity page showing "—" is worse than none.
+  await expect(page.getByText("NETINV_VM_RETENTION")).toBeVisible();
+  await expect(
+    page.getByText(/\d+(\.\d+)?\s+(years|months|days|hours)/).first(),
+  ).toBeVisible();
+
+  await expect(page.getByText("Metrics data")).toBeVisible();
+  await expect(page.getByText("Per device, per year")).toBeVisible();
+  await expect(page.getByText("Unexpected Application Error")).toHaveCount(0);
+});

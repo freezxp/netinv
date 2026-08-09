@@ -92,6 +92,16 @@ Table: username, display name, email, roles chips, status, last login; create mo
 
 Pipeline throughput diagram with live numbers (jobs → polls → samples → writes), per-site poller cards, queue depth charts + DLQ badges (replay affordance post-v1), data-tier vitals (PG/VM/Redis/RMQ), SLO burn-down tiles, ingest freshness. Built from the same components as the product — it's also the demo of our own dogfooding.
 
+**Built so far: storage capacity**, as a `Capacity` tab on `/platform` rather than a separate route (`GET /platform/capacity`, permission `platform:read` — an on-call engineer needs this at 3am and it contains no credentials). It answers the question the retention default raises but cannot answer on its own: *will this disk hold two years?*
+
+- **Retention set** against **what the volume sustains**, side by side. That pairing is the page: everything else supports it.
+- Disk used/free with a fill bar, and days-until-full at the current rate.
+- What is stored: devices, series, samples, measured bytes-per-sample, effective sample interval.
+- Growth per day and **per device per year** — the number to plan a fleet with, since storage scales with device count, not elapsed time.
+- Warnings in plain language, and only when warranted: disk filling within 30 days, retention exceeding what the volume affords, or nothing written in the last hour (which is what a stalled collection looks like — a failure this project has had twice, presenting as everything healthy).
+
+Every figure is **measured, never derived from configuration**. Bytes-per-sample comes from VictoriaMetrics' own totals; the sample rate from counting what was actually written in the last hour. Deriving the rate from the polling schedule was tried and abandoned: schedules mix 30 s ICMP with 6-hourly inventory sync, so their mean was 5498 s against an effective 65 s — an 85-fold error that would have made every projection on the page wrong.
+
 ## 13. Accessibility & i18n
 
 Keyboard: full table/nav operability, map editor arrow-nudge + shortcut sheet (?), focus-visible rings. Screen-reader labels on all status colorography (state announced textually). Live regions announce new critical alerts (opt-out). i18n: strings externalized from day one (react-i18next), en only v1 — retrofit-proofing, not a feature.

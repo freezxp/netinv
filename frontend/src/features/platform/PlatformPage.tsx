@@ -6,6 +6,7 @@ import { api } from "../../api/client";
 import { useSites } from "../../api/hooks";
 import { useAuthStore, hasPermissionRole } from "../auth/store";
 import { DiscoveryTab } from "./DiscoveryTab";
+import { CapacityTab } from "./CapacityTab";
 import {
   Button,
   Card,
@@ -17,7 +18,14 @@ import {
 } from "../../components/ui";
 import { formatDuration } from "../../lib/format";
 
-const tabs = ["Sites", "Discovery", "Pollers", "Connectors", "Credentials"] as const;
+const tabs = [
+  "Sites",
+  "Discovery",
+  "Pollers",
+  "Connectors",
+  "Credentials",
+  "Capacity",
+] as const;
 
 export function PlatformPage() {
   const [tab, setTab] = useState<(typeof tabs)[number]>("Sites");
@@ -49,6 +57,7 @@ export function PlatformPage() {
       {tab === "Pollers" && <PollersTab />}
       {tab === "Connectors" && <ConnectorsTab />}
       {tab === "Credentials" && <CredentialsTab />}
+      {tab === "Capacity" && <CapacityTab />}
     </div>
   );
 }
@@ -88,8 +97,12 @@ function SitesTab() {
                 className="border-b border-slate-100 dark:border-slate-800/60"
               >
                 <td className="px-4 py-2 font-medium">{s.name}</td>
-                <td className="px-4 py-2 text-slate-500">{s.location || "—"}</td>
-                <td className="mono px-4 py-2 text-xs text-slate-500">{s.id}</td>
+                <td className="px-4 py-2 text-slate-500">
+                  {s.location || "—"}
+                </td>
+                <td className="mono px-4 py-2 text-xs text-slate-500">
+                  {s.id}
+                </td>
               </tr>
             ))}
           </tbody>
@@ -183,14 +196,17 @@ function PollersTab() {
                 <td className="px-4 py-2 font-medium">{p.name}</td>
                 <td className="px-4 py-2 text-slate-500">hb {hbAge(p)}</td>
                 <td className="px-4 py-2 text-xs text-slate-500">
-                  ok {p.stats?.polls_ok ?? 0} · fail {p.stats?.polls_failed ?? 0}{" "}
-                  · buf {p.stats?.buffer_depth ?? 0}
+                  ok {p.stats?.polls_ok ?? 0} · fail{" "}
+                  {p.stats?.polls_failed ?? 0} · buf{" "}
+                  {p.stats?.buffer_depth ?? 0}
                 </td>
                 <td className="px-4 py-2 text-right">
                   {p.status === "pending" && (
                     <Button
                       variant="ghost"
-                      onClick={() => action.mutate({ id: p.id, verb: "approve" })}
+                      onClick={() =>
+                        action.mutate({ id: p.id, verb: "approve" })
+                      }
                     >
                       Approve
                     </Button>
@@ -198,7 +214,9 @@ function PollersTab() {
                   {p.status === "active" && (
                     <Button
                       variant="ghost"
-                      onClick={() => action.mutate({ id: p.id, verb: "disable" })}
+                      onClick={() =>
+                        action.mutate({ id: p.id, verb: "disable" })
+                      }
                     >
                       Disable
                     </Button>
@@ -324,7 +342,10 @@ function CredentialsTab() {
                   // Omitted entirely for authNoPriv; sending a protocol with
                   // no passphrase is rejected.
                   ...(privProtocol
-                    ? { priv_protocol: privProtocol, priv_password: privPassword }
+                    ? {
+                        priv_protocol: privProtocol,
+                        priv_password: privPassword,
+                      }
                     : {}),
                   ...(context ? { context } : {}),
                 },
@@ -417,7 +438,8 @@ function CredentialsTab() {
                 </label>
                 <label className="flex min-w-40 flex-1 flex-col gap-1">
                   <span className="text-xs text-slate-500">
-                    Privacy passphrase{privProtocol ? " (write-only)" : " — not used"}
+                    Privacy passphrase
+                    {privProtocol ? " (write-only)" : " — not used"}
                   </span>
                   <Input
                     type="password"
@@ -446,7 +468,10 @@ function CredentialsTab() {
             </div>
           )}
           <div className="flex items-center gap-3">
-            <Button disabled={!ready || create.isPending} onClick={() => create.mutate()}>
+            <Button
+              disabled={!ready || create.isPending}
+              onClick={() => create.mutate()}
+            >
               {create.isPending ? "Saving…" : "Add credential"}
             </Button>
             <span className="text-xs text-slate-500">
