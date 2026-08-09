@@ -77,12 +77,23 @@ The full checklist is [doc 10 §6](docs/10-connector-architecture.md). In short:
    see the `ruckus` entry in doc 10, which deliberately publishes no CPU or
    temperature because an R710 genuinely has none to give.
 3. Record `snmpwalk` fixtures from real hardware into `testdata/*.snmpwalk`
-   and write table-driven tests against them. **Redact the identity fields
-   before committing** — serial number, hostname, management address. A fixture
-   is a recording of someone's actual equipment, and it is going into a public
-   repository. The mapping logic under test does not care what those strings
-   say; this project committed a real serial exactly this way and only caught
-   it while preparing to publish.
+   and write tests against them with `sdk/sdktest.Load`:
+
+   ```bash
+   scripts/record-fixture.sh 192.0.2.10 public juniper .1.3.6.1.2.1.1 .1.3.6.1.4.1.2636.3.1.13.1
+   ```
+
+   The script **redacts identity at capture time** — serial, addresses, MACs,
+   sysName/sysLocation/sysContact — and `REDACT_INDEX_OIDS` also rewrites table
+   indices, which carry MACs and IPs in tables like the Ruckus per-AP one.
+   Review the output before committing anyway: it cannot know that a sysDescr
+   names your employer. This is not a theoretical precaution — this project
+   committed a real device serial in a hand-written fixture and only caught it
+   while preparing to open the repository.
+
+   Record the narrowest OID roots the connector actually reads. A full
+   `.1.3.6.1` walk pulls in ARP caches and neighbour tables, which describe
+   your other equipment rather than the device under test.
 4. Register in `connectors/registry`, run `make connector-lint`.
 5. **Zero diffs outside `connectors/`** plus the one registry line. CI enforces
    this with a path check; it is the property that makes the plugin framework

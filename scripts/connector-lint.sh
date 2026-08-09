@@ -30,7 +30,7 @@ for dir in */; do
 {{end}}{{range .TestImports}}{{.}}
 {{end}}' "./$name" 2>/dev/null |
 		grep -E '^[^/]+\.[^/]+/' |
-		grep -vE '^github\.com/freezxp/netinv/connectors/(sdk|generic)$' |
+		grep -vE '^github\.com/freezxp/netinv/connectors/(sdk(/[a-z]+)?|generic)$' |
 		sort -u || true)
 	if [ -n "$bad" ]; then
 		note FAIL "imports outside sdk/generic/stdlib:"

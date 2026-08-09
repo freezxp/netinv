@@ -111,7 +111,18 @@ Each connector ships: OID map file, recorded-walk test fixtures from real hardwa
 1. `mkdir connectors/<name>`; implement `Connector` embedding `generic.Base`.
 2. Add OID map + normalization; declare capabilities honestly.
 3. Record `snmpwalk` fixtures from a real device; write table-driven tests against them (≥90% coverage of the mapping code).
-4. Register in `connectors/registry`; run `make connector-lint`, which verifies per package: no imports beyond stdlib, `connectors/sdk` and `connectors/generic`; tests present; registered in the registry. A missing `testdata/*.snmpwalk` fixture is reported as a warning, not a failure — **no connector currently ships one**, which is an open gap rather than an accepted state, and the reason a recorded walk attached to a hardware report is so valuable.
+4. Register in `connectors/registry`; run `make connector-lint`, which verifies per package: no imports beyond stdlib, `connectors/sdk` (including `sdk/sdktest` in tests) and `connectors/generic`; tests present; registered in the registry. A missing `testdata/*.snmpwalk` fixture is reported as a warning rather than a failure, because three connectors have neither hardware nor a simulator profile to record from.
+
+**Recording a fixture.** `scripts/record-fixture.sh <host> <community> <connector> [oid-root ...]` walks the roots you name and redacts identity at capture time; `sdk/sdktest.Load` replays the result as a `Session`. Redaction covers values (serial, addresses, MACs, sysName/Location/Contact) and, via `REDACT_INDEX_OIDS`, table **indices** — which matter more than they sound, since a Ruckus per-AP table is indexed by the AP's MAC and `ipAddrTable` by IP. Redacting only values would publish both. Record the narrowest roots the connector actually reads: a full `.1.3.6.1` walk sweeps up ARP caches and neighbour tables, which describe other people's infrastructure rather than this device's behaviour.
+
+| Connector | Fixture | Source |
+|---|---|---|
+| `generic`, `cisco` | yes | bundled SNMP simulator — reproducible by anyone with `make dev`, no hardware or redaction needed |
+| `ruckus` | yes | real R710, Unleashed 200.15.6.212 |
+| `ubiquiti` | yes | real UDM-Pro, UniFi OS 5.1.26 |
+| `huawei`, `juniper`, `zte` | **no** | no hardware, no simulator profile — this is the gap a [hardware validation report](../.github/ISSUE_TEMPLATE/hardware_validation.yml) closes |
+
+The recorded walks earn their place by pinning claims no MIB document supports: that a UDM-Pro answers with a net-snmp `sysObjectID` and exposes neither the UniFi MIB, HOST-RESOURCES nor LLDP; that an R710 exposes no CPU, memory or temperature anywhere. Both are *absences*, and an absence can only be evidenced by a recording of what the device actually returned.
 5. PR must show zero diffs outside `connectors/` (+registry line). CI enforces via path check.
 
 **Test coverage as of 2026-08-09:** every connector has tests. `huawei`, `juniper` and `zte` had none until they were written for the open-source release, and writing them immediately found a live defect: the Juniper connector labelled CPU samples with a raw `names[idx]` lookup instead of the index fallback used for temperature, so every FRU whose `jnxOperatingDescr` walk came back empty emitted `cpu=""` — collapsing all unnamed FRUs into one series that reads as a single CPU swinging between cores. Fixed, with a regression test.

@@ -1,0 +1,12 @@
+.1.3.6.1.2.1.1.1.0 = STRING: "NetInv demo device - generic L3 switch (simulated)"
+.1.3.6.1.2.1.1.2.0 = OID: .1.3.6.1.4.1.8072.3.2.10
+.1.3.6.1.2.1.1.3.0 = 123456700
+.1.3.6.1.2.1.1.4.0 = STRING: "noc@example.invalid"
+.1.3.6.1.2.1.1.5.0 = STRING: "device-under-test"
+.1.3.6.1.2.1.1.6.0 = STRING: "lab"
+
+# Recorded with scripts/record-fixture.sh and redacted at capture time.
+# Serial numbers, MAC addresses, IP addresses, sysName, sysLocation and
+# sysContact are replaced with documentation-range placeholders (RFC 5737,
+# RFC 7042). The behaviour under test — which OIDs exist, which are absent,
+# what types and ranges the agent returns — is preserved exactly.
