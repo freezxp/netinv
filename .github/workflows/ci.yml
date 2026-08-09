@@ -1,5 +1,7 @@
-# CI per doc 25 §2 — Sprint-1 scope: build/vet/test backend, typecheck/build
-# frontend, path-filtered. Integration/E2E/security jobs land with their sprints.
+# CI per doc 25 — path-filtered jobs: backend (build/vet/test + connector
+# contract), frontend (typecheck/build), security (gitleaks/licences/vuln
+# scans), and a Playwright E2E smoke against a real data tier. Doc 25 §5.1
+# lists what is deliberately not wired yet, and why.
 name: ci
 on:
   push:
@@ -117,16 +119,35 @@ jobs:
         options: >-
           --health-cmd "pg_isready -U netinv" --health-interval 5s
           --health-timeout 3s --health-retries 10
+      # The suite has outgrown "api + Postgres is enough for a smoke test". It
+      # now covers weathermaps, whose cards fetch live utilization, and alert
+      # rules, whose validation asks VictoriaMetrics to parse the expression —
+      # a test asserting the UI shows "rejected this expression" needs
+      # something present to do the rejecting.
+      victoriametrics:
+        image: victoriametrics/victoria-metrics:v1.103.0
+        ports: ["8428:8428"]
+        options: >-
+          --health-cmd "wget -q -O- http://127.0.0.1:8428/health || exit 1"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s
+          --health-timeout 3s --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with: { go-version-file: backend/go.mod, cache-dependency-path: backend/go.sum }
       - uses: actions/setup-node@v4
         with: { node-version: 22, cache: npm, cache-dependency-path: frontend/package-lock.json }
-      - name: Build & start api (skeleton auth path is enough for smoke)
+      - name: Build & start api
         working-directory: backend
         env:
           NETINV_PG_DSN: postgres://netinv:ci@localhost:5432/netinv
+          NETINV_VM_URL: http://localhost:8428
+          NETINV_REDIS_ADDR: localhost:6379
           NETINV_ADMIN_PASSWORD: e2e-admin-password
           NETINV_INSECURE_COOKIES: "1"
         run: |
