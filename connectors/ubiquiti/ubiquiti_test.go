@@ -3,8 +3,8 @@ package ubiquiti
 import (
 	"testing"
 
-	"github.com/freezxp/netinv/connectors/sdk"
 	_ "github.com/freezxp/netinv/connectors/generic" // register the floor
+	"github.com/freezxp/netinv/connectors/sdk"
 )
 
 // UniFi OS consoles report net-snmp's sysObjectID, so identification has to

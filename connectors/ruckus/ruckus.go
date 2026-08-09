@@ -60,10 +60,10 @@ const (
 	oidStatsNumClient = ".1.3.6.1.4.1.25053.1.15.1.1.1.15.2.0"
 
 	// Per-AP table, indexed by AP MAC: .<column>.<macIndex>
-	apTable       = ".1.3.6.1.4.1.25053.1.15.2.1.1.2.1.1"
-	apColModel    = 4
-	apColStatus   = 3
-	apColUptime   = 6
+	apTable     = ".1.3.6.1.4.1.25053.1.15.2.1.1.2.1.1"
+	apColModel  = 4
+	apColStatus = 3
+	apColUptime = 6
 )
 
 // CollectHealth reports wireless state. This device family has no host-health

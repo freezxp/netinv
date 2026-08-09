@@ -77,7 +77,12 @@ The full checklist is [doc 10 §6](docs/10-connector-architecture.md). In short:
    see the `ruckus` entry in doc 10, which deliberately publishes no CPU or
    temperature because an R710 genuinely has none to give.
 3. Record `snmpwalk` fixtures from real hardware into `testdata/*.snmpwalk`
-   and write table-driven tests against them.
+   and write table-driven tests against them. **Redact the identity fields
+   before committing** — serial number, hostname, management address. A fixture
+   is a recording of someone's actual equipment, and it is going into a public
+   repository. The mapping logic under test does not care what those strings
+   say; this project committed a real serial exactly this way and only caught
+   it while preparing to publish.
 4. Register in `connectors/registry`, run `make connector-lint`.
 5. **Zero diffs outside `connectors/`** plus the one registry line. CI enforces
    this with a path check; it is the property that makes the plugin framework

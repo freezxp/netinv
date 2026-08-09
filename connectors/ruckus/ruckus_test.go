@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/freezxp/netinv/connectors/sdk"
 	_ "github.com/freezxp/netinv/connectors/generic"
+	"github.com/freezxp/netinv/connectors/sdk"
 )
 
 type fakeSession struct{ data map[string]any }
@@ -32,13 +32,18 @@ func (f *fakeSession) Walk(_ context.Context, root string) ([]sdk.Var, error) {
 func (f *fakeSession) Target() sdk.TargetMeta { return sdk.TargetMeta{} }
 
 // Values recorded from a real R710 Unleashed master (pilot validation).
+// Identity values are synthetic. This fixture was originally recorded verbatim
+// from the pilot's R710, serial and hostname included; those identify a
+// specific physical unit and its owner, and a public repository is the wrong
+// place for them (ADR-019). The OID mapping under test is unaffected by which
+// strings the agent returns.
 func r710() *fakeSession {
 	return &fakeSession{data: map[string]any{
-		oidSystemName:    "22BI8-Unleashed",
-		oidSystemModel:   "R710",
-		oidSystemSerial:  "421803003168",
-		oidSystemVersion: "200.15.6.212 build 27",
-		oidStatsNumAP:    uint64(2),
+		oidSystemName:     "ap-lab-01",
+		oidSystemModel:    "R710",
+		oidSystemSerial:   "SN-R710-TESTFIXTURE",
+		oidSystemVersion:  "200.15.6.212 build 27",
+		oidStatsNumAP:     uint64(2),
 		oidStatsNumClient: uint64(28),
 		// Two APs in the table: one up (1), one down (0).
 		apTable + ".3.6.24.75.13.34.224.192":  1,
@@ -46,7 +51,7 @@ func r710() *fakeSession {
 		apTable + ".4.6.24.75.13.34.224.192":  "R710",
 		apTable + ".4.6.44.197.211.35.33.224": "R710",
 		// System group so the embedded generic layer has something to read.
-		".1.3.6.1.2.1.1.5.0": "22BI8-Unleashed",
+		".1.3.6.1.2.1.1.5.0": "ap-lab-01",
 		".1.3.6.1.2.1.1.2.0": ".1.3.6.1.4.1.25053.3.1.5.20",
 	}}
 }
@@ -94,7 +99,7 @@ func TestInventoryIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	if snap.Vendor != "Ruckus" || snap.Model != "R710" ||
-		snap.Serial != "421803003168" || !strings.HasPrefix(snap.OSVersion, "200.15.6.212") {
+		snap.Serial != "SN-R710-TESTFIXTURE" || !strings.HasPrefix(snap.OSVersion, "200.15.6.212") {
 		t.Errorf("identity = %+v", snap)
 	}
 }
