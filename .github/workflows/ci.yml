@@ -53,18 +53,18 @@ jobs:
       - name: Vet
         working-directory: backend
         run: go vet ./...
+      # Built from source with this repo's Go toolchain rather than pulled as a
+      # prebuilt binary. The released v1.62.2 binary is built with Go 1.23 and
+      # refuses a module targeting 1.26 ("the Go language version used to build
+      # golangci-lint is lower than the targeted Go version"), which is also
+      # why `go run` is what works on a developer's machine. Same command in
+      # both places means a clean local run means a clean CI run.
       - name: golangci-lint (backend)
-        uses: golangci/golangci-lint-action@v6
-        with:
-          version: v1.62.2
-          working-directory: backend
-          args: --timeout 5m -c ../.golangci.yml
+        working-directory: backend
+        run: go run github.com/golangci/golangci-lint/cmd/golangci-lint@v1.62.2 run --timeout 5m -c ../.golangci.yml ./...
       - name: golangci-lint (connectors)
-        uses: golangci/golangci-lint-action@v6
-        with:
-          version: v1.62.2
-          working-directory: connectors
-          args: --timeout 5m -c ../.golangci.yml
+        working-directory: connectors
+        run: go run github.com/golangci/golangci-lint/cmd/golangci-lint@v1.62.2 run --timeout 5m -c ../.golangci.yml ./...
       - name: Test (unit + PG integration)
         working-directory: backend
         env:
