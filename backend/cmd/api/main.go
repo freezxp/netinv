@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"github.com/freezxp/netinv/backend/internal/platform/capacity"
 	"github.com/freezxp/netinv/backend/internal/platform/config"
+	"github.com/freezxp/netinv/backend/internal/platform/polling"
 	"os"
 	"time"
 
@@ -331,11 +332,25 @@ func main() {
 			channelH.Register(g)
 			exportH.Register(g)
 			(&audit.Handler{Pool: pool, Checker: checker}).Register(g)
+			(&polling.Handler{
+				Store: &polling.Store{Pool: pool}, Checker: checker, Audit: auditor,
+			}).Register(g)
 			if vmURL := os.Getenv("NETINV_VM_URL"); vmURL != "" {
+				pollStore := &polling.Store{Pool: pool}
 				(&metrichttp.QueryProxy{
 					VMURL:    vmURL,
 					Checker:  checker,
 					MaxRange: config.Retention(),
+					// Read per request rather than captured at boot: the
+					// cadence is changeable from the UI, and a stale value
+					// here would silently blank the traffic graphs.
+					PollInterval: func() time.Duration {
+						s, err := pollStore.Get(context.Background())
+						if err != nil || s.TrafficIntervalS <= 0 {
+							return 0
+						}
+						return time.Duration(s.TrafficIntervalS) * time.Second
+					},
 				}).Register(g)
 				(&capacity.Handler{
 					Collector: &capacity.Collector{

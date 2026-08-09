@@ -11,6 +11,7 @@ import {
 import { Button, Card, EmptyState, SeverityPill } from "../../components/ui";
 import { RangePicker } from "../../components/RangePicker";
 import { rateWindow, useTimeRange } from "../../api/timerange";
+import { useMetricsLimits } from "../../api/hooks";
 import { TimeSeries } from "../../components/TimeSeries";
 import { HeatmapPanel, TopNPanel, WatchlistPanel } from "./panels";
 import {
@@ -56,6 +57,7 @@ export function DashboardPage() {
   // is gone with it — that fallback existed to keep an empty chart from
   // looking broken, and it cannot carry a site label.
   const range = useTimeRange();
+  const pollS = useMetricsLimits().data?.poll_interval_s ?? 0;
   // In and out are two queries rather than one expression with `or`. Combining
   // them would need label_set to survive: multiplying by 8 strips __name__, so
   // both sides end up with the identical label set {site=…} and `or` silently
@@ -63,12 +65,12 @@ export function DashboardPage() {
   // Separate queries sidestep it entirely and keep each chart to one series
   // per site.
   const bandwidthIn = useQueryRange(
-    `sum by (site) (rate(netinv_if_in_octets_total[${rateWindow(range.stepS)}])) * 8`,
+    `sum by (site) (rate(netinv_if_in_octets_total[${rateWindow(range.stepS, pollS)}])) * 8`,
     range.hours,
     range.stepS,
   );
   const bandwidthOut = useQueryRange(
-    `sum by (site) (rate(netinv_if_out_octets_total[${rateWindow(range.stepS)}])) * 8`,
+    `sum by (site) (rate(netinv_if_out_octets_total[${rateWindow(range.stepS, pollS)}])) * 8`,
     range.hours,
     range.stepS,
   );

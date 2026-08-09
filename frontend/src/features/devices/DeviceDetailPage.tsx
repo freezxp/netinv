@@ -8,6 +8,7 @@ import {
   useDeviceHistory,
   useDeviceInterfaces,
   useQueryRange,
+  useMetricsLimits,
   useSyncNow,
   trafficExpr,
   seriesExpr,
@@ -183,9 +184,10 @@ function InterfacesTab({
     [rows, focusIf],
   );
   const range = useTimeRange();
+  const pollS = useMetricsLimits().data?.poll_interval_s ?? 0;
   const traffic = useQueryRange(
     focused
-      ? trafficExpr(deviceID, focused.if_index, rateWindow(range.stepS))
+      ? trafficExpr(deviceID, focused.if_index, rateWindow(range.stepS, pollS))
       : `vector(0)`,
     range.hours,
     range.stepS,

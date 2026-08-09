@@ -46,7 +46,7 @@ Requirement IDs: `FR-<MODULE>-<nn>`. Every requirement is testable; acceptance c
 - **FR-COLL-01** Pollers MUST execute SNMP v2c and v3 (SHA-1/SHA-256 auth; AES-128/AES-256 priv; MD5/DES supported read-only for legacy but flagged deprecated in UI).
 - **FR-COLL-02** Collection uses GETBULK where the device supports it, falling back to GETNEXT; max-repetitions tunable per polling profile.
 - **FR-COLL-03** Counter metrics MUST use 64-bit HC counters when available (ifHCInOctets…); 32-bit fallback MUST handle wrap correctly.
-- **FR-COLL-04** Polling profiles define cadence per metric family — defaults: traffic 60 s, health 300 s, ICMP 30 s, inventory 6 h (FR-SYNC) — and per-family enable/disable.
+- **FR-COLL-04** Polling profiles define cadence per metric family — defaults: traffic 60 s, health 300 s, ICMP 30 s, inventory 6 h (FR-SYNC) — and per-family enable/disable. *Implemented, with a fleet-wide traffic cadence editable from the UI* (`/platform` → Pollers; 1/5/10/15 min, audited): it writes the default profile and re-schedules every device on it in one transaction, since the scheduler reads `polling_schedule` rather than the profile. Health rises to match when traffic overtakes it; ICMP stays at 30 s deliberately, being the fastest signal that a device is down. Per-profile editing of the other families remains SQL-only.
 - **FR-COLL-05** ICMP probing MUST record RTT min/avg/max, jitter (RFC 3550-style variance), and loss % from a configurable probe count (default 5 probes/cycle).
 - **FR-COLL-06** Every poll attempt MUST record outcome (ok / timeout / auth-error / partial) as a metric (`netinv_poll_success`) enabling SNMP-responsiveness dashboards and alerting.
 - **FR-COLL-07** A device MUST be polled by exactly one poller at a time (site affinity; queue semantics per doc 05 §messaging prevent double-consumption). A poller MAY serve **several** sites — jobs go to a direct exchange keyed by site, so it consumes one queue per site and each queue still has exactly one consumer. This matters because sites are a *logical* grouping as much as a physical one: one host often covers several, and a site whose queue has no consumer is never polled at all — its jobs simply accumulate until they age out, with every other component reporting healthy.
@@ -116,7 +116,7 @@ Requirement IDs: `FR-<MODULE>-<nn>`. Every requirement is testable; acceptance c
 
 ## SET — Settings
 
-- **FR-SET-01** System settings (Admin-only): SMTP config, default polling profile, retention tiers, discovery defaults, UI branding name. All changes audited with before/after.
+- **FR-SET-01** System settings (Admin-only): SMTP config, default polling profile, retention tiers, discovery defaults, UI branding name. All changes audited with before/after. *Partially implemented:* the default profile's traffic cadence is editable from the UI and audited (FR-COLL-04); retention is `NETINV_VM_RETENTION` at deploy time rather than a runtime setting (doc 04 §4). SMTP, discovery defaults and branding remain unimplemented.
 - **FR-SET-02** Notification channel management per FR-NOT.
 - **FR-SET-03** Per-user preferences: theme (light/dark/system), default landing page, timezone (display only; storage is UTC).
 - **FR-SET-04** Settings are typed key-value (doc 08 `settings` table) with schema validation server-side.

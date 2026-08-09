@@ -236,6 +236,16 @@ Async job (RabbitMQ worker in API deployment); audit-logged per FR-EXP-03.
 
 ## 15. Platform meta
 
+### `GET /platform/polling` · `PUT /platform/polling` — fleet-wide collection cadence
+
+`GET` requires `platform:read`; `PUT` requires `platform:write`, because changing the cadence alters SNMP load on every monitored device. Body: `{"traffic_interval_s": 300}`, restricted to `allowed_traffic_interval_s` (60/300/600/900) — 422 otherwise.
+
+Writes the default polling profile **and** the `polling_schedule` rows in one transaction. The scheduler reads the schedule, not the profile, so updating one alone would leave the UI reporting a cadence collection was not using. Health is raised to match when traffic overtakes it; ICMP and inventory sync are untouched. Audited as `platform.polling.update`.
+
+### `GET /metrics/limits` — query ceiling and poll cadence
+
+Reports `max_range_s` (see §7) and `poll_interval_s`. The cadence travels with the ceiling because clients must size `rate()` lookbacks above it: a lookback shorter than the interval spans at most one sample, `rate()` returns nothing, and every traffic chart goes blank.
+
 ### `GET /platform/capacity` — storage capacity and retention headroom
 
 Permission `platform:read`. Reports what the metrics store holds and how long the volume can sustain it. Every value is measured from the running system rather than read from configuration.

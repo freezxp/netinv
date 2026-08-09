@@ -706,3 +706,29 @@ test("the dashboard shows inbound and outbound throughput", async ({
   await expect(page.getByText(/^Bandwidth out, by site/)).toBeVisible();
   await expect(page.getByText("Unexpected Application Error")).toHaveCount(0);
 });
+
+// A fleet-wide cadence change must reach polling_schedule, which is what the
+// scheduler reads — updating only the profile would leave the UI reporting a
+// cadence that collection was not using.
+test("the polling interval can be changed for the whole fleet", async ({
+  page,
+}) => {
+  await login(page);
+  await page.getByRole("link", { name: "Platform" }).click();
+  await page.getByRole("button", { name: "Pollers", exact: true }).click();
+
+  const picker = page.getByLabel("Polling interval");
+  await expect(picker).toBeVisible();
+  const original = await picker.inputValue();
+
+  await picker.selectOption("300");
+  await expect(picker).toHaveValue("300");
+  // Health follows traffic rather than out-polling it.
+  await expect(page.getByText(/device health at 5 min/)).toBeVisible();
+  // ICMP is deliberately left fast, and the page says so.
+  await expect(page.getByText(/ICMP stays at 30s/)).toBeVisible();
+
+  await picker.selectOption(original);
+  await expect(picker).toHaveValue(original);
+  await expect(page.getByText("Unexpected Application Error")).toHaveCount(0);
+});

@@ -5,6 +5,7 @@ import { trafficExpr, useQueryRange } from "../../api/hooks";
 import { TimeSeries } from "../../components/TimeSeries";
 import { formatBps } from "../../lib/format";
 import { rateWindow, useTimeRange } from "../../api/timerange";
+import { useMetricsLimits } from "../../api/hooks";
 import type { LiveData, MapDefinition } from "./api";
 
 const WIDTH = 400;
@@ -32,9 +33,10 @@ export function LinkGraph({
   // transient hover overlay with pointer events disabled — it just follows
   // whatever range is selected elsewhere.
   const range = useTimeRange();
+  const pollS = useMetricsLimits().data?.poll_interval_s ?? 0;
   const traffic = useQueryRange(
     a
-      ? trafficExpr(a.device_id, a.if_index, rateWindow(range.stepS))
+      ? trafficExpr(a.device_id, a.if_index, rateWindow(range.stepS, pollS))
       : `vector(0)`,
     range.hours,
     range.stepS,

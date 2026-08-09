@@ -122,6 +122,100 @@ interface Poller {
   stats: Record<string, number>;
 }
 
+interface PollingSettings {
+  traffic_interval_s: number;
+  health_interval_s: number;
+  icmp_interval_s: number;
+  sync_interval_s: number;
+  allowed_traffic_interval_s: number[];
+  devices: number;
+}
+
+function everyLabel(seconds: number): string {
+  return seconds < 60 ? `${seconds}s` : `${seconds / 60} min`;
+}
+
+// Fleet-wide collection cadence. Its own card above the poller fleet because
+// it is a different thing: this is how often devices are polled, not which
+// agents do the polling.
+function PollingIntervalCard() {
+  const qc = useQueryClient();
+  const q = useQuery({
+    queryKey: ["platform", "polling"],
+    queryFn: () => api<PollingSettings>("/platform/polling"),
+  });
+  const save = useMutation({
+    mutationFn: (traffic_interval_s: number) =>
+      api<PollingSettings>("/platform/polling", {
+        method: "PUT",
+        body: JSON.stringify({ traffic_interval_s }),
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["platform", "polling"] });
+      // Rate lookbacks are sized from the cadence, so the charts have to be
+      // told; without this they keep querying with the old window until the
+      // page is reloaded.
+      qc.invalidateQueries({ queryKey: ["metrics", "limits"] });
+      qc.invalidateQueries({ queryKey: ["platform", "capacity"] });
+    },
+  });
+
+  const s = q.data;
+  return (
+    <Card title="Polling interval">
+      {!s ? (
+        <EmptyState>Loading…</EmptyState>
+      ) : (
+        <>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-sm text-slate-500">Poll every</span>
+            <Select
+              aria-label="Polling interval"
+              value={String(s.traffic_interval_s)}
+              disabled={save.isPending}
+              onChange={(e) => save.mutate(Number(e.target.value))}
+            >
+              {s.allowed_traffic_interval_s.map((v) => (
+                <option key={v} value={v}>
+                  {everyLabel(v)}
+                </option>
+              ))}
+            </Select>
+            <span className="text-sm text-slate-500">
+              across {s.devices} device{s.devices === 1 ? "" : "s"}
+            </span>
+            {save.isPending && (
+              <span className="text-xs text-slate-500">rescheduling…</span>
+            )}
+          </div>
+          {save.error && (
+            <p className="mt-2 text-sm text-red-600">
+              {(save.error as Error).message}
+            </p>
+          )}
+          <p className="mt-3 text-xs text-slate-500">
+            Interface counters are read at this cadence, and device health at{" "}
+            {everyLabel(s.health_interval_s)} — health never polls more often
+            than traffic.{" "}
+            <strong>ICMP stays at {everyLabel(s.icmp_interval_s)}</strong>{" "}
+            deliberately: availability is the fastest signal that something has
+            gone down, and slowing it would delay every outage alert by the same
+            amount. Inventory sync runs every{" "}
+            {Math.round(s.sync_interval_s / 3600)}h.
+          </p>
+          <p className="mt-2 text-xs text-slate-500">
+            A longer interval cuts SNMP load on devices that rate-limit, and
+            storage in direct proportion — polling every 5 minutes stores a
+            fifth of what every minute does. It also coarsens every graph:
+            spikes shorter than the interval stop being visible at all. Check{" "}
+            <strong>Capacity</strong> for what the change does to disk.
+          </p>
+        </>
+      )}
+    </Card>
+  );
+}
+
 function PollersTab() {
   const qc = useQueryClient();
   const pollers = useQuery({
@@ -156,6 +250,7 @@ function PollersTab() {
       : "never";
   return (
     <div className="flex flex-col gap-3">
+      <PollingIntervalCard />
       <Card title="Enroll a new poller">
         <div className="flex gap-2">
           <Input

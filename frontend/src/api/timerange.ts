@@ -122,9 +122,12 @@ export function rangeFor(key: RangeKey): TimeRange {
   return TIME_RANGES.find((r) => r.key === key) ?? TIME_RANGES[6];
 }
 
-// The shortest poll interval any profile uses. Rate windows are derived from
-// it so a counter that advances once per minute still produces a rate.
-const POLL_INTERVAL_S = 60;
+// Fallback poll interval, used only until the real one arrives from the API.
+// The deployment's actual cadence is configurable (Platform → Pollers), and a
+// rate lookback shorter than it spans at most one sample — rate() then returns
+// nothing and every traffic chart goes blank. That is why this is a parameter
+// rather than a constant.
+export const DEFAULT_POLL_INTERVAL_S = 60;
 
 // rateWindow returns the lookback for rate() at a given resolution.
 //
@@ -138,8 +141,12 @@ const POLL_INTERVAL_S = 60;
 //
 // This is the same reasoning as Grafana's $__rate_interval; the name is
 // avoided because nothing here is Grafana.
-export function rateWindow(stepS: number): string {
-  return `${Math.max(4 * POLL_INTERVAL_S, stepS + POLL_INTERVAL_S)}s`;
+export function rateWindow(
+  stepS: number,
+  pollIntervalS: number = DEFAULT_POLL_INTERVAL_S,
+): string {
+  const poll = pollIntervalS > 0 ? pollIntervalS : DEFAULT_POLL_INTERVAL_S;
+  return `${Math.max(4 * poll, stepS + poll)}s`;
 }
 
 const STORAGE_KEY = "netinv.timerange";

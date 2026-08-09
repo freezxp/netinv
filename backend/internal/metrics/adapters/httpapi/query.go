@@ -19,6 +19,11 @@ type QueryProxy struct {
 	VMURL   string
 	Checker authz.Checker
 	HTTP    *http.Client
+	// PollInterval is how often devices are polled. The UI needs it to size
+	// rate() lookbacks: a lookback shorter than the interval spans at most one
+	// sample and rate() returns nothing, so every traffic graph would go blank
+	// the moment an operator slowed collection down. Zero means 60s.
+	PollInterval func() time.Duration
 	// MaxRange caps how far back a range query may reach. Zero means the
 	// 90-day default. It should equal the metrics store's retention: a lower
 	// ceiling hides data the operator is paying to keep, and a higher one just
@@ -59,9 +64,17 @@ func (q *QueryProxy) maxRange() time.Duration {
 // and any operator who changes retention gets either presets that fail or
 // presets that are missing — the browser has no other way to learn what the
 // deployment keeps.
-func (q *QueryProxy) limits(w http.ResponseWriter, _ *http.Request) {
+func (q *QueryProxy) limits(w http.ResponseWriter, r *http.Request) {
+	poll := 60 * time.Second
+	if q.PollInterval != nil {
+		if d := q.PollInterval(); d > 0 {
+			poll = d
+		}
+	}
+	_ = r
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"max_range_s": int64(q.maxRange().Seconds()),
+		"max_range_s":     int64(q.maxRange().Seconds()),
+		"poll_interval_s": int64(poll.Seconds()),
 	})
 }
 
