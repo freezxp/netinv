@@ -27,8 +27,9 @@ Open **http://localhost:8090**. Full guide: [docs/32-quickstart.md](docs/32-quic
 ## What it does (v1)
 
 - **Collects** interface traffic, errors/discards, device health (CPU/memory/temp/PSU/optics), ICMP availability/latency, and inventory metadata from network devices over SNMP v2c/v3.
-- **Stores** metrics in VictoriaMetrics, inventory/config/audit in PostgreSQL.
-- **Shows** a single dashboard: status summary, active alerts, Top-N lists, capacity watchlist, and an editable utilization-colored weathermap.
+- **Stores** metrics in VictoriaMetrics for **2 years by default** (`NETINV_VM_RETENTION`), inventory/config/audit in PostgreSQL. A capacity view reports what the disk actually sustains against what retention asks for, measured rather than estimated.
+- **Shows** a single dashboard: status summary, inbound and outbound bandwidth per site, active alerts, Top-N lists, capacity watchlist, and an editable utilization-colored weathermap. Every chart shares one time range — **Cacti's graph timespans**, from Half Hour to 2 Years.
+- **Tunes** collection cadence fleet-wide from the UI (1/5/10/15 minutes), with query resolution and `rate()` windows following automatically.
 - **Alerts** via Email, Webhook, and Slack with severity-based routing, ack/silence workflow.
 - **Scales** from a single site to 100k devices across multiple datacenters via site-local pollers phoning home over RabbitMQ.
 
