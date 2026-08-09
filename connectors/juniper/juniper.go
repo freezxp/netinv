@@ -49,22 +49,26 @@ func (c *Connector) CollectHealth(ctx context.Context, s sdk.Session) ([]sdk.Sam
 			names[idx] = str
 		}
 	})
-	label := func(idx string) map[string]string {
+	// Falling back to the index matters: a chassis whose descr walk came back
+	// empty or truncated still reports CPU and temperature, and an empty label
+	// merges every unnamed FRU into a single series that reads as one CPU
+	// swinging wildly between cores.
+	label := func(key, idx string) map[string]string {
 		if n := names[idx]; n != "" {
-			return map[string]string{"sensor": n}
+			return map[string]string{key: n}
 		}
-		return map[string]string{"sensor": idx}
+		return map[string]string{key: idx}
 	}
 	_ = sdk.WalkColumn(ctx, s, oidJnxOperatingCPU, func(idx string, v sdk.Var) {
 		if f, ok := sdk.Num(v.Value); ok && f > 0 {
 			out = append(out, sdk.GaugeSample("netinv_device_cpu_percent",
-				map[string]string{"cpu": names[idx]}, f))
+				label("cpu", idx), f))
 		}
 	})
 	_ = sdk.WalkColumn(ctx, s, oidJnxOperatingTemp, func(idx string, v sdk.Var) {
 		if f, ok := sdk.Num(v.Value); ok && f > 0 {
 			out = append(out, sdk.GaugeSample("netinv_sensor_temperature_celsius",
-				label(idx), f))
+				label("sensor", idx), f))
 		}
 	})
 	// Highest buffer utilization across FRUs is the device memory pressure.

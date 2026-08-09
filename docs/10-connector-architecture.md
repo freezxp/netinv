@@ -111,5 +111,7 @@ Each connector ships: OID map file, recorded-walk test fixtures from real hardwa
 1. `mkdir connectors/<name>`; implement `Connector` embedding `generic.Base`.
 2. Add OID map + normalization; declare capabilities honestly.
 3. Record `snmpwalk` fixtures from a real device; write table-driven tests against them (≥90% coverage of the mapping code).
-4. Register in `connectors/registry`; run `make connector-lint` (verifies: no imports outside `connectors/sdk` + stdlib, capability/test presence).
+4. Register in `connectors/registry`; run `make connector-lint`, which verifies per package: no imports beyond stdlib, `connectors/sdk` and `connectors/generic`; tests present; registered in the registry. A missing `testdata/*.snmpwalk` fixture is reported as a warning, not a failure — **no connector currently ships one**, which is an open gap rather than an accepted state, and the reason a recorded walk attached to a hardware report is so valuable.
 5. PR must show zero diffs outside `connectors/` (+registry line). CI enforces via path check.
+
+**Test coverage as of 2026-08-09:** every connector has tests. `huawei`, `juniper` and `zte` had none until they were written for the open-source release, and writing them immediately found a live defect: the Juniper connector labelled CPU samples with a raw `names[idx]` lookup instead of the index fallback used for temperature, so every FRU whose `jnxOperatingDescr` walk came back empty emitted `cpu=""` — collapsing all unnamed FRUs into one series that reads as a single CPU swinging between cores. Fixed, with a regression test.
