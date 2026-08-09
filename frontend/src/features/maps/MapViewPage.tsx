@@ -8,6 +8,7 @@ import { useMapDef, useMapLive, utilLegend } from "./api";
 import { edgeTypes, nodeTypes, toFlow } from "./canvas";
 import { LinkGraph } from "./LinkGraph";
 import { Button } from "../../components/ui";
+import { RangePicker } from "../../components/RangePicker";
 
 export function MapViewPage() {
   const { id = "" } = useParams();
@@ -33,9 +34,16 @@ export function MapViewPage() {
       <div className="mb-2 flex flex-wrap items-center gap-3">
         <h1 className="text-lg font-semibold">Weathermap</h1>
         <span className="text-xs text-slate-500">
-          {live.data ? `as of ${new Date(live.data.as_of).toLocaleTimeString()}` : "…"}
+          {live.data
+            ? `as of ${new Date(live.data.as_of).toLocaleTimeString()}`
+            : "…"}
         </span>
         <div className="flex-1" />
+        {/* The hover graph follows the shared range, but the card itself is a
+            transient overlay with pointer events disabled — so the control to
+            change it has to live on the page chrome, or the map would be the
+            one place showing a range you cannot adjust. */}
+        <RangePicker ariaLabel="Link graph time range" />
         <div className="flex items-center gap-1 text-[10px] text-slate-500">
           {utilLegend.map(([max, color]) => (
             <span key={max} className="inline-flex items-center gap-0.5">

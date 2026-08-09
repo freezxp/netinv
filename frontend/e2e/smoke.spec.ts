@@ -615,3 +615,41 @@ test("the range selector is hidden on tabs that show no graphs", async ({
     page.getByRole("group", { name: "Graph time range" }),
   ).toHaveCount(0);
 });
+
+// The weathermap's hover graph follows the shared range, but the card is a
+// transient pointer-events-none overlay — so without a control on the page
+// chrome the map would be the one place showing a window you cannot change.
+test("the weathermap viewer can change the link graph range", async ({
+  page,
+  request,
+}) => {
+  await login(page);
+  await page.getByRole("link", { name: "Weathermaps" }).click();
+  const name = `e2e-range-${Date.now()}`;
+  await page.getByPlaceholder("New map name").fill(name);
+  await page.getByRole("button", { name: "Create" }).click();
+
+  const card = page
+    .locator("div")
+    .filter({ hasText: name })
+    .filter({ has: page.getByRole("button", { name: "View" }) })
+    .last();
+  await expect(card).toBeVisible();
+  await card.getByRole("button", { name: "View" }).click();
+  await expect(page.getByRole("heading", { name: "Weathermap" })).toBeVisible();
+
+  const picker = page.getByRole("group", { name: "Link graph time range" });
+  await expect(picker).toBeVisible();
+  await picker.getByRole("button", { name: "1h", exact: true }).click();
+  await expect(
+    picker.getByRole("button", { name: "1h", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
+
+  // The choice is global, so it must be the one the dashboard shows too.
+  await page.getByRole("link", { name: "Dashboard" }).click();
+  await expect(page.getByText("Bandwidth in, by site (1h)")).toBeVisible();
+
+  await page.goBack();
+  const id = page.url().match(/\/maps\/([^/]+)/)?.[1];
+  if (id) await deleteMap(request, id);
+});
