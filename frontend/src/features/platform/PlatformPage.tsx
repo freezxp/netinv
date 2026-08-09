@@ -265,50 +265,198 @@ interface Credential {
   device_count: number;
 }
 
+// SNMPv3 protocol choices. md5 and des are offered because legacy gear still
+// requires them, and flagged because nobody should pick one by default
+// (FR-COLL-01).
+const authProtocols = [
+  { v: "sha256", label: "SHA-256" },
+  { v: "sha1", label: "SHA-1" },
+  { v: "md5", label: "MD5 (deprecated)" },
+];
+const privProtocols = [
+  { v: "aes128", label: "AES-128" },
+  { v: "aes256", label: "AES-256" },
+  { v: "des", label: "DES (deprecated)" },
+];
+
 function CredentialsTab() {
   const qc = useQueryClient();
   const creds = useQuery({
     queryKey: ["credentials"],
     queryFn: () => api<{ data: Credential[] }>("/credentials"),
   });
+
+  const [kind, setKind] = useState<"snmp_v2c" | "snmp_v3">("snmp_v2c");
   const [name, setName] = useState("");
   const [community, setCommunity] = useState("");
+  const [username, setUsername] = useState("");
+  const [authProtocol, setAuthProtocol] = useState("sha256");
+  const [authPassword, setAuthPassword] = useState("");
+  // Empty means authNoPriv — the backend treats priv as optional, but demands
+  // a passphrase once a protocol is chosen.
+  const [privProtocol, setPrivProtocol] = useState("aes128");
+  const [privPassword, setPrivPassword] = useState("");
+  const [context, setContext] = useState("");
+
+  const reset = () => {
+    setName("");
+    setCommunity("");
+    setUsername("");
+    setAuthPassword("");
+    setPrivPassword("");
+    setContext("");
+  };
+
   const create = useMutation({
     mutationFn: () =>
       api("/credentials", {
         method: "POST",
         body: JSON.stringify({
           name,
-          kind: "snmp_v2c",
-          secret: { community },
+          kind,
+          secret:
+            kind === "snmp_v2c"
+              ? { community }
+              : {
+                  username,
+                  auth_protocol: authProtocol,
+                  auth_password: authPassword,
+                  // Omitted entirely for authNoPriv; sending a protocol with
+                  // no passphrase is rejected.
+                  ...(privProtocol
+                    ? { priv_protocol: privProtocol, priv_password: privPassword }
+                    : {}),
+                  ...(context ? { context } : {}),
+                },
         }),
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["credentials"] });
-      setName("");
-      setCommunity("");
+      reset();
     },
   });
+
+  const ready =
+    !!name &&
+    (kind === "snmp_v2c"
+      ? !!community
+      : !!username && !!authPassword && (!privProtocol || !!privPassword));
+
   return (
     <div className="flex flex-col gap-3">
-      <Card title="Add SNMPv2c credential (v3 via API)">
-        <div className="flex gap-2">
-          <Input
-            placeholder="Name"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-          />
-          <Input
-            type="password"
-            placeholder="Community (write-only)"
-            value={community}
-            onChange={(e) => setCommunity(e.target.value)}
-          />
-          <Button disabled={!name || !community} onClick={() => create.mutate()}>
-            Add
-          </Button>
+      <Card title="Add SNMP credential">
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-wrap gap-2">
+            <Select
+              value={kind}
+              onChange={(e) => setKind(e.target.value as typeof kind)}
+            >
+              <option value="snmp_v2c">SNMPv2c</option>
+              <option value="snmp_v3">SNMPv3</option>
+            </Select>
+            <Input
+              placeholder="Name"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+            />
+          </div>
+
+          {kind === "snmp_v2c" ? (
+            <Input
+              type="password"
+              placeholder="Community (write-only)"
+              value={community}
+              onChange={(e) => setCommunity(e.target.value)}
+            />
+          ) : (
+            <div className="flex flex-col gap-3">
+              <Input
+                placeholder="Username"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+              />
+              <div className="flex flex-wrap gap-2">
+                <label className="flex min-w-40 flex-1 flex-col gap-1">
+                  <span className="text-xs text-slate-500">Authentication</span>
+                  <Select
+                    value={authProtocol}
+                    onChange={(e) => setAuthProtocol(e.target.value)}
+                  >
+                    {authProtocols.map((a) => (
+                      <option key={a.v} value={a.v}>
+                        {a.label}
+                      </option>
+                    ))}
+                  </Select>
+                </label>
+                <label className="flex min-w-40 flex-1 flex-col gap-1">
+                  <span className="text-xs text-slate-500">
+                    Auth passphrase (write-only)
+                  </span>
+                  <Input
+                    type="password"
+                    value={authPassword}
+                    onChange={(e) => setAuthPassword(e.target.value)}
+                  />
+                </label>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <label className="flex min-w-40 flex-1 flex-col gap-1">
+                  <span className="text-xs text-slate-500">Privacy</span>
+                  <Select
+                    value={privProtocol}
+                    onChange={(e) => setPrivProtocol(e.target.value)}
+                  >
+                    {privProtocols.map((p) => (
+                      <option key={p.v} value={p.v}>
+                        {p.label}
+                      </option>
+                    ))}
+                    <option value="">None (authNoPriv)</option>
+                  </Select>
+                </label>
+                <label className="flex min-w-40 flex-1 flex-col gap-1">
+                  <span className="text-xs text-slate-500">
+                    Privacy passphrase{privProtocol ? " (write-only)" : " — not used"}
+                  </span>
+                  <Input
+                    type="password"
+                    value={privPassword}
+                    disabled={!privProtocol}
+                    onChange={(e) => setPrivPassword(e.target.value)}
+                  />
+                </label>
+              </div>
+              <label className="flex flex-col gap-1">
+                <span className="text-xs text-slate-500">
+                  Context name — optional, only for devices that expose more
+                  than one SNMP context
+                </span>
+                <Input
+                  value={context}
+                  onChange={(e) => setContext(e.target.value)}
+                />
+              </label>
+            </div>
+          )}
+
+          {create.isError && (
+            <div className="text-sm text-red-500">
+              {(create.error as Error).message}
+            </div>
+          )}
+          <div className="flex items-center gap-3">
+            <Button disabled={!ready || create.isPending} onClick={() => create.mutate()}>
+              {create.isPending ? "Saving…" : "Add credential"}
+            </Button>
+            <span className="text-xs text-slate-500">
+              Secrets are write-only: they are encrypted on save and never
+              returned by the API again (FR-CRED-01).
+            </span>
+          </div>
         </div>
       </Card>
+
       <Card className="overflow-x-auto p-0">
         <table className="w-full min-w-[32rem] text-sm">
           <tbody>
@@ -318,9 +466,23 @@ function CredentialsTab() {
                 className="border-b border-slate-100 dark:border-slate-800/60"
               >
                 <td className="px-4 py-2 font-medium">{c.name}</td>
-                <td className="px-4 py-2 text-slate-500">{c.kind}</td>
                 <td className="px-4 py-2 text-slate-500">
-                  {c.meta.username ?? "•••"}
+                  {c.kind === "snmp_v3" ? "SNMPv3" : "SNMPv2c"}
+                </td>
+                <td className="px-4 py-2 text-slate-500">
+                  {c.kind === "snmp_v3" ? (
+                    <>
+                      {c.meta.username || "—"}
+                      <span className="ml-2 text-xs">
+                        {c.meta.auth_protocol}
+                        {c.meta.priv_protocol
+                          ? ` + ${c.meta.priv_protocol}`
+                          : " · authNoPriv"}
+                      </span>
+                    </>
+                  ) : (
+                    "•••"
+                  )}
                 </td>
                 <td className="px-4 py-2 text-xs text-slate-500">
                   {c.device_count} devices

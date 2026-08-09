@@ -38,7 +38,12 @@ func TestNoSecretLeakInvariant(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer pool.Close()
+	// Registered as Cleanup, not defer: t.Cleanup callbacks run after the test
+	// function returns — i.e. after its defers — so a deferred Close would shut
+	// the pool before the credential cleanup below could use it. The delete
+	// then failed silently against a closed pool and left leaktest-* rows in
+	// the operator's vault after every run.
+	t.Cleanup(func() { pool.Close() })
 
 	key := make([]byte, 32)
 	_, _ = rand.Read(key)
@@ -74,8 +79,10 @@ func TestNoSecretLeakInvariant(t *testing.T) {
 		t.Fatalf("create v2c: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(),
-			`DELETE FROM inventory.credentials WHERE name LIKE 'leaktest-%'`)
+		if _, err := pool.Exec(context.Background(),
+			`DELETE FROM inventory.credentials WHERE name LIKE 'leaktest-%'`); err != nil {
+			t.Errorf("left test credentials behind: %v", err)
+		}
 	})
 
 	sentinels := []string{sentinelCommunity, sentinelAuthPass, sentinelPrivPass}

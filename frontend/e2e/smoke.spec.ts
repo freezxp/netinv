@@ -437,6 +437,53 @@ test("the portal is usable at phone width", async ({ page }) => {
   expect(over, "the add-device dialog overflows").toBeLessThanOrEqual(1);
 });
 
+// SNMPv3 was API-only until now: the form offered v2c and a note saying to use
+// the API for v3, which is not a usable answer for the credential type most
+// production networks actually run.
+test("an SNMPv3 credential can be created from the UI", async ({
+  page,
+  request,
+}) => {
+  await login(page);
+  await page.getByRole("link", { name: "Platform" }).click();
+  await page.getByRole("button", { name: "Credentials" }).click();
+
+  // v2c stays the default and keeps its single secret field.
+  await expect(page.getByPlaceholder("Community (write-only)")).toBeVisible();
+
+  await page.getByRole("combobox").first().selectOption("snmp_v3");
+  const name = `e2e-v3-${Date.now()}`;
+  await page.getByPlaceholder("Name", { exact: true }).fill(name);
+  await page.getByPlaceholder("Username", { exact: true }).fill("netmon");
+
+  const add = page.getByRole("button", { name: "Add credential" });
+  // Privacy defaults to AES-128, so a passphrase is required — the backend
+  // rejects a protocol without one, and the form must not let it get there.
+  await page.locator('input[type="password"]').nth(0).fill("authpass-123");
+  await expect(add).toBeDisabled();
+  await page.locator('input[type="password"]').nth(1).fill("privpass-123");
+  await expect(add).toBeEnabled();
+  await add.click();
+
+  // The row states the security level, which is the thing an operator checks.
+  const row = page.locator("tr").filter({ hasText: name });
+  await expect(row).toContainText("SNMPv3");
+  await expect(row).toContainText("netmon");
+  await expect(row).toContainText("sha256");
+  await expect(row).toContainText("aes128");
+
+  const headers = await apiHeaders(request);
+  const creds = await (
+    await request.get("/api/v1/credentials", { headers })
+  ).json();
+  const made = creds.data.find((c: { name: string }) => c.name === name);
+  expect(made).toBeTruthy();
+  // Secrets are write-only (FR-CRED-01): nothing secret may come back.
+  expect(JSON.stringify(made)).not.toContain("authpass-123");
+  expect(JSON.stringify(made)).not.toContain("privpass-123");
+  await request.delete(`/api/v1/credentials/${made.id}`, { headers });
+});
+
 test("admin sees role-gated nav (Users, Audit, Settings)", async ({ page }) => {
   await login(page);
   await expect(page.getByRole("link", { name: "Users" })).toBeVisible();
