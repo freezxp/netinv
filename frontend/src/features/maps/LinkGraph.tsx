@@ -4,6 +4,7 @@
 import { trafficExpr, useQueryRange } from "../../api/hooks";
 import { TimeSeries } from "../../components/TimeSeries";
 import { formatBps } from "../../lib/format";
+import { rateWindow, useTimeRange } from "../../api/timerange";
 import type { LiveData, MapDefinition } from "./api";
 
 const WIDTH = 400;
@@ -26,11 +27,17 @@ export function LinkGraph({
   const nodeLabel = (id?: string) =>
     (def.nodes ?? []).find((n) => n.id === id)?.label ?? "?";
 
-  // Same expression the device page charts, so the two always agree.
+  // Same expression and the same shared range as the device page charts, so
+  // the two always agree. The card carries no picker of its own — it is a
+  // transient hover overlay with pointer events disabled — it just follows
+  // whatever range is selected elsewhere.
+  const range = useTimeRange();
   const traffic = useQueryRange(
-    a ? trafficExpr(a.device_id, a.if_index) : `vector(0)`,
-    6,
-    120,
+    a
+      ? trafficExpr(a.device_id, a.if_index, rateWindow(range.stepS))
+      : `vector(0)`,
+    range.hours,
+    range.stepS,
   );
 
   // Keep the card on screen when the cursor is near an edge of the window.
@@ -43,13 +50,17 @@ export function LinkGraph({
       // pointer-events-none: the card follows the hovered link, and must never
       // become the hover target itself or it would flicker as it appears.
       className="pointer-events-none fixed z-40 rounded-lg border border-slate-200 bg-white p-2 shadow-lg dark:border-slate-700 dark:bg-slate-900"
-      style={{ left: Math.max(pad, left), top: Math.max(pad, top), width: WIDTH }}
+      style={{
+        left: Math.max(pad, left),
+        top: Math.max(pad, top),
+        width: WIDTH,
+      }}
     >
       <div className="mb-1 flex items-baseline justify-between gap-2 px-1">
         <span className="text-xs font-medium">
           {nodeLabel(link?.from)} ⇄ {nodeLabel(link?.to)}
         </span>
-        <span className="text-[10px] text-slate-500">last 6h</span>
+        <span className="text-[10px] text-slate-500">last {range.label}</span>
       </div>
       {!a ? (
         <div className="px-1 pb-2 text-xs text-slate-500">
@@ -60,13 +71,14 @@ export function LinkGraph({
           <TimeSeries
             result={traffic.data ?? []}
             height={120}
-            windowHours={6}
+            windowHours={range.hours}
             format={formatBps}
             label={(m) => m.dir ?? "in"}
           />
           <div className="mt-1 flex justify-between px-1 text-[10px] text-slate-500">
             <span>
-              now {formatBps(lv?.in_bps ?? 0)} in / {formatBps(lv?.out_bps ?? 0)} out
+              now {formatBps(lv?.in_bps ?? 0)} in /{" "}
+              {formatBps(lv?.out_bps ?? 0)} out
             </span>
             <span>
               {lv && lv.capacity_bps > 0

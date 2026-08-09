@@ -219,7 +219,10 @@ export function useSyncNow() {
     mutationFn: (id: string) =>
       api<{ job_id: string }>(`/devices/${id}/sync`, { method: "POST" }),
     onSuccess: (_r, id) =>
-      setTimeout(() => qc.invalidateQueries({ queryKey: ["device", id] }), 4000),
+      setTimeout(
+        () => qc.invalidateQueries({ queryKey: ["device", id] }),
+        4000,
+      ),
   });
 }
 
@@ -251,11 +254,19 @@ interface RangeMatrix {
 // series only where the left has no match — so the out direction disappeared
 // entirely and the chart silently showed in twice. The explicit dir label
 // keeps them distinct.
-export function trafficExpr(deviceID: string, ifIndex: number | string) {
+//
+// `window` must track the query step (see rateWindow in timerange.ts). A fixed
+// [5m] against a 30-minute step samples a sixth of each bucket and reports it
+// as the whole thing, which makes a week of traffic look like noise.
+export function trafficExpr(
+  deviceID: string,
+  ifIndex: number | string,
+  window = "5m",
+) {
   const sel = `{device_id="${deviceID}",if_index="${ifIndex}"}`;
   return (
-    `label_set(rate(netinv_if_in_octets_total${sel}[5m]) * 8, "dir", "in")` +
-    ` or label_set(rate(netinv_if_out_octets_total${sel}[5m]) * 8, "dir", "out")`
+    `label_set(rate(netinv_if_in_octets_total${sel}[${window}]) * 8, "dir", "in")` +
+    ` or label_set(rate(netinv_if_out_octets_total${sel}[${window}]) * 8, "dir", "out")`
   );
 }
 
@@ -272,7 +283,10 @@ export function seriesExpr(
   parts: Array<[name: string, metric: string]>,
 ) {
   return parts
-    .map(([name, metric]) => `label_set(${metric}${selector}, "series", "${name}")`)
+    .map(
+      ([name, metric]) =>
+        `label_set(${metric}${selector}, "series", "${name}")`,
+    )
     .join(" or ");
 }
 

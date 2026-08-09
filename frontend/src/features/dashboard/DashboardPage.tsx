@@ -9,6 +9,8 @@ import {
   useQueryRange,
 } from "../../api/hooks";
 import { Button, Card, EmptyState, SeverityPill } from "../../components/ui";
+import { RangePicker } from "../../components/RangePicker";
+import { rateWindow, useTimeRange } from "../../api/timerange";
 import { TimeSeries } from "../../components/TimeSeries";
 import { HeatmapPanel, TopNPanel, WatchlistPanel } from "./panels";
 import {
@@ -53,15 +55,16 @@ export function DashboardPage() {
   // which is the question a multi-site operator actually has. `or vector(0)`
   // is gone with it — that fallback existed to keep an empty chart from
   // looking broken, and it cannot carry a site label.
+  const range = useTimeRange();
   const bandwidth = useQueryRange(
-    `sum by (site) (rate(netinv_if_in_octets_total[5m])) * 8`,
-    24,
-    300,
+    `sum by (site) (rate(netinv_if_in_octets_total[${rateWindow(range.stepS)}])) * 8`,
+    range.hours,
+    range.stepS,
   );
   const latency = useQueryRange(
     `netinv_icmp_rtt_seconds{stat="avg"}`,
-    24,
-    300,
+    range.hours,
+    range.stepS,
   );
 
   return (
@@ -140,19 +143,29 @@ export function DashboardPage() {
         </div>
       </Card>
 
+      {/* Sits with the charts rather than at the top of the page: the stat
+          strip above is server-computed over fixed windows and this control
+          does not change it. */}
+      <div className="flex items-center justify-between gap-3">
+        <h2 className="text-sm font-medium text-slate-500 dark:text-slate-400">
+          Graphs
+        </h2>
+        <RangePicker ariaLabel="Dashboard graph time range" />
+      </div>
+
       <div className="grid gap-4 lg:grid-cols-2">
-        <Card title="Bandwidth in, by site (24h)">
+        <Card title={`Bandwidth in, by site (${range.label})`}>
           <TimeSeries
             result={bandwidth.data ?? []}
-            windowHours={24}
+            windowHours={range.hours}
             format={formatBps}
             label={(m) => m.site || "unassigned"}
           />
         </Card>
-        <Card title="Latency — ICMP avg RTT (24h)">
+        <Card title={`Latency — ICMP avg RTT (${range.label})`}>
           <TimeSeries
             result={latency.data ?? []}
-            windowHours={24}
+            windowHours={range.hours}
             format={formatMs}
             label={(m) => m.device ?? "device"}
           />

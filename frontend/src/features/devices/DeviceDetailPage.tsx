@@ -21,11 +21,28 @@ import {
   cx,
 } from "../../components/ui";
 import { TimeSeries, type PromMatrix } from "../../components/TimeSeries";
+import { RangePicker } from "../../components/RangePicker";
+import { rateWindow, useTimeRange } from "../../api/timerange";
 import { OidBrowser } from "../inventory/OidBrowser";
 import { formatBps, formatDuration, formatMs } from "../../lib/format";
 
-const baseTabs = ["Interfaces", "Health", "Availability", "History", "Alerts"] as const;
+const baseTabs = [
+  "Interfaces",
+  "Health",
+  "Availability",
+  "History",
+  "Alerts",
+] as const;
 type Tab = (typeof baseTabs)[number] | "Wireless";
+
+// Tabs whose content is time-series. History and Alerts are tables over their
+// own lifecycle timestamps and are not affected by the range selector.
+const GRAPH_TABS = new Set<Tab>([
+  "Interfaces",
+  "Health",
+  "Availability",
+  "Wireless",
+]);
 
 export function DeviceDetailPage() {
   const { id = "" } = useParams();
@@ -43,9 +60,10 @@ export function DeviceDetailPage() {
     1,
     300,
   );
-  const tabs: readonly Tab[] = (wirelessProbe.data?.length ?? 0)
-    ? ([...baseTabs.slice(0, 2), "Wireless", ...baseTabs.slice(2)] as Tab[])
-    : baseTabs;
+  const tabs: readonly Tab[] =
+    (wirelessProbe.data?.length ?? 0)
+      ? ([...baseTabs.slice(0, 2), "Wireless", ...baseTabs.slice(2)] as Tab[])
+      : baseTabs;
 
   const focusIf = params.get("if") ?? "";
   const d = device.data;
@@ -97,21 +115,28 @@ export function DeviceDetailPage() {
         </div>
       )}
 
-      <div className="flex gap-1 border-b border-slate-200 dark:border-slate-800">
-        {tabs.map((t) => (
-          <button
-            key={t}
-            onClick={() => setTab(t)}
-            className={cx(
-              "px-3 py-2 text-sm",
-              t === tab
-                ? "border-b-2 border-sky-500 font-medium text-sky-500"
-                : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300",
-            )}
-          >
-            {t}
-          </button>
-        ))}
+      <div className="flex items-end gap-1 border-b border-slate-200 dark:border-slate-800">
+        <div className="flex flex-1 gap-1 overflow-x-auto">
+          {tabs.map((t) => (
+            <button
+              key={t}
+              onClick={() => setTab(t)}
+              className={cx(
+                "shrink-0 px-3 py-2 text-sm",
+                t === tab
+                  ? "border-b-2 border-sky-500 font-medium text-sky-500"
+                  : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300",
+              )}
+            >
+              {t}
+            </button>
+          ))}
+        </div>
+        {/* Only on tabs that draw graphs. Showing it over the History table
+            would imply it filters those rows, which it does not. */}
+        {GRAPH_TABS.has(tab) && (
+          <RangePicker className="mb-1.5 ml-2" ariaLabel="Graph time range" />
+        )}
       </div>
 
       {tab === "Interfaces" && (
@@ -147,8 +172,7 @@ function InterfacesTab({
 }: {
   deviceID: string;
   rows: ReturnType<typeof useDeviceInterfaces>["data"] extends
-    | { data: infer T }
-    | undefined
+    { data: infer T } | undefined
     ? T
     : never;
   focusIf: string;
@@ -158,12 +182,13 @@ function InterfacesTab({
     () => rows.find((r) => String(r.if_index) === focusIf) ?? rows[0],
     [rows, focusIf],
   );
+  const range = useTimeRange();
   const traffic = useQueryRange(
     focused
-      ? trafficExpr(deviceID, focused.if_index)
+      ? trafficExpr(deviceID, focused.if_index, rateWindow(range.stepS))
       : `vector(0)`,
-    6,
-    120,
+    range.hours,
+    range.stepS,
   );
   return (
     <div className="grid gap-4 lg:grid-cols-2">
@@ -171,11 +196,13 @@ function InterfacesTab({
         <table className="w-full min-w-[36rem] text-sm">
           <thead>
             <tr className="border-b border-slate-200 text-left text-xs uppercase text-slate-500 dark:border-slate-800">
-              {["If", "Name", "Alias", "Speed", "Oper", "Admin", "State"].map((h) => (
-                <th key={h} className="px-3 py-2 font-medium">
-                  {h}
-                </th>
-              ))}
+              {["If", "Name", "Alias", "Speed", "Oper", "Admin", "State"].map(
+                (h) => (
+                  <th key={h} className="px-3 py-2 font-medium">
+                    {h}
+                  </th>
+                ),
+              )}
             </tr>
           </thead>
           <tbody>
@@ -198,7 +225,13 @@ function InterfacesTab({
                 </td>
                 <td className="px-3 py-1.5">
                   <StatusBadge
-                    status={i.oper_status === 1 ? "up" : i.oper_status === 2 ? "critical" : "unreachable"}
+                    status={
+                      i.oper_status === 1
+                        ? "up"
+                        : i.oper_status === 2
+                          ? "critical"
+                          : "unreachable"
+                    }
                   />
                   {/* A down port that never worked doesn't alert (FR-ALR-08);
                       say so here, or its silence looks like a missed alert. */}
@@ -230,7 +263,7 @@ function InterfacesTab({
       >
         <TimeSeries
           result={traffic.data ?? []}
-          windowHours={6}
+          windowHours={range.hours}
           format={formatBps}
           label={(m) => m.dir ?? "in"}
         />
@@ -240,7 +273,10 @@ function InterfacesTab({
 }
 
 // Latest value of a range series, or undefined when the device reports none.
-function latest(result: PromMatrix[] | undefined, match?: (m: Record<string, string>) => boolean) {
+function latest(
+  result: PromMatrix[] | undefined,
+  match?: (m: Record<string, string>) => boolean,
+) {
   const series = match ? result?.filter((r) => match(r.metric)) : result;
   const values = series?.flatMap((s) => s.values) ?? [];
   if (values.length === 0) return undefined;
@@ -282,15 +318,20 @@ function HealthStat({
 // Unleashed is the case in hand — it exposes client and AP counts but no
 // CPU/memory/temperature at all, so this is the only health signal it has.
 function WirelessTab({ deviceID }: { deviceID: string }) {
+  const range = useTimeRange();
   const sel = `{device_id="${deviceID}"}`;
-  const clients = useQueryRange(`netinv_wireless_client_count${sel}`, 24, 300);
+  const clients = useQueryRange(
+    `netinv_wireless_client_count${sel}`,
+    range.hours,
+    range.stepS,
+  );
   const aps = useQueryRange(
     seriesExpr(sel, [
       ["up", "netinv_wireless_ap_up_count"],
       ["total", "netinv_wireless_ap_total"],
     ]),
-    24,
-    300,
+    range.hours,
+    range.stepS,
   );
   const now = latest(clients.data);
   const up = latest(aps.data, (m) => m.series === "up");
@@ -298,14 +339,18 @@ function WirelessTab({ deviceID }: { deviceID: string }) {
   const apsDown = up !== undefined && total !== undefined && up < total;
 
   const peak = clients.data?.length
-    ? Math.max(...clients.data.flatMap((s) => s.values.map((v) => parseFloat(v[1]))))
+    ? Math.max(
+        ...clients.data.flatMap((s) => s.values.map((v) => parseFloat(v[1]))),
+      )
     : undefined;
 
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap gap-3">
         <Card className="min-w-36 flex-1">
-          <div className="text-xs uppercase text-slate-500">Connected clients</div>
+          <div className="text-xs uppercase text-slate-500">
+            Connected clients
+          </div>
           <div className="mt-1 text-2xl font-semibold text-sky-500">
             {now === undefined ? "—" : now.toFixed(0)}
           </div>
@@ -335,18 +380,18 @@ function WirelessTab({ deviceID }: { deviceID: string }) {
           )}
         </Card>
       </div>
-      <Card title="Connected clients (24h)">
+      <Card title={`Connected clients (${range.label})`}>
         <TimeSeries
           result={clients.data ?? []}
-          windowHours={24}
+          windowHours={range.hours}
           format={(v) => v.toFixed(0)}
           label={() => "clients"}
         />
       </Card>
-      <Card title="Access points up (24h)">
+      <Card title={`Access points up (${range.label})`}>
         <TimeSeries
           result={aps.data ?? []}
-          windowHours={24}
+          windowHours={range.hours}
           format={(v) => v.toFixed(0)}
           label={(m) => m.series ?? "up"}
         />
@@ -359,19 +404,36 @@ function WirelessTab({ deviceID }: { deviceID: string }) {
 // Sources are connector-dependent — vendor MIBs on Cisco/Juniper/Huawei,
 // UCD-SNMP + LM-SENSORS on net-snmp devices such as Ubiquiti UniFi gateways.
 function HealthTab({ deviceID }: { deviceID: string }) {
+  const range = useTimeRange();
   const sel = `{device_id="${deviceID}"}`;
-  const cpu = useQueryRange(`netinv_device_cpu_percent${sel}`, 24, 300);
-  const mem = useQueryRange(`netinv_device_memory_percent${sel}`, 24, 300);
+  const cpu = useQueryRange(
+    `netinv_device_cpu_percent${sel}`,
+    range.hours,
+    range.stepS,
+  );
+  const mem = useQueryRange(
+    `netinv_device_memory_percent${sel}`,
+    range.hours,
+    range.stepS,
+  );
   const memBytes = useQueryRange(
     seriesExpr(sel, [
       ["used", "netinv_device_memory_used_bytes"],
       ["total", "netinv_device_memory_total_bytes"],
     ]),
-    24,
-    300,
+    range.hours,
+    range.stepS,
   );
-  const load = useQueryRange(`netinv_device_load_average${sel}`, 24, 300);
-  const temp = useQueryRange(`netinv_sensor_temperature_celsius${sel}`, 24, 300);
+  const load = useQueryRange(
+    `netinv_device_load_average${sel}`,
+    range.hours,
+    range.stepS,
+  );
+  const temp = useQueryRange(
+    `netinv_sensor_temperature_celsius${sel}`,
+    range.hours,
+    range.stepS,
+  );
 
   const loading = cpu.isLoading || mem.isLoading || temp.isLoading;
   const hasAny =
@@ -398,24 +460,38 @@ function HealthTab({ deviceID }: { deviceID: string }) {
         ...temp.data.map((s) => parseFloat(s.values[s.values.length - 1][1])),
       )
     : undefined;
-  const usedBytes = latest(memBytes.data, (m) =>
-    m.series === "used",
-  );
-  const totalBytes = latest(memBytes.data, (m) =>
-    m.series === "total",
-  );
+  const usedBytes = latest(memBytes.data, (m) => m.series === "used");
+  const totalBytes = latest(memBytes.data, (m) => m.series === "total");
 
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap gap-3">
-        <HealthStat label="CPU" value={latest(cpu.data)} unit="%" warn={70} crit={85} />
-        <HealthStat label="Memory" value={latest(mem.data)} unit="%" warn={80} crit={90} />
+        <HealthStat
+          label="CPU"
+          value={latest(cpu.data)}
+          unit="%"
+          warn={70}
+          crit={85}
+        />
+        <HealthStat
+          label="Memory"
+          value={latest(mem.data)}
+          unit="%"
+          warn={80}
+          crit={90}
+        />
         <HealthStat
           label="Load (1m)"
           value={latest(load.data, (m) => m.period === "1m")}
           unit=""
         />
-        <HealthStat label="Hottest sensor" value={hottest} unit="°C" warn={70} crit={85} />
+        <HealthStat
+          label="Hottest sensor"
+          value={hottest}
+          unit="°C"
+          warn={70}
+          crit={85}
+        />
         {usedBytes !== undefined && totalBytes !== undefined && (
           <Card className="flex-1 min-w-36">
             <div className="text-xs uppercase text-slate-500">Memory used</div>
@@ -430,34 +506,34 @@ function HealthTab({ deviceID }: { deviceID: string }) {
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
-        <Card title="CPU utilization (24h)">
+        <Card title={`CPU utilization (${range.label})`}>
           <TimeSeries
             result={cpu.data ?? []}
-            windowHours={24}
+            windowHours={range.hours}
             format={(v) => `${v.toFixed(0)}%`}
             label={(m) => (m.cpu ? `cpu ${m.cpu}` : "cpu")}
           />
         </Card>
-        <Card title="Memory utilization (24h)">
+        <Card title={`Memory utilization (${range.label})`}>
           <TimeSeries
             result={mem.data ?? []}
-            windowHours={24}
+            windowHours={range.hours}
             format={(v) => `${v.toFixed(0)}%`}
             label={() => "memory"}
           />
         </Card>
-        <Card title="Temperature by sensor (24h)">
+        <Card title={`Temperature by sensor (${range.label})`}>
           <TimeSeries
             result={temp.data ?? []}
-            windowHours={24}
+            windowHours={range.hours}
             format={(v) => `${v.toFixed(1)}°C`}
             label={(m) => m.sensor ?? "sensor"}
           />
         </Card>
-        <Card title="Load average (24h)">
+        <Card title={`Load average (${range.label})`}>
           <TimeSeries
             result={load.data ?? []}
-            windowHours={24}
+            windowHours={range.hours}
             format={(v) => v.toFixed(2)}
             label={(m) => m.period ?? "load"}
           />
@@ -468,30 +544,31 @@ function HealthTab({ deviceID }: { deviceID: string }) {
 }
 
 function AvailabilityTab({ deviceID }: { deviceID: string }) {
+  const range = useTimeRange();
   const rtt = useQueryRange(
     `netinv_icmp_rtt_seconds{device_id="${deviceID}"}`,
-    24,
-    300,
+    range.hours,
+    range.stepS,
   );
   const loss = useQueryRange(
     `netinv_icmp_loss_ratio{device_id="${deviceID}"} * 100`,
-    24,
-    300,
+    range.hours,
+    range.stepS,
   );
   return (
     <div className="grid gap-4 lg:grid-cols-2">
-      <Card title="RTT min/avg/max (24h)">
+      <Card title={`RTT min/avg/max (${range.label})`}>
         <TimeSeries
           result={rtt.data ?? []}
-            windowHours={24}
+          windowHours={range.hours}
           format={formatMs}
           label={(m) => m.stat ?? "rtt"}
         />
       </Card>
-      <Card title="Packet loss % (24h)">
+      <Card title={`Packet loss % (${range.label})`}>
         <TimeSeries
           result={loss.data ?? []}
-            windowHours={24}
+          windowHours={range.hours}
           format={(v) => `${v.toFixed(1)}%`}
           label={() => "loss"}
         />
@@ -516,7 +593,10 @@ function HistoryTab({ deviceID }: { deviceID: string }) {
         </thead>
         <tbody>
           {history.data?.data.map((h, i) => (
-            <tr key={i} className="border-b border-slate-100 dark:border-slate-800/60">
+            <tr
+              key={i}
+              className="border-b border-slate-100 dark:border-slate-800/60"
+            >
               <td className="px-4 py-1.5 text-slate-500">
                 {new Date(h.detected_at).toLocaleString()}
               </td>

@@ -23,7 +23,9 @@ async function apiHeaders(request: APIRequestContext) {
 }
 
 async function deleteMap(request: APIRequestContext, id: string) {
-  await request.delete(`/api/v1/maps/${id}`, { headers: await apiHeaders(request) });
+  await request.delete(`/api/v1/maps/${id}`, {
+    headers: await apiHeaders(request),
+  });
 }
 
 async function login(page: Page) {
@@ -40,7 +42,9 @@ test("login lands on the dashboard with the status strip", async ({ page }) => {
   await expect(page.getByText("Availability (24h)")).toBeVisible();
 });
 
-test("bad password shows a generic failure (no enumeration)", async ({ page }) => {
+test("bad password shows a generic failure (no enumeration)", async ({
+  page,
+}) => {
   await page.goto("/login");
   await page.getByPlaceholder("Username").fill("admin");
   await page.getByPlaceholder("Password").fill("definitely-wrong");
@@ -72,7 +76,9 @@ test("device detail deep-links and shows interfaces", async ({ page }) => {
 test("weathermap list is reachable", async ({ page }) => {
   await login(page);
   await page.getByRole("link", { name: "Weathermaps" }).click();
-  await expect(page.getByRole("heading", { name: "Weathermaps" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Weathermaps" }),
+  ).toBeVisible();
 });
 
 // A map with no links made the live endpoint emit links:null, and the viewer
@@ -126,12 +132,16 @@ test("a published link renders in the viewer", async ({ page, request }) => {
   const { access_token: token } = await auth.json();
   const headers = { Authorization: `Bearer ${token}` };
 
-  const devs = await (await request.get("/api/v1/devices?limit=2", { headers })).json();
+  const devs = await (
+    await request.get("/api/v1/devices?limit=2", { headers })
+  ).json();
   expect(devs.data.length).toBeGreaterThanOrEqual(2);
   // Bind one end so the link renders as a live band rather than the dashed
   // placeholder — the direction affordances only exist on a bound link.
   const ifs = await (
-    await request.get(`/api/v1/devices/${devs.data[0].id}/interfaces`, { headers })
+    await request.get(`/api/v1/devices/${devs.data[0].id}/interfaces`, {
+      headers,
+    })
   ).json();
   expect(ifs.data.length).toBeGreaterThan(0);
   const ifIndex = ifs.data[0].if_index;
@@ -145,8 +155,22 @@ test("a published link renders in the viewer", async ({ page, request }) => {
     data: {
       schema: "netinv.map/1",
       nodes: [
-        { id: "a", kind: "device", device_id: devs.data[0].id, label: "A", x: 60, y: 60 },
-        { id: "b", kind: "device", device_id: devs.data[1].id, label: "B", x: 380, y: 60 },
+        {
+          id: "a",
+          kind: "device",
+          device_id: devs.data[0].id,
+          label: "A",
+          x: 60,
+          y: 60,
+        },
+        {
+          id: "b",
+          kind: "device",
+          device_id: devs.data[1].id,
+          label: "B",
+          x: 380,
+          y: 60,
+        },
       ],
       links: [
         {
@@ -161,8 +185,11 @@ test("a published link renders in the viewer", async ({ page, request }) => {
     },
   });
   expect(draft.ok()).toBeTruthy();
-  expect((await request.post(`/api/v1/maps/${created.id}/publish`, { headers })).ok())
-    .toBeTruthy();
+  expect(
+    (
+      await request.post(`/api/v1/maps/${created.id}/publish`, { headers })
+    ).ok(),
+  ).toBeTruthy();
 
   await login(page);
   await page.getByRole("link", { name: "Weathermaps" }).click();
@@ -246,7 +273,9 @@ test("the sidebar collapses to icons and stays collapsed", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "Inventory" })).toBeVisible();
 
   await page.reload();
-  await expect(page.getByRole("button", { name: "Expand sidebar" })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Expand sidebar" }),
+  ).toBeVisible();
   const still = (await aside.boundingBox())!.width;
   expect(still).toBeLessThan(wide);
 
@@ -329,7 +358,10 @@ test("plain nodes can be placed, renamed and removed", async ({
   await expect(page.locator(".react-flow__node")).toHaveCount(3);
 
   // Renaming is what makes a plain node useful — a cloud called "Label" is not.
-  await page.locator(".react-flow__node").filter({ hasText: "Internet" }).click();
+  await page
+    .locator(".react-flow__node")
+    .filter({ hasText: "Internet" })
+    .click();
   await expect(page.getByText("Cloud node")).toBeVisible();
   await page.locator('input[value="Internet"]').fill("ISP");
   await expect(
@@ -377,15 +409,18 @@ test("a wireless device gets a Wireless tab with its client count", async ({
   const tab = page.getByRole("button", { name: "Wireless", exact: true });
   await expect(tab).toBeVisible();
   await tab.click();
-  await expect(page.getByText("Connected clients", { exact: false }).first())
-    .toBeVisible();
+  await expect(
+    page.getByText("Connected clients", { exact: false }).first(),
+  ).toBeVisible();
   // Both halves of the AP count must survive the query, not just the first.
   await expect(page.getByText(/^\d+ \/ \d+$/)).toBeVisible();
 
   // A device with no wireless metrics must not grow the tab.
   if (other) {
     await page.goto(`/devices/${other.id}`);
-    await expect(page.getByRole("button", { name: "Interfaces" })).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Interfaces" }),
+    ).toBeVisible();
     await expect(
       page.getByRole("button", { name: "Wireless", exact: true }),
     ).toHaveCount(0);
@@ -412,9 +447,7 @@ test("the portal is usable at phone width", async ({ page }) => {
     .poll(async () => (await aside.boundingBox())!.x)
     .toBeGreaterThanOrEqual(0);
   await page.getByRole("link", { name: "Inventory" }).click();
-  await expect
-    .poll(async () => (await aside.boundingBox())!.x)
-    .toBeLessThan(0);
+  await expect.poll(async () => (await aside.boundingBox())!.x).toBeLessThan(0);
 
   // Nothing may scroll the page sideways; tables scroll inside their own card.
   for (const path of ["/", "/inventory", "/alerts", "/maps", "/platform"]) {
@@ -491,7 +524,10 @@ test("the audit log names the user who acted", async ({ page, request }) => {
   await page.getByRole("link", { name: "Audit" }).click();
   await expect(page.getByRole("heading", { name: "Audit log" })).toBeVisible();
 
-  const row = page.locator("tr").filter({ hasText: "auth.login.success" }).first();
+  const row = page
+    .locator("tr")
+    .filter({ hasText: "auth.login.success" })
+    .first();
   await expect(row).toContainText("admin");
   // The raw id must not be what a reader sees.
   await expect(row).not.toContainText("u_01");
@@ -519,4 +555,63 @@ test("admin sees role-gated nav (Users, Audit, Settings)", async ({ page }) => {
   await expect(page.getByRole("link", { name: "Users" })).toBeVisible();
   await expect(page.getByRole("link", { name: "Audit" })).toBeVisible();
   await expect(page.getByRole("link", { name: "Settings" })).toBeVisible();
+});
+
+test("the graph time range selector applies across pages", async ({ page }) => {
+  await login(page);
+
+  const picker = page.getByRole("group", {
+    name: "Dashboard graph time range",
+  });
+  await expect(picker).toBeVisible();
+
+  // Default is 24h, and the chart titles say so — a chart whose window is not
+  // stated is a chart you cannot reason about.
+  await expect(page.getByText("Bandwidth in, by site (24h)")).toBeVisible();
+
+  await picker.getByRole("button", { name: "7d", exact: true }).click();
+  await expect(page.getByText("Bandwidth in, by site (7d)")).toBeVisible();
+  await expect(page.getByText("Latency — ICMP avg RTT (7d)")).toBeVisible();
+  await expect(
+    picker.getByRole("button", { name: "7d", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
+
+  // The selection is one operator question ("what did last week look like?"),
+  // so it must survive navigating into a device rather than resetting.
+  await page.getByRole("link", { name: "Inventory" }).click();
+  const firstDevice = page.locator("table tbody tr a").first();
+  if ((await firstDevice.count()) === 0) test.skip(true, "no devices seeded");
+  await firstDevice.click();
+
+  await page.getByRole("button", { name: "Health" }).click();
+  await expect(page.getByText("CPU utilization (7d)")).toBeVisible();
+  await expect(
+    page.getByRole("group", { name: "Graph time range" }),
+  ).toBeVisible();
+
+  // ...and a reload, since it is a preference rather than page state.
+  await page.reload();
+  await page.getByRole("button", { name: "Health" }).click();
+  await expect(page.getByText("CPU utilization (7d)")).toBeVisible();
+});
+
+test("the range selector is hidden on tabs that show no graphs", async ({
+  page,
+}) => {
+  await login(page);
+  await page.getByRole("link", { name: "Inventory" }).click();
+  const firstDevice = page.locator("table tbody tr a").first();
+  if ((await firstDevice.count()) === 0) test.skip(true, "no devices seeded");
+  await firstDevice.click();
+
+  await expect(
+    page.getByRole("group", { name: "Graph time range" }),
+  ).toBeVisible();
+
+  // History is a table of change events with their own timestamps. Showing a
+  // range control over it would imply it filters those rows, which it does not.
+  await page.getByRole("button", { name: "History" }).click();
+  await expect(
+    page.getByRole("group", { name: "Graph time range" }),
+  ).toHaveCount(0);
 });
