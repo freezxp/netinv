@@ -107,6 +107,18 @@ export interface CactiEdgeData extends Record<string, unknown> {
   targetLabel?: string;
 }
 
+// shortName trims a node label to something that fits beside a rate. "YY
+// Gateway" becomes "YY", "Root AP" becomes "Root" — the first word carries the
+// identity on every naming scheme this has met, and the tooltip still has the
+// full name for anything ambiguous.
+function shortName(label: string | undefined, fallback: string): string {
+  const l = (label ?? "").trim();
+  if (!l) return fallback;
+  const first = l.split(/\s+/)[0];
+  const pick = first.length >= 2 ? first : l;
+  return pick.length > 10 ? pick.slice(0, 9) + "…" : pick;
+}
+
 // One band per link, running in whichever direction carries more traffic.
 //
 // This began as Cacti's split line — each half coloured by the traffic flowing
@@ -123,6 +135,12 @@ export interface CactiEdgeData extends Record<string, unknown> {
 //
 // Comparing bytes per second is equivalent to comparing utilisation here,
 // because a link has one capacity shared by both directions.
+// Where each direction's arrow and its label sit along the line. Far enough
+// apart that the two pairs never merge, and neither is at the midpoint, where
+// two crossing links would stack their labels.
+const BUSY_AT = 0.34;
+const QUIET_AT = 0.7;
+
 export function CactiEdge({
   id,
   sourceX,
@@ -184,6 +202,10 @@ export function CactiEdge({
   const quietBps = forward ? d.inBps : d.outBps;
   const quietUtil = forward ? d.utilIn : d.utilOut;
   const color = utilColor(busyUtil, d.state);
+  const sourceName = shortName(d.sourceLabel, "A");
+  const targetName = shortName(d.targetLabel, "B");
+  const busyTo = forward ? targetName : sourceName;
+  const quietTo = forward ? sourceName : targetName;
 
   const angle = Math.atan2(targetY - sourceY, targetX - sourceX);
   const inset = 14;
@@ -259,30 +281,28 @@ export function CactiEdge({
           fill="none"
         />
       )}
-      {/* Two arrowheads, deliberately unequal. The heavy one carries the
-          direction the band is coloured for and is what the eye should land
-          on; the light one exists so the reverse rate beside it is not an
-          unlabelled number. Both are needed — knowing a link runs at 600 Kbps
-          without knowing which way is only half an answer. */}
-      {arrowAt(fromX, fromY, toX, toY, color, 0.58, 11, 1)}
-      {arrowAt(toX, toY, fromX, fromY, color, 0.78, 7, 0.55)}
-      {/* Deliberately not at the midpoint. Two links that cross usually cross
-          near their middles — the SD-WAN mesh has exactly that pair — and
-          midpoint labels then sit on top of each other. The pair sits either
-          side of centre, each next to the arrowhead it describes. */}
+      {/* Each rate sits beside the arrowhead it describes, and names where it
+          is going. Position alone was not enough to pair them: the bright
+          number sat at 30% of the line while its arrow was at 58%, so nothing
+          tied the two together and the reader had to guess. The destination in
+          the text settles it regardless of geometry — which matters most
+          exactly where the map is hardest to read, on crossing and steep
+          links. */}
+      {arrowAt(fromX, fromY, toX, toY, color, BUSY_AT, 11, 1)}
+      {arrowAt(toX, toY, fromX, fromY, color, 1 - QUIET_AT, 7, 0.55)}
       <EdgeRate
-        x={fromX + (toX - fromX) * 0.3}
-        y={fromY + (toY - fromY) * 0.3}
+        x={fromX + (toX - fromX) * BUSY_AT}
+        y={fromY + (toY - fromY) * BUSY_AT}
         angle={angle}
-        text={`${formatBps(busyBps)}${pct(busyUtil)}`}
+        text={`→${busyTo} ${formatBps(busyBps)}${pct(busyUtil)}`}
       />
       <EdgeRate
-        x={fromX + (toX - fromX) * 0.76}
-        y={fromY + (toY - fromY) * 0.76}
+        x={fromX + (toX - fromX) * QUIET_AT}
+        y={fromY + (toY - fromY) * QUIET_AT}
         angle={angle}
         quiet
         side={-1}
-        text={`${formatBps(quietBps)}${pct(quietUtil)}`}
+        text={`→${quietTo} ${formatBps(quietBps)}${pct(quietUtil)}`}
       />
       <title>{`${formatBps(busyBps)} toward ${
         (forward ? d.targetLabel : d.sourceLabel) ?? "the far end"
