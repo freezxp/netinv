@@ -572,9 +572,11 @@ test("the graph time range selector applies across pages", async ({
   // not, which is what this replaced.
   await expect(picker).toHaveValue("1d");
   await expect(page.getByText("Bandwidth in, by site (1d)")).toBeVisible();
+  await expect(page.getByText("Bandwidth out, by site (1d)")).toBeVisible();
 
   await picker.selectOption("1w");
   await expect(page.getByText("Bandwidth in, by site (1w)")).toBeVisible();
+  await expect(page.getByText("Bandwidth out, by site (1w)")).toBeVisible();
   await expect(page.getByText("Latency — ICMP avg RTT (1w)")).toBeVisible();
 
   // The selection is one operator question ("what did last week look like?"),
@@ -679,5 +681,28 @@ test("platform capacity reports storage and what the disk sustains", async ({
 
   await expect(page.getByText("Metrics data")).toBeVisible();
   await expect(page.getByText("Per device, per year")).toBeVisible();
+  await expect(page.getByText("Unexpected Application Error")).toHaveCount(0);
+});
+
+// Both directions matter on a WAN link: a site can be comfortable inbound and
+// saturated outbound, and the summary API had been computing the outbound
+// figure only for the UI to discard it.
+test("the dashboard shows inbound and outbound throughput", async ({
+  page,
+}) => {
+  await login(page);
+
+  await expect(page.getByText("Throughput in")).toBeVisible();
+  await expect(page.getByText("Throughput out")).toBeVisible();
+
+  // Real numbers, not the loading ellipsis.
+  const out = page
+    .locator("div")
+    .filter({ hasText: /^Throughput out/ })
+    .last();
+  await expect(out).not.toHaveText(/…/);
+
+  await expect(page.getByText(/^Bandwidth in, by site/)).toBeVisible();
+  await expect(page.getByText(/^Bandwidth out, by site/)).toBeVisible();
   await expect(page.getByText("Unexpected Application Error")).toHaveCount(0);
 });

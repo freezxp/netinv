@@ -56,8 +56,19 @@ export function DashboardPage() {
   // is gone with it — that fallback existed to keep an empty chart from
   // looking broken, and it cannot carry a site label.
   const range = useTimeRange();
-  const bandwidth = useQueryRange(
+  // In and out are two queries rather than one expression with `or`. Combining
+  // them would need label_set to survive: multiplying by 8 strips __name__, so
+  // both sides end up with the identical label set {site=…} and `or` silently
+  // drops the second — the bug that has bitten this codebase three times.
+  // Separate queries sidestep it entirely and keep each chart to one series
+  // per site.
+  const bandwidthIn = useQueryRange(
     `sum by (site) (rate(netinv_if_in_octets_total[${rateWindow(range.stepS)}])) * 8`,
+    range.hours,
+    range.stepS,
+  );
+  const bandwidthOut = useQueryRange(
+    `sum by (site) (rate(netinv_if_out_octets_total[${rateWindow(range.stepS)}])) * 8`,
     range.hours,
     range.stepS,
   );
@@ -95,6 +106,10 @@ export function DashboardPage() {
         <Stat
           label="Throughput in"
           value={s ? formatBps(s.throughput_bps.in ?? 0) : "…"}
+        />
+        <Stat
+          label="Throughput out"
+          value={s ? formatBps(s.throughput_bps.out ?? 0) : "…"}
         />
       </div>
 
@@ -156,13 +171,24 @@ export function DashboardPage() {
       <div className="grid gap-4 lg:grid-cols-2">
         <Card title={`Bandwidth in, by site (${range.short})`}>
           <TimeSeries
-            result={bandwidth.data ?? []}
+            result={bandwidthIn.data ?? []}
             windowHours={range.hours}
             format={formatBps}
             label={(m) => m.site || "unassigned"}
           />
         </Card>
-        <Card title={`Latency — ICMP avg RTT (${range.short})`}>
+        <Card title={`Bandwidth out, by site (${range.short})`}>
+          <TimeSeries
+            result={bandwidthOut.data ?? []}
+            windowHours={range.hours}
+            format={formatBps}
+            label={(m) => m.site || "unassigned"}
+          />
+        </Card>
+        <Card
+          className="lg:col-span-2"
+          title={`Latency — ICMP avg RTT (${range.short})`}
+        >
           <TimeSeries
             result={latency.data ?? []}
             windowHours={range.hours}
