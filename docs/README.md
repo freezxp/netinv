@@ -39,6 +39,7 @@
 
 ## Role guides
 
+- **Considering contributing:** `/CONTRIBUTING.md` first, then 10 if it is a connector (the checklist is §6) or 16 for the vocabulary the rest of the docs assume. `/SECURITY.md` covers vulnerability reporting and the deployment posture you should know about before running this anywhere exposed.
 - **New AI agent taking over:** `/CLAUDE.md` → `/DECISIONS.md` → 01 → 05 → 26.
 - **Backend work:** 05, 08, 09, 10, 11, 13, 16, 17, 23.
 - **Frontend work:** 30, 09, 14, 02.

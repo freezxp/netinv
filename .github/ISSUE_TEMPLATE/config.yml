@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/freezxp/netinv/security/advisories/new
+    about: Report privately. Please do not open a public issue for anything exploitable.
+  - name: Design documentation
+    url: https://github.com/freezxp/netinv/tree/main/docs
+    about: 30 numbered documents covering architecture, data model, API, security and operations. Doc 10 covers connectors.
+  - name: Why is it built this way?
+    url: https://github.com/freezxp/netinv/blob/main/DECISIONS.md
+    about: The architecture decision log, with rationale and consequences for every significant choice.

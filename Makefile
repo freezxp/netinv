@@ -1,6 +1,6 @@
 # NetInv developer entrypoints (doc 25 §6). `make dev` boots infra; run Go
 # services on the host for the fast inner loop.
-.PHONY: dev dev-down build test lint fmt run-% compose-app frontend-dev
+.PHONY: dev dev-down build test lint fmt run-% compose-app frontend-dev licenses connector-lint
 
 dev: ## start infra stack (PG, Redis, RabbitMQ, VictoriaMetrics, snmpsim)
 	docker compose up -d --wait postgres redis rabbitmq victoriametrics snmpsim
@@ -36,3 +36,9 @@ run-%: ## run one service locally, e.g. make run-api
 
 frontend-dev:
 	cd frontend && npm run dev
+
+licenses: ## inventory every dependency licence; fails on copyleft (see NOTICE)
+	./scripts/licenses.sh
+
+connector-lint: ## enforce the connector plugin contract (doc 10 §6)
+	./scripts/connector-lint.sh

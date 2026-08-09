@@ -1,5 +1,10 @@
 # NetInv — Network Asset Monitoring Platform
 
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+[![Go](https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&logoColor=white)](backend/go.mod)
+[![React](https://img.shields.io/badge/React-18_%2B_TypeScript-61DAFB?logo=react&logoColor=white)](frontend/package.json)
+[![Status: pilot](https://img.shields.io/badge/status-pilot-orange.svg)](#)
+
 Centralized, vendor-neutral network monitoring: SNMP (v2c/v3) collection from Cisco, Juniper, Huawei, ZTE, Ubiquiti and Ruckus devices into a modern time-series stack, with a live topology **weathermap** as the flagship view. The spiritual successor to Cacti + Weathermap, rebuilt on VictoriaMetrics instead of MRTG/RRD.
 
 > **Status: pilot — all 20 sprints complete, running live.** Milestones M1 (collection pipeline), M2 (alerting), M3 (usable product) and M4 (weathermap flagship) are achieved, and the platform now monitors a real network: four UniFi gateways in an SD-WAN mesh plus a Ruckus Unleashed estate, with a live weathermap over the WireGuard tunnels between them.
@@ -46,13 +51,16 @@ Open **http://localhost:8090**. Full guide: [docs/32-quickstart.md](docs/32-quic
 ```
 netinv/
 ├── README.md          ← you are here
+├── CONTRIBUTING.md    ← how to work in this repo; what help is most wanted
+├── SECURITY.md        ← reporting vulnerabilities; what NetInv holds worth attacking
 ├── CLAUDE.md          ← AI onboarding: read this first if you are an AI agent
 ├── DECISIONS.md       ← architecture decision log (ADR-lite); the "why" behind everything
 ├── docs/              ← the 30-document design package (numbered, see docs/README.md)
-├── backend/           ← (future) Go services: api, scheduler, poller, ingester, alerter, notifier
-├── connectors/        ← (future) vendor connector packages (cisco, juniper, huawei, zte, ubiquiti)
-├── frontend/          ← (future) React + TypeScript app
-└── deploy/            ← (future) Helm charts, k8s manifests, docker-compose for dev
+├── backend/           ← Go services: api, scheduler, poller, ingester, alerter, notifier
+├── connectors/        ← vendor connector packages (cisco, juniper, huawei, zte, ubiquiti, ruckus)
+├── frontend/          ← React + TypeScript app
+├── deploy/            ← Helm charts, k8s manifests, docker-compose
+└── scripts/           ← dev and CI helpers (seed-demo, licences, connector contract)
 ```
 
 ## Reading order
@@ -62,6 +70,22 @@ netinv/
 3. [docs/26-development-roadmap.md](docs/26-development-roadmap.md) — what gets built when
 4. Full index: [docs/README.md](docs/README.md)
 
+## Contributing
+
+Outside eyes are worth more than outside code right now — especially if you own
+hardware NetInv has never been tested against. Four of the seven connectors
+have only ever met MIB specifications, and every connector that *has* met real
+hardware needed corrections that reading the spec would never have found.
+
+If you point NetInv at a device, [tell us what happened](../../issues/new?template=hardware_validation.yml)
+— including when it all worked. Start with [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## Project context
 
 Solo developer + AI pair (Claude). Launch target under 500 devices across 4–5 on-prem datacenters, single organization, self-hosted; multi-tenancy and SaaS are designed-in but dormant. 20 two-week sprints, backend first.
+
+## Licence
+
+[Apache License 2.0](LICENSE) — commercial use, modification and distribution
+permitted, with an explicit patent grant (ADR-019). Every shipped dependency is
+permissively licensed; `make licenses` verifies that and fails on copyleft.

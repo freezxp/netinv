@@ -53,6 +53,15 @@ GitHub side holds **no** cluster credentials; GHCR pull secrets in-cluster. Acti
 
 `main`: PR required · CI + E2E status checks · linear history · no force push. Merge blocks on: tests, coverage bars, lint/arch boundaries, security scans, OpenAPI drift, bundle budget, helm lint. Release blocks additionally on: soak/chaos-lite pass (doc 24 §4), security checklist (doc 20 §12), CHANGELOG + docs status flip for shipped features.
 
+### 5.1 What is actually wired today
+
+§2's diagram is the target shape; the pipeline as built is a subset, and the gap is recorded here rather than left to be discovered. Implemented in `ci.yml`: paths-filter, backend build/vet/test (`-race`, with a PostgreSQL service for integration tests), connector tests, `make connector-lint`, frontend typecheck/lint/build, gitleaks, `make licenses`, govulncheck, `npm audit`, and a Playwright E2E smoke. **Not yet wired:** golangci-lint as a blocking gate (it runs locally when installed), go-arch-lint boundary rules, coverage gates, OpenAPI drift check, bundle-size budget, helm lint/kubeconform, and the docs link/mermaid checks.
+
+Two notes for anyone reading a red or absent build:
+
+- **CI is free on public repositories** but consumes billable minutes on private ones. Between 2026-08-07 and going public, every run failed at the first job with *"recent account payments have failed or your spending limit needs to be increased"* — no code was ever evaluated. A run that fails before any step executes is a billing or permissions problem, not a test failure.
+- **gitleaks is configured by `.gitleaks.toml`.** CI scans the working tree (`--no-git`), which walks the filesystem rather than the git index and therefore also sees git-ignored files — locally that means `deploy/compose-app/.env`, which holds real secrets and is correctly never committed. The config allowlists that path so the signal stays meaningful. It also allowlists one historical finding: a placeholder vault key (`0123456789abcdef…`) present in the workflow between commits e079092 and 77c5de9, which never protected anything.
+
 ## 6. Developer loop (solo + AI)
 
 `make dev` = compose stack + hot-reload (air for Go, Vite) + snmpsim + seeded data — identical images/config to CI, so "works locally" ≈ "passes CI". `make test` / `make lint` mirror CI exactly (same versions, pinned in `tools.go`/`.tool-versions`). An AI agent's inner loop is: edit → `make lint test` → targeted E2E — everything reproducible from the repo (NFR-73).

@@ -1,0 +1,11 @@
+NetInv — Network Asset Monitoring Platform
+Copyright 2026 The NetInv Authors
+
+This product includes software developed by third parties, distributed under
+permissive licences (Apache-2.0, MIT, BSD, ISC). Dependency licences are
+recorded in backend/go.sum's modules and frontend/package-lock.json; run
+`make licenses` to regenerate a full inventory.
+
+No copyleft-licensed code is redistributed in the NetInv binaries or the
+compiled web bundle. The MPL-2.0 components (lightningcss) are build-time
+tooling only.

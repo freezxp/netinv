@@ -7,7 +7,10 @@ netinv/
 ├── README.md                  # product overview + repo map
 ├── CLAUDE.md                  # AI onboarding (root); per-dir CLAUDE.md appear with code
 ├── DECISIONS.md               # ADR log — the "why"
-├── LICENSE                    # proprietary (commercial ambitions, doc 29)
+├── LICENSE                    # Apache-2.0 (ADR-019); NOTICE alongside it
+├── CONTRIBUTING.md            # contributor guide; hardware validation is the ask
+├── SECURITY.md                # vulnerability reporting + deployment posture
+├── CODE_OF_CONDUCT.md         #
 ├── Makefile                   # dev entrypoints: make dev / test / lint / sim
 ├── docker-compose.yml         # full local stack incl. SNMP simulator (NFR-73)
 ├── .github/

@@ -1,0 +1,72 @@
+name: Bug report
+description: Something behaves incorrectly.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        If the problem is a device reporting wrong or missing metrics, please
+        use the **Hardware validation report** template instead — it asks for
+        the SNMP detail needed to diagnose it.
+
+        ⚠️ Redact addresses, hostnames, serial numbers and credentials.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: Include the exact error or the wrong value, not a paraphrase.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected instead
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Add a device with …
+        2. Open Dashboard → …
+        3. The Top-N list shows …
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which part
+      options:
+        - Weathermap
+        - Dashboard / graphs
+        - Alerting
+        - Inventory / discovery
+        - Collection (poller, scheduler, ingester)
+        - Authentication / users / audit
+        - Deployment (compose, Helm, upgrade)
+        - Other / not sure
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: |
+        `docker logs netinv-<service>-1`, or the browser console for UI
+        problems. Note that a collection outage often leaves every service
+        reporting healthy — if data simply stopped arriving, the queue consumer
+        counts in RabbitMQ's management UI are the useful thing to include.
+      render: shell
+  - type: input
+    id: version
+    attributes:
+      label: NetInv version
+      description: "`git rev-parse --short HEAD` or the deployed image tag."
+    validations:
+      required: true
+  - type: input
+    id: scale
+    attributes:
+      label: Deployment shape
+      placeholder: "compose quickstart on one host, 12 devices, 1 site"

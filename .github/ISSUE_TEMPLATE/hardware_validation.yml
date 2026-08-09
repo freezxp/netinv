@@ -1,0 +1,97 @@
+name: Hardware validation report
+description: You pointed NetInv at a real device. Tell us what it did — working or not.
+title: "[hardware] <vendor> <model> — "
+labels: ["hardware-validation"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This is the most useful issue you can file.
+
+        Four connectors — `cisco-ios`, `juniper-junos`, `huawei-vrp`,
+        `zte-zxr` — have never met real hardware. The three that have each
+        needed corrections that reading the MIB would never have revealed: a
+        Ruckus R710 reports its port speed in `ifSpeed` and leaves
+        `ifHighSpeed` at 0; UniFi consoles report a net-snmp `sysObjectID` and
+        so matched no vendor prefix at all. Both produced confidently wrong
+        numbers rather than errors.
+
+        **A report saying "everything worked" is worth filing.** It converts a
+        guess into a documented, validated model in
+        [doc 10](../blob/main/docs/10-connector-architecture.md).
+
+        ⚠️ **Redact before posting.** Public IP addresses, serial numbers,
+        hostnames that identify your organisation, SNMP communities, and any
+        v3 credentials. Private RFC1918 addresses are usually fine; use your
+        judgement.
+  - type: input
+    id: model
+    attributes:
+      label: Device
+      description: Vendor, model, and OS version as precisely as you can.
+      placeholder: "Juniper EX4300-48T, Junos 21.4R3-S4"
+    validations:
+      required: true
+  - type: dropdown
+    id: connector
+    attributes:
+      label: Connector used
+      options:
+        - cisco-ios
+        - juniper-junos
+        - huawei-vrp
+        - zte-zxr
+        - ubiquiti
+        - ruckus
+        - generic
+        - "it picked the wrong one / none matched"
+    validations:
+      required: true
+  - type: input
+    id: sysobjectid
+    attributes:
+      label: sysObjectID
+      description: "`snmpget -v2c -c <community> <host> 1.3.6.1.2.1.1.2.0` — this is what auto-matching keys off."
+      placeholder: ".1.3.6.1.4.1.2636.1.1.1.2.29"
+  - type: dropdown
+    id: outcome
+    attributes:
+      label: Overall outcome
+      options:
+        - "Worked — values look correct"
+        - "Partly worked — some metrics wrong or missing"
+        - "Wrong numbers reported (no error shown)"
+        - "Collection failed outright"
+    validations:
+      required: true
+  - type: textarea
+    id: detail
+    attributes:
+      label: What was right and what was wrong
+      description: |
+        Be specific about *which* metrics. "CPU showed 0% while the device was
+        at 40%" is actionable; "health is broken" is not. Interface traffic,
+        CPU, memory, temperature, PSU/fan, optics, LLDP neighbours, inventory
+        fields — whatever you checked.
+      placeholder: |
+        - Interface traffic: correct, matched the CLI counters
+        - CPU: reported ~31%, CLI said 30% — good
+        - Temperature: nothing at all; the device has sensors under a different table
+        - Memory: reported 100% constantly
+    validations:
+      required: true
+  - type: textarea
+    id: walk
+    attributes:
+      label: SNMP walk (optional, but this is what turns a report into a fix)
+      description: |
+        `snmpwalk -v2c -c <community> -On <host> .1.3.6.1 > walk.txt`, redact,
+        and attach. A recorded walk becomes a permanent test fixture, so the
+        bug you found can never come back silently. Narrow walks of the
+        relevant subtree are fine too.
+      render: shell
+  - type: textarea
+    id: environment
+    attributes:
+      label: NetInv version
+      description: "`git rev-parse --short HEAD`, or the image tag you deployed."

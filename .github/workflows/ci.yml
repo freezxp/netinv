@@ -59,6 +59,8 @@ jobs:
       - name: Connector tests
         working-directory: connectors
         run: go test ./...
+      - name: Connector plugin contract (doc 10 §6)
+        run: make connector-lint
 
   security:
     needs: changes
@@ -69,7 +71,9 @@ jobs:
       - name: gitleaks (CLI — no org license needed)
         run: |
           docker run --rm -v "$PWD:/repo" ghcr.io/gitleaks/gitleaks:latest \
-            detect -s /repo --no-git --redact
+            detect -s /repo --no-git --redact -c /repo/.gitleaks.toml
+      - name: Dependency licences
+        run: make licenses
       - uses: actions/setup-go@v5
         with:
           go-version-file: backend/go.mod

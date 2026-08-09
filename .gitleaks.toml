@@ -1,0 +1,34 @@
+# gitleaks configuration for NetInv.
+#
+# CI runs `gitleaks detect --no-git`, which walks the filesystem rather than the
+# git index — so it also sees files git deliberately ignores. On a developer's
+# machine that means the real deployment secrets in deploy/compose-app/.env get
+# reported on every run. Those findings are correct but useless: the file is
+# git-ignored, chmod 600, and never leaves the host. Left unfiltered they train
+# people to skim past gitleaks output, which is exactly when a genuine leak
+# slips through.
+#
+# A fresh CI checkout has no .env at all, so this allowlist changes nothing
+# there — it only quiets the local false alarm.
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Local, git-ignored deployment secrets (never committed; see .gitignore)"
+paths = ['''(^|/)\.env$''', '''(^|/)\.env\.[^/]+$''']
+
+[[allowlists]]
+description = """
+Known historical finding, no action required. Commit e079092 set a placeholder
+vault key of 0123456789abcdef0123456789abcdef in the CI workflow; 77c5de9
+replaced it with a key generated at runtime. The literal never protected
+anything — it is sixteen repeated hex digits, published here deliberately so
+nobody re-investigates it — and it is absent from the current tree. Rewriting
+63 commits of history to remove it would break every existing clone for no
+security gain.
+"""
+regexes = [
+  '''MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=''',
+  '''0123456789abcdef0123456789abcdef''',
+]

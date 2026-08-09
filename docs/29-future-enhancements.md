@@ -44,6 +44,8 @@ MAC table size, STP topology changes, errdisabled/storm-control (L2) · route/AR
 ## SaaS track (commercial ambition, gated on v2.0)
 Billing/metering (devices × retention as the unit), tenant self-service onboarding, hosted control plane + customer-site pollers (the ADR-006 outbound model is exactly the SaaS agent model — this was designed on purpose), SOC 2 program (audit trail, access reviews — foundations in doc 20), status page, versioned public API program with deprecation policy (NFR-63). Pricing/packaging analysis is a product exercise, not a design gap.
 
+**Licensing interaction (ADR-019).** Apache-2.0 does not obstruct this track — the copyright holder can host, sell and support NetInv freely — but it does mean anyone else may host it too, with no obligation to contribute back. That was accepted knowingly: the pressing need is real-hardware validation of connectors that have never met a real device, and no licence term substitutes for it. Should a hosted competitor become a live concern rather than a hypothetical one, the options are relicensing future versions (never retroactive — released code stays Apache-2.0 forever) or an open-core split with proprietary tenancy and billing components. Neither is worth doing pre-emptively.
+
 ## Explicitly rejected (recorded so future maintainers don't relitigate silently)
 - MRTG/RRD compatibility layers — the point of the project is escaping them.
 - Device *configuration* management — read-only monitoring is a security posture (PRD non-goal), not a missing feature; config backup (Oxidized-style) would be a separate bounded context if ever added.

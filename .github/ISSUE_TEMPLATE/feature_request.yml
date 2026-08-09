@@ -1,0 +1,46 @@
+name: Feature request
+description: Propose something NetInv should do.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing, please check
+        [DECISIONS.md](../blob/main/DECISIONS.md) — some things are
+        *deliberately* out of scope for v1 rather than overlooked: NetFlow,
+        syslog and trap ingestion, firewall/NAT/load-balancer metrics,
+        per-client and RF wireless metrics, Keycloak, multi-tenant activation,
+        and HA. Each has a seam left in the design for later.
+
+        Proposing one of those anyway is fine — argue for moving it, and say
+        what changed. That is a legitimate ADR amendment.
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: |
+        Describe the situation you are in, not the solution you have in mind.
+        What are you trying to find out about your network, and what stops you?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you would like it to do
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What you do instead today
+      description: Including "nothing, I just live with it" — that is useful signal.
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Does this contradict an existing decision in DECISIONS.md?
+      options:
+        - "No, or I do not think so"
+        - "Yes — and I have said which ADR and why it should change"
+        - "I have not checked"
+    validations:
+      required: true
