@@ -115,10 +115,14 @@ export interface CactiEdgeData extends Record<string, unknown> {
 // links presented fifty-two things to read, and the eye had to compare halves
 // before learning anything.
 //
-// A link's interesting property is usually its heavier direction, so that is
-// what the band shows. The quieter direction stays in the tooltip rather than
-// on the canvas. Comparing bytes per second is equivalent to comparing
-// utilisation here, because a link has one capacity shared by both directions.
+// A link's interesting property is usually its heavier direction, so the band
+// takes its colour and its dash animation from that one. Both directions still
+// get an arrowhead and a rate, because a speed without a direction is half an
+// answer — but the reverse pair is drawn smaller and dimmer, so the map reads
+// at a glance and rewards a closer look rather than demanding one.
+//
+// Comparing bytes per second is equivalent to comparing utilisation here,
+// because a link has one capacity shared by both directions.
 export function CactiEdge({
   id,
   sourceX,
@@ -197,12 +201,13 @@ export function CactiEdge({
     toX: number,
     toY: number,
     color: string,
+    t = 0.55,
+    size = 11,
+    opacity = 1,
   ) => {
-    const t = 0.55; // just past the midpoint of the half, in open space
     const x = fromX + (toX - fromX) * t;
     const y = fromY + (toY - fromY) * t;
     const a = Math.atan2(toY - fromY, toX - fromX);
-    const size = 11;
     const spread = 0.45;
     return (
       <polygon
@@ -212,6 +217,7 @@ export function CactiEdge({
           `${x - size * Math.cos(a + spread)},${y - size * Math.sin(a + spread)}`,
         ].join(" ")}
         fill={color}
+        fillOpacity={opacity}
         stroke="var(--map-arrow-edge, #0f172a)"
         strokeWidth={0.75}
       />
@@ -253,17 +259,30 @@ export function CactiEdge({
           fill="none"
         />
       )}
-      {arrowAt(fromX, fromY, toX, toY, color)}
+      {/* Two arrowheads, deliberately unequal. The heavy one carries the
+          direction the band is coloured for and is what the eye should land
+          on; the light one exists so the reverse rate beside it is not an
+          unlabelled number. Both are needed — knowing a link runs at 600 Kbps
+          without knowing which way is only half an answer. */}
+      {arrowAt(fromX, fromY, toX, toY, color, 0.58, 11, 1)}
+      {arrowAt(toX, toY, fromX, fromY, color, 0.78, 7, 0.55)}
       {/* Deliberately not at the midpoint. Two links that cross usually cross
           near their middles — the SD-WAN mesh has exactly that pair — and
-          midpoint labels then sit on top of each other. A third of the way
-          along, in the direction of travel, keeps them apart and reads as
-          where the flow starts. */}
+          midpoint labels then sit on top of each other. The pair sits either
+          side of centre, each next to the arrowhead it describes. */}
       <EdgeRate
-        x={fromX + (toX - fromX) * 0.32}
-        y={fromY + (toY - fromY) * 0.32}
+        x={fromX + (toX - fromX) * 0.3}
+        y={fromY + (toY - fromY) * 0.3}
         angle={angle}
         text={`${formatBps(busyBps)}${pct(busyUtil)}`}
+      />
+      <EdgeRate
+        x={fromX + (toX - fromX) * 0.76}
+        y={fromY + (toY - fromY) * 0.76}
+        angle={angle}
+        quiet
+        side={-1}
+        text={`${formatBps(quietBps)}${pct(quietUtil)}`}
       />
       <title>{`${formatBps(busyBps)} toward ${
         (forward ? d.targetLabel : d.sourceLabel) ?? "the far end"
@@ -284,18 +303,26 @@ function EdgeRate({
   y,
   angle,
   text,
+  quiet,
+  side = 1,
 }: {
   x: number;
   y: number;
   angle: number;
   text: string;
+  /** The reverse direction: present but visually subordinate. */
+  quiet?: boolean;
+  /** Which side of the line to sit on. The two directions take opposite
+   * sides, which is what keeps them apart on a short link — offsetting both
+   * the same way stacked "7.2 Kbps" and "1 bps" into "0%1 bps". */
+  side?: 1 | -1;
 }) {
   // Perpendicular to the line. On a steep link that perpendicular is nearly
   // horizontal, and a centred label straddles the band — its halo then paints
   // over the arrowhead, which is the one thing that has to stay readable. So
   // steep links get the text anchored fully to one side instead.
-  const px = Math.sin(angle);
-  const py = -Math.cos(angle);
+  const px = Math.sin(angle) * side;
+  const py = -Math.cos(angle) * side;
   const steep = Math.abs(px) > 0.5;
   const off = steep ? 11 : 13;
   return (
@@ -305,7 +332,7 @@ function EdgeRate({
       textAnchor={steep ? (px > 0 ? "start" : "end") : "middle"}
       dominantBaseline="middle"
       style={{
-        fontSize: 10,
+        fontSize: quiet ? 9 : 10,
         fill: "currentColor",
         paintOrder: "stroke",
         stroke: "var(--map-label-halo, #020617)",
@@ -313,7 +340,11 @@ function EdgeRate({
         strokeLinejoin: "round",
         pointerEvents: "none",
       }}
-      className="text-slate-500 dark:text-slate-300"
+      className={
+        quiet
+          ? "text-slate-400 dark:text-slate-500"
+          : "text-slate-500 dark:text-slate-300"
+      }
     >
       {text}
     </text>
