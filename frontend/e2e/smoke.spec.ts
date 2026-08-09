@@ -484,6 +484,36 @@ test("an SNMPv3 credential can be created from the UI", async ({
   await request.delete(`/api/v1/credentials/${made.id}`, { headers });
 });
 
+// The audit log showed a truncated ULID in its actor column, which answers
+// "who did this?" for nobody — the whole point of the log.
+test("the audit log names the user who acted", async ({ page, request }) => {
+  await login(page); // writes an auth.login.success attributed to admin
+  await page.getByRole("link", { name: "Audit" }).click();
+  await expect(page.getByRole("heading", { name: "Audit log" })).toBeVisible();
+
+  const row = page.locator("tr").filter({ hasText: "auth.login.success" }).first();
+  await expect(row).toContainText("admin");
+  // The raw id must not be what a reader sees.
+  await expect(row).not.toContainText("u_01");
+
+  const headers = await apiHeaders(request);
+  const res = await request.get("/api/v1/audit-events?limit=20", { headers });
+  const events = (await res.json()).data;
+  const loginEvent = events.find(
+    (e: { action: string }) => e.action === "auth.login.success",
+  );
+  expect(loginEvent.actor).toBe("admin");
+  expect(loginEvent.actor_id).toMatch(/^u_/); // id still there for correlation
+
+  // Filtering accepts the username, not just the id nobody has to hand.
+  const byName = await request.get("/api/v1/audit-events?actor=admin&limit=5", {
+    headers,
+  });
+  const filtered = (await byName.json()).data;
+  expect(filtered.length).toBeGreaterThan(0);
+  for (const e of filtered) expect(e.actor).toBe("admin");
+});
+
 test("admin sees role-gated nav (Users, Audit, Settings)", async ({ page }) => {
   await login(page);
   await expect(page.getByRole("link", { name: "Users" })).toBeVisible();

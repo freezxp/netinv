@@ -6,16 +6,14 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"log/slog"
-	"os"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/freezxp/netinv/backend/internal/audit"
 	invapp "github.com/freezxp/netinv/backend/internal/inventory/app"
 	"github.com/freezxp/netinv/backend/internal/inventory/domain"
 	"github.com/freezxp/netinv/backend/internal/platform/cryptox"
-	"github.com/freezxp/netinv/backend/internal/platform/pgx"
+	"github.com/freezxp/netinv/backend/internal/platform/pgxtest"
 	"github.com/freezxp/netinv/backend/internal/platform/wire"
 )
 
@@ -24,26 +22,11 @@ import (
 // textual representation, any log line, any audit record, or any serialized
 // API view. Sentinel values are unguessable so a substring hit is definitive.
 func TestNoSecretLeakInvariant(t *testing.T) {
-	dsn := os.Getenv("NETINV_TEST_PG_DSN")
-	if dsn == "" {
-		t.Skip("NETINV_TEST_PG_DSN not set")
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-
-	if err := pgx.Migrate(ctx, dsn, slog.New(slog.DiscardHandler)); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
-	pool, err := pgx.Connect(ctx, dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Registered as Cleanup, not defer: t.Cleanup callbacks run after the test
-	// function returns — i.e. after its defers — so a deferred Close would shut
-	// the pool before the credential cleanup below could use it. The delete
-	// then failed silently against a closed pool and left leaktest-* rows in
-	// the operator's vault after every run.
-	t.Cleanup(func() { pool.Close() })
+	// Its own database: this test writes credentials and audit rows, and it
+	// used to do so wherever NETINV_TEST_PG_DSN pointed — including a live
+	// deployment, where audit entries cannot be removed again.
+	_, pool := pgxtest.Throwaway(t)
+	ctx := context.Background()
 
 	key := make([]byte, 32)
 	_, _ = rand.Read(key)

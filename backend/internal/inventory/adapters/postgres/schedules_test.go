@@ -2,14 +2,11 @@ package postgres
 
 import (
 	"context"
-	"log/slog"
-	"os"
 	"testing"
-	"time"
 
 	"github.com/freezxp/netinv/backend/internal/inventory/domain"
 	"github.com/freezxp/netinv/backend/internal/platform/id"
-	"github.com/freezxp/netinv/backend/internal/platform/pgx"
+	"github.com/freezxp/netinv/backend/internal/platform/pgxtest"
 )
 
 // families_enabled is the per-family switch FR-COLL-04 describes. It has been
@@ -17,24 +14,25 @@ import (
 // that turned a family off was polled anyway. Integration-level because the
 // behaviour lives entirely in the scheduling query.
 func TestProfileFamiliesEnabledGatesScheduling(t *testing.T) {
-	dsn := os.Getenv("NETINV_TEST_PG_DSN")
-	if dsn == "" {
-		t.Skip("NETINV_TEST_PG_DSN not set")
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-	if err := pgx.Migrate(ctx, dsn, slog.New(slog.DiscardHandler)); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
-	pool, err := pgx.Connect(ctx, dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer pool.Close()
+	// Its own database: this creates a profile, credential and device, which
+	// have no business appearing in an operator's inventory.
+	_, pool := pgxtest.Throwaway(t)
+	ctx := context.Background()
 
 	// An ICMP-only profile: the shape wanted for a device that answers ping
 	// but runs no SNMP agent, such as a Ruckus Unleashed member AP. The
 	// intervals stay valid — only the family list narrows.
+	// The connector catalog is seeded by the API from the compiled-in registry
+	// at startup, not by a migration, so a fresh database has none. Relying on
+	// a live deployment's row is exactly what this test just stopped doing.
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO platform.connectors
+			(id, vendor, display_name, version, capabilities, sys_object_id_prefixes, enabled)
+		VALUES ('generic','Generic','Generic SNMP','test','[]','[]',true)
+		ON CONFLICT (id) DO NOTHING`); err != nil {
+		t.Fatalf("seed connector: %v", err)
+	}
+
 	profID := id.New("pp")
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO platform.polling_profiles

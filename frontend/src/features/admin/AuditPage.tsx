@@ -9,6 +9,9 @@ interface AuditRow {
   at: string;
   actor_kind: string;
   actor_id: string;
+  /** Username resolved from the id; empty if the account is gone. */
+  actor?: string;
+  actor_display?: string;
   action: string;
   resource_kind: string;
   resource_id: string;
@@ -61,10 +64,25 @@ export function AuditPage() {
                   {new Date(e.at).toLocaleString()}
                 </td>
                 <td className="px-4 py-1.5">
+                  {/* A ULID answers "who?" for nobody. Show the username, and
+                      keep the id as the tooltip for correlating with other
+                      records. An id with no username means the account has
+                      been deleted — say so rather than showing a bare id. */}
                   {e.actor_kind === "system" ? (
                     <span className="text-slate-500">system</span>
+                  ) : e.actor ? (
+                    <span title={`${e.actor_display || e.actor} · ${e.actor_id}`}>
+                      {e.actor}
+                    </span>
+                  ) : e.actor_id ? (
+                    <span
+                      className="mono text-xs text-slate-500"
+                      title={`${e.actor_id} — no matching account; it may have been deleted`}
+                    >
+                      {e.actor_id.slice(0, 14)}…
+                    </span>
                   ) : (
-                    <span className="mono text-xs">{e.actor_id.slice(0, 14)}</span>
+                    <span className="text-slate-500">—</span>
                   )}
                 </td>
                 <td className="px-4 py-1.5 font-medium">{e.action}</td>
