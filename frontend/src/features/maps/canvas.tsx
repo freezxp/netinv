@@ -1,5 +1,10 @@
 // Shared React Flow canvas pieces: device node, definition<->flow mapping.
-import { Handle, Position, type Edge, type Node as RFNode } from "@xyflow/react";
+import {
+  Handle,
+  Position,
+  type Edge,
+  type Node as RFNode,
+} from "@xyflow/react";
 import type { LiveData, MapDefinition, MapLink, MapNode } from "./api";
 import { utilColor } from "./api";
 import { formatBps } from "../../lib/format";
@@ -102,10 +107,18 @@ export interface CactiEdgeData extends Record<string, unknown> {
   targetLabel?: string;
 }
 
-// Cacti's weathermap signature: one line split at its midpoint, each half
-// coloured by the traffic flowing *toward* the node it touches, with an
-// arrowhead pointing into that node. Reading it needs no legend lookup — the
-// busy direction is the one that changed colour.
+// One band per link, running in whichever direction carries more traffic.
+//
+// This began as Cacti's split line — each half coloured by the traffic flowing
+// toward the node it touched. That is faithful to Cacti but busy: every link
+// carried two colours, two arrowheads and two numbers, so a map of thirteen
+// links presented fifty-two things to read, and the eye had to compare halves
+// before learning anything.
+//
+// A link's interesting property is usually its heavier direction, so that is
+// what the band shows. The quieter direction stays in the tooltip rather than
+// on the canvas. Comparing bytes per second is equivalent to comparing
+// utilisation here, because a link has one capacity shared by both directions.
 export function CactiEdge({
   id,
   sourceX,
@@ -158,10 +171,15 @@ export function CactiEdge({
     );
   }
 
-  // Half touching the source carries what arrives there; half touching the
-  // target carries what leaves the A endpoint.
-  const inColor = utilColor(d.utilIn, d.state);
-  const outColor = utilColor(d.utilOut, d.state);
+  // "out" runs from the A endpoint toward the target; "in" arrives back at the
+  // source. Ties fall to out so a fully idle link still draws one consistent
+  // way rather than flickering between them on rounding noise.
+  const forward = d.outBps >= d.inBps;
+  const busyBps = forward ? d.outBps : d.inBps;
+  const busyUtil = forward ? d.utilOut : d.utilIn;
+  const quietBps = forward ? d.inBps : d.outBps;
+  const quietUtil = forward ? d.utilIn : d.utilOut;
+  const color = utilColor(busyUtil, d.state);
 
   const angle = Math.atan2(targetY - sourceY, targetX - sourceX);
   const inset = 14;
@@ -201,11 +219,13 @@ export function CactiEdge({
   };
 
   const pct = (v: number) => (d.hasCapacity ? ` · ${v.toFixed(0)}%` : "");
-  // Both halves run outward from the midpoint so the dash animation moves the
-  // way traffic does without a second set of keyframes.
-  const inPath = `M${mx},${my} L${sxi},${syi}`;
-  const outPath = `M${mx},${my} L${txi},${tyi}`;
-  const moving = (bps: number) => bps > 0;
+  // The path is drawn in the direction of travel, so the dash animation moves
+  // the way the traffic does without needing a reversed set of keyframes.
+  const fromX = forward ? sxi : txi;
+  const fromY = forward ? syi : tyi;
+  const toX = forward ? txi : sxi;
+  const toY = forward ? tyi : syi;
+  const flowPath = `M${fromX},${fromY} L${toX},${toY}`;
 
   return (
     <g className="netinv-cacti-edge">
@@ -221,48 +241,37 @@ export function CactiEdge({
         fill="none"
         style={{ pointerEvents: "stroke" }}
       />
-      <path d={inPath} stroke={inColor} strokeWidth={5} fill="none" />
-      <path d={outPath} stroke={outColor} strokeWidth={5} fill="none" />
+      <path d={flowPath} stroke={color} strokeWidth={5} fill="none" />
       {/* Darker dashes crawling along the band, in the direction of travel. */}
-      {moving(d.inBps) && (
+      {busyBps > 0 && (
         <path
           className="netinv-flow"
-          d={inPath}
+          d={flowPath}
           stroke="rgba(15,23,42,0.45)"
           strokeWidth={5}
           strokeDasharray="5 19"
           fill="none"
         />
       )}
-      {moving(d.outBps) && (
-        <path
-          className="netinv-flow"
-          d={outPath}
-          stroke="rgba(15,23,42,0.45)"
-          strokeWidth={5}
-          strokeDasharray="5 19"
-          fill="none"
-        />
-      )}
-      {arrowAt(mx, my, sxi, syi, inColor)}
-      {arrowAt(mx, my, txi, tyi, outColor)}
+      {arrowAt(fromX, fromY, toX, toY, color)}
+      {/* Deliberately not at the midpoint. Two links that cross usually cross
+          near their middles — the SD-WAN mesh has exactly that pair — and
+          midpoint labels then sit on top of each other. A third of the way
+          along, in the direction of travel, keeps them apart and reads as
+          where the flow starts. */}
       <EdgeRate
-        x={(sxi + mx) / 2}
-        y={(syi + my) / 2}
+        x={fromX + (toX - fromX) * 0.32}
+        y={fromY + (toY - fromY) * 0.32}
         angle={angle}
-        text={`${formatBps(d.inBps)}${pct(d.utilIn)}`}
+        text={`${formatBps(busyBps)}${pct(busyUtil)}`}
       />
-      <EdgeRate
-        x={(mx + txi) / 2}
-        y={(my + tyi) / 2}
-        angle={angle}
-        text={`${formatBps(d.outBps)}${pct(d.utilOut)}`}
-      />
-      <title>{`${formatBps(d.inBps)} toward ${d.sourceLabel ?? "one end"}, ${formatBps(
-        d.outBps,
-      )} toward ${d.targetLabel ?? "the other"}${
-        d.hasCapacity ? "" : " — no capacity set, so no utilisation colour"
-      }`}</title>
+      <title>{`${formatBps(busyBps)} toward ${
+        (forward ? d.targetLabel : d.sourceLabel) ?? "the far end"
+      }${pct(busyUtil)} — the heavier direction, which is what the band shows. Reverse: ${formatBps(
+        quietBps,
+      )} toward ${(forward ? d.sourceLabel : d.targetLabel) ?? "the other end"}${pct(
+        quietUtil,
+      )}${d.hasCapacity ? "" : " — no capacity set, so no utilisation colour"}`}</title>
       <desc>{id}</desc>
     </g>
   );
