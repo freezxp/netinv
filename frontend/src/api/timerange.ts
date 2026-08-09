@@ -116,7 +116,7 @@ export const DEFAULT_RANGE: RangeKey = "1d";
  * Fallback ceiling used only until the real one arrives from the API, and if
  * the request fails. It matches the shipped default retention.
  */
-export const DEFAULT_RETENTION_HOURS = 90 * D;
+export const DEFAULT_RETENTION_HOURS = 730 * D;
 
 export function rangeFor(key: RangeKey): TimeRange {
   return TIME_RANGES.find((r) => r.key === key) ?? TIME_RANGES[6];

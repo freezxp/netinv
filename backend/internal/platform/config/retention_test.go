@@ -54,17 +54,32 @@ func TestParseRetentionRejectsNonsense(t *testing.T) {
 // An unset or unparseable value must fall back rather than yield zero, which
 // the proxy would read as "no limit configured" and could turn into either an
 // open-ended query or an immediate rejection.
-func TestRetentionFallsBackToNinetyDays(t *testing.T) {
+func TestRetentionFallsBackToTheDefault(t *testing.T) {
 	t.Setenv("NETINV_VM_RETENTION", "")
-	if got, want := Retention(), 90*24*time.Hour; got != want {
+	if got, want := Retention(), DefaultRetention; got != want {
 		t.Errorf("unset: Retention() = %v, want %v", got, want)
 	}
 	t.Setenv("NETINV_VM_RETENTION", "not-a-duration")
-	if got, want := Retention(), 90*24*time.Hour; got != want {
+	if got, want := Retention(), DefaultRetention; got != want {
 		t.Errorf("invalid: Retention() = %v, want %v", got, want)
 	}
 	t.Setenv("NETINV_VM_RETENTION", "2y")
 	if got, want := Retention(), 730*24*time.Hour; got != want {
 		t.Errorf("2y: Retention() = %v, want %v", got, want)
+	}
+	// An operator lowering retention must actually get less, not silently keep
+	// the default because the parse or the plumbing dropped their value.
+	t.Setenv("NETINV_VM_RETENTION", "30d")
+	if got, want := Retention(), 30*24*time.Hour; got != want {
+		t.Errorf("30d: Retention() = %v, want %v", got, want)
+	}
+}
+
+// The default has to satisfy the longest range the UI offers, or a fresh
+// install ships a selector whose longer half errors or is greyed out.
+func TestDefaultRetentionCoversTheLongestPreset(t *testing.T) {
+	if longest := 730 * 24 * time.Hour; DefaultRetention < longest {
+		t.Errorf("DefaultRetention = %v, want at least %v (the 'Last 2 Years' preset)",
+			DefaultRetention, longest)
 	}
 }

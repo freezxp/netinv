@@ -43,7 +43,7 @@ func (q *QueryProxy) Register(r chi.Router) {
 }
 
 const (
-	defaultMaxRange = 90 * 24 * time.Hour // matches the default retention
+	defaultMaxRange = 730 * 24 * time.Hour // matches config.DefaultRetention
 	minStep         = 15 * time.Second
 )
 

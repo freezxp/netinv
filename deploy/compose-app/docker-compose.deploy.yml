@@ -22,7 +22,7 @@ services:
       NETINV_VM_URL: http://victoriametrics:8428
       # Must match victoriametrics' -retentionPeriod, or the API rejects range
       # queries for history the store is still holding.
-      NETINV_VM_RETENTION: ${NETINV_VM_RETENTION:-90d}
+      NETINV_VM_RETENTION: ${NETINV_VM_RETENTION:-2y}
       NETINV_MASTER_KEY: ${NETINV_MASTER_KEY}
       NETINV_JWT_SIGNING_KEY: ${NETINV_JWT_SIGNING_KEY}
       NETINV_ADMIN_PASSWORD: ${NETINV_ADMIN_PASSWORD}

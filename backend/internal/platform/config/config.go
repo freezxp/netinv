@@ -55,6 +55,17 @@ func getenv(key, def string) string {
 	return def
 }
 
+// DefaultRetention is what a deployment keeps when NETINV_VM_RETENTION is
+// unset. Two years, so the full range selector (doc 30 §0) resolves out of the
+// box: the presets are Cacti's, they run to two years, and a shorter default
+// would ship a menu whose longer half is greyed out on every fresh install.
+//
+// The cost is real but modest at the scale this targets — roughly 75 MB per
+// device per year of raw samples, so ~75 GB for 500 devices over two years.
+// Operators with larger fleets or smaller disks should lower it; doc 04 §4
+// carries the arithmetic.
+const DefaultRetention = 730 * 24 * time.Hour
+
 // Retention returns how far back metrics are queryable, from
 // NETINV_VM_RETENTION. It is the same value VictoriaMetrics is started with,
 // so the API's query ceiling and the store's actual retention cannot drift
@@ -65,9 +76,9 @@ func getenv(key, def string) string {
 // 52w. Go's time.ParseDuration stops at hours, which is why a retention of
 // "2y" cannot simply be parsed with it.
 func Retention() time.Duration {
-	d, err := ParseRetention(getenv("NETINV_VM_RETENTION", "90d"))
+	d, err := ParseRetention(getenv("NETINV_VM_RETENTION", "2y"))
 	if err != nil {
-		return 90 * 24 * time.Hour
+		return DefaultRetention
 	}
 	return d
 }

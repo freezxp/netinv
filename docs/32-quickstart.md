@@ -101,6 +101,11 @@ Two things worth knowing if you ever bring it up by hand rather than via the scr
 - **Secrets** live in `deploy/compose-app/.env` (git-ignored, `chmod 600`).
   The master key encrypts the credential vault — back it up; losing it means
   re-entering SNMP credentials (devices are unaffected, [doc 28](28-risk-assessment.md) R-10).
+- **Metrics are kept for 2 years by default** (`NETINV_VM_RETENTION` in
+  `deploy/compose-app/.env`), so the full range selector works immediately.
+  Budget roughly 75 MB per device per year — a handful of devices is a couple
+  of GB, 500 devices is ~75 GB. Lower it if the disk is small; VictoriaMetrics
+  stops accepting writes when the disk fills, and collection stops with it.
 - **Not exposed to the internet as-is.** It serves plain HTTP on 8090 with
   `NETINV_INSECURE_COOKIES=1`. To expose it, put a TLS-terminating reverse
   proxy (Caddy/nginx/Traefik) in front, set `NETINV_UI_URL` to the HTTPS URL,

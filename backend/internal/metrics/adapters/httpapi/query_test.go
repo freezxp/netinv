@@ -86,9 +86,12 @@ func TestRejectionNamesTheActualLimit(t *testing.T) {
 	}
 }
 
-func TestDefaultCeilingIsNinetyDaysWhenUnset(t *testing.T) {
+// Zero must mean "the default", never "unlimited"; and that default has to
+// match config.DefaultRetention, or a deployment that sets neither ends up with
+// a store keeping two years and an API refusing to read past ninety days.
+func TestZeroCeilingFallsBackToTheDefaultRetention(t *testing.T) {
 	p := &QueryProxy{VMURL: "http://127.0.0.1:0"} // MaxRange zero
-	if got, want := p.maxRange(), 90*24*time.Hour; got != want {
+	if got, want := p.maxRange(), 730*24*time.Hour; got != want {
 		t.Errorf("maxRange() = %v, want %v — zero must not mean unlimited", got, want)
 	}
 }
