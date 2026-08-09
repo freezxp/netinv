@@ -8,6 +8,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Common holds configuration shared by every netinv service.
@@ -52,6 +53,56 @@ func getenv(key, def string) string {
 		return v
 	}
 	return def
+}
+
+// Retention returns how far back metrics are queryable, from
+// NETINV_VM_RETENTION. It is the same value VictoriaMetrics is started with,
+// so the API's query ceiling and the store's actual retention cannot drift
+// apart — a ceiling below retention silently hides data the operator paid to
+// keep, and one above it produces long empty graphs.
+//
+// Accepts VictoriaMetrics' duration syntax rather than Go's: 90d, 2y, 18mo,
+// 52w. Go's time.ParseDuration stops at hours, which is why a retention of
+// "2y" cannot simply be parsed with it.
+func Retention() time.Duration {
+	d, err := ParseRetention(getenv("NETINV_VM_RETENTION", "90d"))
+	if err != nil {
+		return 90 * 24 * time.Hour
+	}
+	return d
+}
+
+// ParseRetention understands VictoriaMetrics-style durations. Months are 31
+// days and years 365, matching VictoriaMetrics itself; the value decides how
+// much history to keep, not an exact calendar boundary.
+func ParseRetention(v string) (time.Duration, error) {
+	v = strings.TrimSpace(strings.ToLower(v))
+	if v == "" {
+		return 0, fmt.Errorf("config: empty retention")
+	}
+	units := []struct {
+		suffix string
+		unit   time.Duration
+	}{
+		{"mo", 31 * 24 * time.Hour}, // before "m", which would match its first byte
+		{"y", 365 * 24 * time.Hour},
+		{"w", 7 * 24 * time.Hour},
+		{"d", 24 * time.Hour},
+		{"h", time.Hour},
+		{"m", time.Minute},
+		{"s", time.Second},
+	}
+	for _, u := range units {
+		if !strings.HasSuffix(v, u.suffix) {
+			continue
+		}
+		n, err := strconv.ParseFloat(strings.TrimSuffix(v, u.suffix), 64)
+		if err != nil || n <= 0 {
+			return 0, fmt.Errorf("config: invalid retention %q", v)
+		}
+		return time.Duration(n * float64(u.unit)), nil
+	}
+	return 0, fmt.Errorf("config: invalid retention %q (want e.g. 90d, 2y)", v)
 }
 
 func getbool(key string, def bool) bool {

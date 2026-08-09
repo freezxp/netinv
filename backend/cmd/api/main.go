@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"github.com/freezxp/netinv/backend/internal/platform/config"
 	"os"
 	"time"
 
@@ -330,7 +331,11 @@ func main() {
 			exportH.Register(g)
 			(&audit.Handler{Pool: pool, Checker: checker}).Register(g)
 			if vmURL := os.Getenv("NETINV_VM_URL"); vmURL != "" {
-				(&metrichttp.QueryProxy{VMURL: vmURL, Checker: checker}).Register(g)
+				(&metrichttp.QueryProxy{
+					VMURL:    vmURL,
+					Checker:  checker,
+					MaxRange: config.Retention(),
+				}).Register(g)
 				(&dashboard.Service{
 					Pool: pool, VM: alertvm.New(vmURL), Redis: redisClient,
 					Checker: checker,

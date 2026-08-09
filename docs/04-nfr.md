@@ -57,7 +57,9 @@ Two columns matter throughout: **v1 target** (what we test and release against, 
 | 1 h rollup | 1 h | 3 years | ~2 GB / ~400 GB |
 | PostgreSQL (inventory+history+audit) | — | audit 12 mo online, asset history 24 mo | < 10 GB / ~300 GB |
 
-- NFR-30: Retention tiers configurable per FR-SET-01; deletions are age-based, never count-based.
+- NFR-30: Retention tiers configurable per FR-SET-01; deletions are age-based, never count-based. **Implemented as `NETINV_VM_RETENTION`** (VictoriaMetrics duration syntax: `90d`, `18mo`, `2y`), read by both the metrics store and the API — the API's range-query ceiling is the same value, so it cannot drift below the data being kept. Raising it affects only data collected from then on; expired samples are gone.
+- **The rollup tiers above are not implemented.** There are no recording rules, so a long retention keeps *raw* samples for the whole period rather than 5 m/1 h aggregates. Whether that matters is a question of fleet size, not of principle: measured on the pilot, raw data costs **0.83 bytes/sample after compression, about 75 MB per device per year**. Two years of raw retention is therefore ~2 GB for a 13-device fleet and ~15 GB for 100 devices — cheaper than the machinery needed to avoid it. At the 100k-device target it would be ~150 TB, which is what the tiering exists for. Build the rollups when fleet size demands them, not before.
+- The pilot runs `NETINV_VM_RETENTION=2y` so the full Cacti range selector (doc 30 §0) resolves; the shipped default stays `90d`.
 - NFR-31: Backup: nightly PG base backup + VM snapshot to off-cluster storage (NFS/S3-compatible, e.g. MinIO); weekly restore-test job in staging (doc 25).
 
 ## 5. Security (targets; design in doc 20)

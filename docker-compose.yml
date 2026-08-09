@@ -46,7 +46,11 @@ services:
   victoriametrics:
     restart: unless-stopped
     image: victoriametrics/victoria-metrics:v1.103.0
-    command: ["-retentionPeriod=90d", "-storageDataPath=/storage"]
+    # One knob for both the store and the API's query ceiling: the API reads
+    # NETINV_VM_RETENTION too, so a query limit cannot drift below the data
+    # actually being kept. VictoriaMetrics duration syntax (90d, 2y, 18mo).
+    command:
+      ["-retentionPeriod=${NETINV_VM_RETENTION:-90d}", "-storageDataPath=/storage"]
     ports: ["8428:8428"]
     volumes: [vmdata:/storage]
     healthcheck:

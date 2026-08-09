@@ -57,7 +57,13 @@ export const TIME_RANGES: readonly TimeRange[] = [
   { key: "2h", label: "Last 2 Hours", short: "2h", hours: 2 * H, stepS: 60 },
   { key: "4h", label: "Last 4 Hours", short: "4h", hours: 4 * H, stepS: 60 },
   { key: "6h", label: "Last 6 Hours", short: "6h", hours: 6 * H, stepS: 120 },
-  { key: "12h", label: "Last 12 Hours", short: "12h", hours: 12 * H, stepS: 180 },
+  {
+    key: "12h",
+    label: "Last 12 Hours",
+    short: "12h",
+    hours: 12 * H,
+    stepS: 180,
+  },
   { key: "1d", label: "Last Day", short: "1d", hours: 1 * D, stepS: 300 },
   { key: "2d", label: "Last 2 Days", short: "2d", hours: 2 * D, stepS: 600 },
   { key: "3d", label: "Last 3 Days", short: "3d", hours: 3 * D, stepS: 900 },
@@ -65,23 +71,50 @@ export const TIME_RANGES: readonly TimeRange[] = [
   { key: "1w", label: "Last Week", short: "1w", hours: 7 * D, stepS: 1800 },
   { key: "2w", label: "Last 2 Weeks", short: "2w", hours: 14 * D, stepS: 3600 },
   { key: "1mo", label: "Last Month", short: "1mo", hours: 30 * D, stepS: 7200 },
-  { key: "2mo", label: "Last 2 Months", short: "2mo", hours: 60 * D, stepS: 14400 },
-  { key: "3mo", label: "Last 3 Months", short: "3mo", hours: 90 * D, stepS: 21600 },
-  { key: "4mo", label: "Last 4 Months", short: "4mo", hours: 120 * D, stepS: 28800 },
-  { key: "6mo", label: "Last 6 Months", short: "6mo", hours: 180 * D, stepS: 43200 },
+  {
+    key: "2mo",
+    label: "Last 2 Months",
+    short: "2mo",
+    hours: 60 * D,
+    stepS: 14400,
+  },
+  {
+    key: "3mo",
+    label: "Last 3 Months",
+    short: "3mo",
+    hours: 90 * D,
+    stepS: 21600,
+  },
+  {
+    key: "4mo",
+    label: "Last 4 Months",
+    short: "4mo",
+    hours: 120 * D,
+    stepS: 28800,
+  },
+  {
+    key: "6mo",
+    label: "Last 6 Months",
+    short: "6mo",
+    hours: 180 * D,
+    stepS: 43200,
+  },
   { key: "1y", label: "Last Year", short: "1y", hours: 365 * D, stepS: 86400 },
-  { key: "2y", label: "Last 2 Years", short: "2y", hours: 730 * D, stepS: 172800 },
+  {
+    key: "2y",
+    label: "Last 2 Years",
+    short: "2y",
+    hours: 730 * D,
+    stepS: 172800,
+  },
 ];
 
 /** Matches Cacti's own default of "Last Day". */
 export const DEFAULT_RANGE: RangeKey = "1d";
 
 /**
- * Spans longer than this cannot be filled by the default deployment, whose
- * VictoriaMetrics retention is 90 days (`-retentionPeriod=90d`). They are
- * offered anyway — retention is a deploy-time flag the browser cannot read,
- * an operator may well have raised it, and a graph that stops early is
- * self-explanatory in a way that a missing menu entry is not.
+ * Fallback ceiling used only until the real one arrives from the API, and if
+ * the request fails. It matches the shipped default retention.
  */
 export const DEFAULT_RETENTION_HOURS = 90 * D;
 

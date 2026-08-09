@@ -135,7 +135,7 @@ Below, one full worked example per resource family; sibling endpoints share shap
 | GET | `/devices/{id}/metrics/{metric}?range=24h&step=60s` | `metrics:read` | 200 (convenience wrapper) |
 | GET | `/metrics/catalog` | `metrics:read` | 200 — metric names, units, families |
 
-Response = Prometheus API shape (`{"status":"success","data":{"resultType":"matrix","result":[…]}}`) so any PromQL-ecosystem client works. Server clamps: range ≤ 90 d, step ≥ raw resolution, series ≤ 5k per query.
+Response = Prometheus API shape (`{"status":"success","data":{"resultType":"matrix","result":[…]}}`) so any PromQL-ecosystem client works. Server limits: range ≤ `NETINV_VM_RETENTION` (default 90 d, and the same value VictoriaMetrics is started with, so the ceiling cannot fall below the data actually kept), step ≥ raw resolution, series ≤ 5k per query. Over-long ranges are **rejected** with 422, not clamped — a silently shortened window would make a chart lie about the period it covers. `GET /metrics/limits` reports the ceiling as `max_range_s`, so a client can offer ranges that will actually resolve instead of guessing.
 
 ## 8. Dashboard — `/dashboard` (cached aggregates, doc 05 §7)
 

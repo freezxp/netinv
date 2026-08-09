@@ -238,6 +238,20 @@ export function useAckAlert() {
   });
 }
 
+// useMetricsLimits reports how far back the API will serve a range query.
+//
+// The server rejects anything beyond its ceiling outright — it does not clamp
+// — so a range picker that offers more than this produces errors rather than
+// short graphs. The ceiling tracks the deployment's retention and is therefore
+// not knowable at build time.
+export function useMetricsLimits() {
+  return useQuery({
+    queryKey: ["metrics", "limits"],
+    queryFn: () => api<{ max_range_s: number }>("/metrics/limits"),
+    staleTime: 60 * 60_000, // a deploy-time setting; no reason to re-ask often
+  });
+}
+
 interface RangeMatrix {
   data: {
     result: Array<{

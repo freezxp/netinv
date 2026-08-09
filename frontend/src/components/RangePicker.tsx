@@ -4,11 +4,7 @@
 // are now Cacti's nineteen timespans, which is more than a button row can
 // carry, and a dropdown is what Cacti itself uses — so the control looks the
 // way the people migrating from it expect.
-//
-// Spans beyond the default 90-day retention are grouped separately rather than
-// hidden. Retention is a deploy-time flag the browser cannot read, so removing
-// them would be guessing on the operator's behalf; a graph that stops early
-// explains itself, a missing menu entry does not.
+import { useMetricsLimits } from "../api/hooks";
 import {
   DEFAULT_RETENTION_HOURS,
   TIME_RANGES,
@@ -23,12 +19,22 @@ interface Props {
   ariaLabel?: string;
 }
 
-const within = TIME_RANGES.filter((r) => r.hours <= DEFAULT_RETENTION_HOURS);
-const beyond = TIME_RANGES.filter((r) => r.hours > DEFAULT_RETENTION_HOURS);
-
 export function RangePicker({ className, ariaLabel = "Time range" }: Props) {
   const key = useTimeRangeStore((s) => s.key);
   const setRange = useTimeRangeStore((s) => s.setRange);
+
+  // The API rejects a range past its ceiling outright rather than clamping it,
+  // so anything beyond this produces an error instead of a shorter graph. The
+  // ceiling follows the deployment's retention and cannot be known at build
+  // time — offering the whole Cacti list regardless is how "Last Year" came to
+  // return "range exceeds 90 days" instead of a chart.
+  const limits = useMetricsLimits();
+  const maxHours = limits.data
+    ? limits.data.max_range_s / 3600
+    : DEFAULT_RETENTION_HOURS;
+
+  const usable = TIME_RANGES.filter((r) => r.hours <= maxHours);
+  const beyond = TIME_RANGES.filter((r) => r.hours > maxHours);
 
   return (
     <Select
@@ -37,18 +43,23 @@ export function RangePicker({ className, ariaLabel = "Time range" }: Props) {
       value={key}
       onChange={(e) => setRange(e.target.value as RangeKey)}
     >
-      {within.map((r) => (
+      {usable.map((r) => (
         <option key={r.key} value={r.key}>
           {r.label}
         </option>
       ))}
-      <optgroup label="Beyond default retention (90d)">
-        {beyond.map((r) => (
-          <option key={r.key} value={r.key}>
-            {r.label}
-          </option>
-        ))}
-      </optgroup>
+      {beyond.length > 0 && (
+        // Shown but disabled: an operator who wonders where "Last Year" went
+        // is worse off than one who can see it and why it is unavailable.
+        // Raising NETINV_VM_RETENTION re-enables them.
+        <optgroup label={`Beyond retention (${Math.round(maxHours / 24)}d)`}>
+          {beyond.map((r) => (
+            <option key={r.key} value={r.key} disabled>
+              {r.label}
+            </option>
+          ))}
+        </optgroup>
+      )}
     </Select>
   );
 }

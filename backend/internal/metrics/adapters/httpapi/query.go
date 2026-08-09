@@ -19,6 +19,11 @@ type QueryProxy struct {
 	VMURL   string
 	Checker authz.Checker
 	HTTP    *http.Client
+	// MaxRange caps how far back a range query may reach. Zero means the
+	// 90-day default. It should equal the metrics store's retention: a lower
+	// ceiling hides data the operator is paying to keep, and a higher one just
+	// returns long stretches of nothing.
+	MaxRange time.Duration
 }
 
 func (q *QueryProxy) client() *http.Client {
@@ -33,13 +38,32 @@ func (q *QueryProxy) Register(r chi.Router) {
 		g.Use(httpx.RequirePerm(q.Checker, authz.MetricsRead))
 		g.Get("/metrics/query", q.instant)
 		g.Get("/metrics/query_range", q.rangeQuery)
+		g.Get("/metrics/limits", q.limits)
 	})
 }
 
 const (
-	maxRange = 90 * 24 * time.Hour // server clamps (doc 09 §7)
-	minStep  = 15 * time.Second
+	defaultMaxRange = 90 * 24 * time.Hour // matches the default retention
+	minStep         = 15 * time.Second
 )
+
+func (q *QueryProxy) maxRange() time.Duration {
+	if q.MaxRange > 0 {
+		return q.MaxRange
+	}
+	return defaultMaxRange
+}
+
+// limits reports the query ceiling so the UI can offer time ranges that will
+// actually resolve. Without it the range selector has to hard-code a guess,
+// and any operator who changes retention gets either presets that fail or
+// presets that are missing — the browser has no other way to learn what the
+// deployment keeps.
+func (q *QueryProxy) limits(w http.ResponseWriter, _ *http.Request) {
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"max_range_s": int64(q.maxRange().Seconds()),
+	})
+}
 
 func (q *QueryProxy) instant(w http.ResponseWriter, r *http.Request) {
 	expr := r.URL.Query().Get("query")
@@ -64,8 +88,12 @@ func (q *QueryProxy) rangeQuery(w http.ResponseWriter, r *http.Request) {
 			"query, start and end (RFC3339 or unix) are required"))
 		return
 	}
-	if end.Sub(start) > maxRange {
-		httpx.WriteError(w, r, errx.New(errx.KindInvalid, "range exceeds 90 days"))
+	// The message names the actual ceiling. Hard-coding "90 days" outlived the
+	// constant it described the moment retention became configurable, and a
+	// limit that misreports itself is worse than one that is merely low.
+	if limit := q.maxRange(); end.Sub(start) > limit {
+		httpx.WriteError(w, r, errx.New(errx.KindInvalid,
+			"range exceeds the %s query limit", roundDays(limit)))
 		return
 	}
 	step := 60 * time.Second
@@ -108,6 +136,23 @@ func (q *QueryProxy) forward(w http.ResponseWriter, r *http.Request, path string
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(resp.StatusCode)
 	_, _ = io.Copy(w, resp.Body)
+}
+
+// roundDays renders a limit the way an operator set it, so the error is
+// actionable: "730 days" rather than "17520h0m0s".
+func roundDays(d time.Duration) string {
+	days := int(d.Hours() / 24)
+	if days <= 0 {
+		return d.String()
+	}
+	return strconv.Itoa(days) + " day" + plural(days)
+}
+
+func plural(n int) string {
+	if n == 1 {
+		return ""
+	}
+	return "s"
 }
 
 func parseTime(s string) (time.Time, error) {
