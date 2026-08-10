@@ -42,7 +42,7 @@ All architecture decisions live in **`DECISIONS.md`** with rationale. Never sile
 
 ## Doc package map
 
-`docs/README.md` is the authoritative index of all 30 documents with one-line summaries and dependency order. Documents are numbered `01`–`30`; the number is the canonical reference (e.g. "per doc 09" = API spec).
+`docs/README.md` is the authoritative index of all 33 documents with one-line summaries and dependency order. Documents are numbered `01`–`33`; the number is the canonical reference (e.g. "per doc 09" = API spec).
 
 ## When the build phase starts
 

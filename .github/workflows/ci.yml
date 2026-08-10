@@ -117,6 +117,13 @@ jobs:
             detect -s /repo --no-git --redact -c /repo/.gitleaks.toml
       - name: Dependency licences
         run: make licenses
+      # The repository is public and its shell scripts are the first thing a
+      # contributor runs. Two real deliberate word-splits are annotated with a
+      # reason rather than silenced wholesale.
+      - name: shellcheck
+        run: |
+          docker run --rm -v "$PWD:/mnt" koalaman/shellcheck:stable \
+            $(git ls-files '*.sh' | sed 's|^|/mnt/|')
       - uses: actions/setup-go@v5
         with:
           go-version-file: backend/go.mod

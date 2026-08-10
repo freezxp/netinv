@@ -5,6 +5,10 @@ platform on one host, no Kubernetes. Good for evaluation, demos, and small
 single-site installs. For multi-site production use the Helm charts and the
 [pilot runbook](31-pilot-runbook.md).
 
+> Running this inside a **Proxmox LXC** container? See
+> [doc 33](33-proxmox-lxc.md) first — three things behave differently there,
+> and one of them (unprivileged ICMP) fails silently and partially.
+
 ## Prerequisites
 
 - **Docker** with the **Compose v2** plugin (`docker compose version` works).

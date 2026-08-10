@@ -34,6 +34,10 @@ for dir in */; do
 		sort -u || true)
 	if [ -n "$bad" ]; then
 		note FAIL "imports outside sdk/generic/stdlib:"
+		# Unquoted on purpose: $bad holds a newline-separated list, and the
+		# splitting is what makes printf repeat the format once per import.
+		# Quoting it would print the whole list on a single line.
+		# shellcheck disable=SC2086
 		printf '            %s\n' $bad
 		fail=1
 	else

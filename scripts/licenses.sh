@@ -46,6 +46,7 @@ fi
 cd ..
 printf '\n=== frontend (npm) ===\n'
 if [ ! -d frontend/node_modules ]; then
+	# shellcheck disable=SC2016  # the backticks are literal text, not a subshell
 	printf 'node_modules absent — run `npm ci` in frontend/ first (skipped)\n'
 else
 	node - <<'NODE' || fail=1

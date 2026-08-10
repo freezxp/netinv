@@ -1,6 +1,6 @@
 # NetInv Design Package — Document Index
 
-30 documents. Numbers are canonical references ("doc 09" = API spec). Read top-to-bottom for the full picture, or follow the role guides below.
+33 documents. Numbers are canonical references ("doc 09" = API spec). Read top-to-bottom for the full picture, or follow the role guides below.
 
 | # | Document | One-liner | Status |
 |---|---|---|---|
@@ -36,6 +36,7 @@
 | 30 | [UI Design](30-ui-design.md) | Every page: layout, components, states, dark mode | draft |
 | 31 | [Pilot & Production Runbook](31-pilot-runbook.md) | Operator checklist: install, enroll, validate, back up, widen | draft |
 | 32 | [Quick Start (Docker Compose)](32-quickstart.md) | One-command single-host test deployment | draft |
+| 33 | [Proxmox LXC deployment](33-proxmox-lxc.md) | Running the Compose stack in an LXC container: nesting/keyctl, storage driver, unprivileged ICMP | draft |
 
 ## Role guides
 
@@ -43,7 +44,7 @@
 - **New AI agent taking over:** `/CLAUDE.md` → `/DECISIONS.md` → 01 → 05 → 26.
 - **Backend work:** 05, 08, 09, 10, 11, 13, 16, 17, 23.
 - **Frontend work:** 30, 09, 14, 02.
-- **Ops/deploy:** 18, 19, 21, 22, 25, 04.
+- **Ops/deploy:** 18, 19, 21, 22, 25, 04; single-host installs 32 (Docker Compose) and 33 (Proxmox LXC).
 - **Product/management:** 01, 02, 26, 27, 28, 29.
 
 ## Conventions

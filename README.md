@@ -56,7 +56,7 @@ netinv/
 ├── SECURITY.md        ← reporting vulnerabilities; what NetInv holds worth attacking
 ├── CLAUDE.md          ← AI onboarding: read this first if you are an AI agent
 ├── DECISIONS.md       ← architecture decision log (ADR-lite); the "why" behind everything
-├── docs/              ← the 30-document design package (numbered, see docs/README.md)
+├── docs/              ← the 33-document design package (numbered, see docs/README.md)
 ├── backend/           ← Go services: api, scheduler, poller, ingester, alerter, notifier
 ├── connectors/        ← vendor connector packages (cisco, juniper, huawei, zte, ubiquiti, ruckus)
 ├── frontend/          ← React + TypeScript app
