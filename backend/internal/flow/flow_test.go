@@ -542,3 +542,37 @@ func mustAllow(t *testing.T, s string) []netip.Prefix {
 	}
 	return p
 }
+
+// Intake is reported per interval, not as a running total. This matters more
+// than it looks: on cumulative counters, a single malformed packet makes the
+// collector log "undecodable: 1" every minute for the life of the process, and
+// reports packets against an interval that drained cleanly long ago. The whole
+// value of the line is telling an operator what is happening *now*.
+func TestIntakeIsReportedPerIntervalNotCumulatively(t *testing.T) {
+	c := &Collector{Agg: NewAggregator(), Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	from := &net.UDPAddr{IP: net.ParseIP("192.0.2.1"), Port: 5000}
+	good := v5Packet(t, 0, 0, Record{SrcAddr: addr("10.0.0.1"),
+		DstAddr: addr("10.0.0.2"), InputIf: 1, Bytes: 100, Packets: 1})
+
+	c.handle(good, from)
+	c.handle([]byte{0, 5, 0, 30}, from) // undecodable
+	if p, r, _, m := c.interval(); p != 1 || r != 1 || m != 1 {
+		t.Fatalf("first interval: packets=%d records=%d malformed=%d, want 1/1/1", p, r, m)
+	}
+
+	// A quiet interval must report nothing, not repeat the previous one.
+	if p, r, rf, m := c.interval(); p != 0 || r != 0 || rf != 0 || m != 0 {
+		t.Errorf("quiet interval reported %d/%d/%d/%d, want zeroes", p, r, rf, m)
+	}
+
+	c.handle(good, from)
+	if p, m := func() (uint64, uint64) { p, _, _, m := c.interval(); return p, m }(); p != 1 || m != 0 {
+		t.Errorf("third interval: packets=%d malformed=%d, want 1/0", p, m)
+	}
+
+	// Running totals stay cumulative — the delta is a reporting view, not a
+	// replacement for the counters themselves.
+	if p, r, _, m := c.Stats(); p != 2 || r != 2 || m != 1 {
+		t.Errorf("Stats totals = %d/%d/%d, want 2/2/1", p, r, m)
+	}
+}

@@ -146,7 +146,9 @@ outside, so the collector distinguishes them in its log at info level:
 
 - `flow intake` — logged whenever anything was refused by the allow-list or
   could not be decoded, with counts. If you see this, an exporter is pointed at
-  NetInv and something is wrong with it.
+  NetInv and something is wrong with it. **The counts are per interval, not
+  running totals**, so the line stops appearing when the problem stops; a
+  cumulative version would re-report one bad packet every minute forever.
 - `flow received but nothing aggregated` — packets decoded but produced no
   buckets, which in practice means flows with no usable ifIndex (§3.1).
 - `flow key cap reached` (warn) — the per-interval key cap was hit and detail

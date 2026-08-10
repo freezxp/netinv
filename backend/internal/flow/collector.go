@@ -42,6 +42,11 @@ type Collector struct {
 	stats struct {
 		packets, records, refused, malformed atomic.Uint64
 	}
+	// prev holds the totals as of the last drain, so intake can be reported as
+	// a per-interval delta. Owned by drainLoop alone.
+	prev struct {
+		packets, records, refused, malformed uint64
+	}
 }
 
 // Run listens until the context is cancelled.
@@ -157,7 +162,12 @@ func (c *Collector) drainLoop(ctx context.Context, every time.Duration) {
 			// misconfigured exporter versus none — is the first thing an
 			// operator needs. Debug-only logging hid exactly that during
 			// development.
-			pkts, recs, refused, malformed := c.Stats()
+			//
+			// Deltas, not the running totals: these lines describe the interval
+			// that just closed. Logging cumulative counters would re-report one
+			// bad packet every minute for the life of the process, and would
+			// attribute packets to an interval that drained cleanly minutes ago.
+			pkts, recs, refused, malformed := c.interval()
 			if refused > 0 || malformed > 0 {
 				c.Log.Info("flow intake", "packets", pkts, "records", recs,
 					"refused_by_allowlist", refused, "undecodable", malformed)
@@ -168,6 +178,9 @@ func (c *Collector) drainLoop(ctx context.Context, every time.Duration) {
 			if len(buckets) == 0 {
 				if pkts == 0 && malformed == 0 && refused == 0 {
 					continue // genuinely idle: no exporter is sending anything
+				}
+				if pkts == 0 {
+					continue // already reported above as refused or undecodable
 				}
 				c.Log.Info("flow received but nothing aggregated",
 					"packets", pkts, "undecodable", malformed,
@@ -194,7 +207,19 @@ func (c *Collector) drainLoop(ctx context.Context, every time.Duration) {
 	}
 }
 
-// Stats reports what the listener has seen, for the service's own /metrics.
+// interval returns what arrived since the last call, for reporting on the
+// interval that just closed. Only drainLoop calls it, so the previous-values
+// state needs no lock of its own.
+func (c *Collector) interval() (packets, records, refused, malformed uint64) {
+	p, r, rf, m := c.Stats()
+	packets, records = p-c.prev.packets, r-c.prev.records
+	refused, malformed = rf-c.prev.refused, m-c.prev.malformed
+	c.prev.packets, c.prev.records = p, r
+	c.prev.refused, c.prev.malformed = rf, m
+	return packets, records, refused, malformed
+}
+
+// Stats reports the running totals since start.
 func (c *Collector) Stats() (packets, records, refused, malformed uint64) {
 	return c.stats.packets.Load(), c.stats.records.Load(),
 		c.stats.refused.Load(), c.stats.malformed.Load()
