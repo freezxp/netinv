@@ -13,6 +13,7 @@ import {
 } from "../../api/hooks";
 import { useTimeRange } from "../../api/timerange";
 import { FlowTable } from "../../components/FlowTable";
+import { FlowSetupGuide } from "./FlowSetupGuide";
 import { TimeSeries } from "../../components/TimeSeries";
 import { Card, cx, Select } from "../../components/ui";
 import { formatBps } from "../../lib/format";
@@ -191,8 +192,38 @@ export function FlowTab({
         (ADR-020). Anything outside that cut was never recorded, so these totals
         describe the top of the traffic, not all of it.
       </p>
+
+      {/* Collapsed once flow is working — still reachable, because setting up
+          the second exporter is the normal next step after the first. */}
+      <Card>
+        <details>
+          <summary className="cursor-pointer text-sm font-medium text-slate-600 dark:text-slate-300">
+            How to configure NetFlow v5 on a device
+          </summary>
+          <div className="mt-4">
+            <FlowSetupGuide destIP={collectorHost()} />
+          </div>
+        </details>
+      </Card>
     </div>
   );
+}
+
+// The address to give the exporter. The browser reached NetInv on it, so it is
+// the best available guess at an address the device can also reach — but only a
+// guess: the collector may run on another host, or sit behind NAT. The guide
+// says so rather than presenting it as fact.
+//
+// A loopback address is the one answer that is never right and is silently
+// wrong: pasted into a router, "localhost" points the exporter at itself, and
+// the result is a correct-looking configuration that sends flow nowhere. An
+// obvious placeholder is better than a plausible mistake.
+const LOOPBACK = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
+
+export function collectorHost() {
+  const h = window.location.hostname;
+  if (!h || LOOPBACK.has(h.toLowerCase())) return "";
+  return h;
 }
 
 // The empty state carries the diagnosis rather than a shrug. "No data" on a
@@ -244,34 +275,9 @@ function NoFlow({
             </p>
           </>
         )}
-        <ul className="list-disc space-y-1 pl-5 text-slate-500 dark:text-slate-400">
-          <li>
-            <strong>NetFlow v5 only, and it must be set explicitly.</strong>{" "}
-            Most platforms default to v9 or IPFIX, which are not decoded yet —
-            an exporter sending those looks exactly like one sending nothing.
-            This is the most common reason a correctly-pointed exporter shows up
-            here empty.
-          </li>
-          <li>
-            <strong>Set the active timeout to 1 minute.</strong> The usual
-            30-minute default reports a long transfer once per half hour as one
-            huge record, which charts as a spike surrounded by nothing.
-          </li>
-          <li>
-            Enable export <em>on the interfaces</em>, ingress direction — global
-            configuration alone collects nothing on most platforms. A flow with
-            no ingress or egress ifIndex cannot be attributed and is discarded.
-          </li>
-          <li>
-            The collector logs <span className="mono">flow intake</span> when it
-            receives packets it cannot use, so its log distinguishes a
-            misconfigured exporter from no exporter at all.
-          </li>
-          <li>
-            Per-vendor configuration snippets and a step-by-step check are in{" "}
-            <span className="mono">docs/34-flow-collection.md</span> §4.2–4.3.
-          </li>
-        </ul>
+        <div className="mt-5 border-t border-slate-200 pt-4 dark:border-slate-800">
+          <FlowSetupGuide destIP={collectorHost()} />
+        </div>
       </div>
     </Card>
   );

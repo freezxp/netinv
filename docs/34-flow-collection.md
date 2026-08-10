@@ -152,6 +152,13 @@ everything else NetInv does.
 
 ### 4.2 Configuring a device to export NetFlow v5
 
+> **These snippets are also in the product**, on the device Flow tab — expanded
+> when the tab is empty, collapsed behind a disclosure once flow is arriving —
+> with the collector's address substituted in and a copy button. That is where
+> an operator stands when they need this, and a pointer to a file in the source
+> repository asks them to leave and go find it. The two copies must be changed
+> together; `features/devices/FlowSetupGuide.tsx` says so at the bottom.
+>
 > **None of the snippets below were run against hardware.** No device in the
 > reference pilot can export flow, so these come from vendor documentation and
 > are the starting point for a first attempt, not a verified recipe. If you get
