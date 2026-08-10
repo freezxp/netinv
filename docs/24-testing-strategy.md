@@ -12,13 +12,13 @@
 ```
 Overall backend ≥70% lines; `domain/` + SyncDiffer + RuleEvaluator + DerivationService ≥90%; connectors ≥90% of mapping code. Coverage is a CI gate but reviewed for meaning, not gamed.
 
-### 1.1 Where coverage actually stands (2026-08-09)
+### 1.1 Where coverage actually stands (2026-08-10)
 
 Those are targets, and the distance to them is large enough that stating it plainly is more useful than restating the goal:
 
 | Scope | Target | Measured |
 |---|---|---|
-| Backend overall | ≥70% | **14.9%** |
+| Backend overall | ≥70% | **18.4%** |
 | `connectors/` module | ≥90% of mapping code | 71.6% |
 | `domain/` packages | ≥90% | 82.1% |
 | SyncDiffer (`inventory/app/sync`) | ≥90% | 62.3% |
@@ -28,11 +28,19 @@ Those are targets, and the distance to them is large enough that stating it plai
 
 The shape is what one would expect from a codebase built outside-in against a live pilot: domain logic and connector mapping are reasonably covered, while adapters — HTTP handlers, Postgres stores, AMQP publishers, the six `cmd/` entrypoints — sit near zero and dominate the total.
 
-The CI gate is therefore a **ratchet, not the 70% bar**: `scripts/coverage.sh` fails when coverage falls below `scripts/coverage-floor.txt`, currently 14.5%. Gating at 70% today would produce a permanently red build, which teaches everyone to ignore CI and is worse than no gate. Raising the floor is a deliberate commit, so progress shows up in history instead of being asserted here. The 70% target stands; this records the honest starting point for closing it.
+The CI gate is therefore a **ratchet, not the 70% bar**: `scripts/coverage.sh` fails when coverage falls below `scripts/coverage-floor.txt`, currently 18.0% — raised four times as tests landed alongside features, each time as a deliberate commit. Gating at 70% today would produce a permanently red build, which teaches everyone to ignore CI and is worse than no gate. Raising the floor is a deliberate commit, so progress shows up in history instead of being asserted here. The 70% target stands; this records the honest starting point for closing it.
 
 ## 2. The SNMP problem — simulate, then verify on real iron
 
-- **Recorded-walk fixtures:** every connector ships `testdata/*.snmpwalk` recorded from real devices (`scripts/walk-recorder`, scrubs serials/locations on request). Unit tests replay fixtures through a fake `Session` — connector tests need no network, run in ms, and lock in vendor behavior forever (a regression = a diff in normalized output).
+**Throwaway instances for the "real iron" half.** [Doc 33 §7](33-proxmox-lxc.md)
+covers spinning up a complete NetInv in a Proxmox LXC in about ten minutes and
+deleting it with one command, on any branch. That is the intended way to point
+a change at real equipment without testing against the deployment people rely
+on — which this project has already done the wrong way once, with integration
+tests writing into a live database.
+
+
+- **Recorded-walk fixtures:** connectors ship `testdata/*.snmpwalk` recorded from real devices (`scripts/record-fixture.sh`, which redacts serials, addresses and MACs at capture time — values *and* table indices, since tables like the Ruckus per-AP one are indexed by MAC). Four of seven have one today: `generic`/`cisco` from the simulator, `ruckus`/`ubiquiti` from real hardware; `huawei`/`juniper`/`zte` have no hardware to record from. Unit tests replay fixtures through a fake `Session` — connector tests need no network, run in ms, and lock in vendor behavior forever (a regression = a diff in normalized output).
 - **snmpsim** (`tools/snmpsim/`): serves those same walks over real UDP 161 for integration/E2E — the compose stack boots with 12 simulated devices (all 5 vendors + generic + edge cases: 32-bit-only counters, 4k-interface chassis, v3-authPriv, agent that times out intermittently, ifIndex-shifting device).
 - **Real-hardware pass (Sprint 17):** the connector matrix (doc 10 §5) is validated against at least one physical unit per vendor; results recorded in each connector's README (model, OS, families verified). ZTE explicitly risk-flagged (R-07).
 
