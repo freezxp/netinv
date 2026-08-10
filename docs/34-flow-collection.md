@@ -2,7 +2,8 @@
 
 **Status:** draft · **Depends on:** 05, 09, 13, 29 · The `netinv-flow` service:
 what it receives, what it stores, what it deliberately throws away, and the
-exposure that comes with listening on a socket.
+exposure that comes with listening on a socket, and the Flow tab that reads
+it.
 
 > **Validated against a generated source, not against hardware.** Nothing in the
 > reference pilot exports flow: the UniFi gateways do not emit NetFlow natively,
@@ -202,17 +203,36 @@ rather than a note in this document:
 The read buffer is a full 65535 bytes so an oversized datagram is rejected as
 malformed rather than silently truncated into a plausible-looking short packet.
 
-## 7. What this increment does not include
+## 7. The UI
+
+A **Flow** tab on device detail (doc 30) reads these series directly through the
+metrics proxy. Two things about it are worth knowing before changing it:
+
+`netinv_flow_bytes` is **not cumulative**, so `rate()` — correct for every other
+metric in this codebase — under-reports it by the lookback factor without
+erroring. The frontend reduces with `sum_over_time(...[window]) / window`
+instead, and the window never drops below the aggregation interval, since a
+shorter one can fall between samples and return nothing at all. `flowRateExpr`
+and `flowWindow` in `api/hooks.ts` exist so no caller has to remember either.
+
+The table ranks on **total bytes over the whole selected range**, not on the
+latest sample — ranking on the latest would reorder the table every minute on
+ordinary jitter. Its rate column is therefore an average across that range, and
+is labelled as such: with traffic covering only part of a long window, that
+average sits far below the peak on the chart beside it, and an unlabelled
+number invites the reader to think one of the two is wrong.
+
+## 8. What this increment does not include
 
 Stated explicitly so nobody reads §2's table as a to-do list that is nearly
 finished:
 
 - **NetFlow v9, IPFIX and sFlow are not implemented.** See §2 for why v9/IPFIX
   are a design question rather than a coding one.
-- **There is no UI.** The series are queryable, and nothing in the frontend
-  displays them yet.
-- **No API endpoint fronts these series.** They are read through the existing
-  metrics proxy like any other.
+- **No API endpoint fronts these series.** The UI reads them through the
+  existing metrics proxy like any other metric, which is why no new endpoint
+  was needed; there is no server-side flow resource to version or document in
+  doc 09.
 - **No validation against a real exporter**, because the pilot has none. This is
   the single most useful thing an outside contributor could report — see
   `/CONTRIBUTING.md` and the hardware-validation ask in Discussions.

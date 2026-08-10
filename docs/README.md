@@ -37,7 +37,7 @@
 | 31 | [Pilot & Production Runbook](31-pilot-runbook.md) | Operator checklist: install, enroll, validate, back up, widen | draft |
 | 32 | [Quick Start (Docker Compose)](32-quickstart.md) | One-command single-host test deployment | draft |
 | 33 | [Proxmox LXC deployment](33-proxmox-lxc.md) | Running the Compose stack in an LXC container: nesting/keyctl, storage driver, unprivileged ICMP | draft |
-| 34 | [Flow collection](34-flow-collection.md) | The `netinv-flow` collector: NetFlow decode, ingest-time top-N aggregation, and the exposure of listening on a socket | draft |
+| 34 | [Flow collection](34-flow-collection.md) | The `netinv-flow` collector: NetFlow decode, ingest-time top-N aggregation, the exposure of listening on a socket, and the Flow tab | draft |
 
 ## Role guides
 

@@ -25,12 +25,14 @@ import { TimeSeries, type PromMatrix } from "../../components/TimeSeries";
 import { RangePicker } from "../../components/RangePicker";
 import { rateWindow, useTimeRange } from "../../api/timerange";
 import { OidBrowser } from "../inventory/OidBrowser";
+import { FlowTab } from "./FlowTab";
 import { formatBps, formatDuration, formatMs } from "../../lib/format";
 
 const baseTabs = [
   "Interfaces",
   "Health",
   "Availability",
+  "Flow",
   "History",
   "Alerts",
 ] as const;
@@ -43,6 +45,7 @@ const GRAPH_TABS = new Set<Tab>([
   "Health",
   "Availability",
   "Wireless",
+  "Flow",
 ]);
 
 export function DeviceDetailPage() {
@@ -56,6 +59,12 @@ export function DeviceDetailPage() {
 
   // Wireless is only meaningful for a controller/AP, so the tab appears only
   // when the device actually reports clients — no empty tab on a router.
+  //
+  // Flow deliberately does *not* work this way. Wireless data appears because
+  // of what a device is; flow appears because of what an operator configured,
+  // so hiding the tab until data arrives would hide it exactly when someone is
+  // trying to find out why nothing has. It is always present, and carries its
+  // own diagnosis when empty.
   const wirelessProbe = useQueryRange(
     `netinv_wireless_client_count{device_id="${id}"}`,
     1,
@@ -155,6 +164,7 @@ export function DeviceDetailPage() {
       {tab === "Health" && <HealthTab deviceID={id} />}
       {tab === "Wireless" && <WirelessTab deviceID={id} />}
       {tab === "Availability" && <AvailabilityTab deviceID={id} />}
+      {tab === "Flow" && <FlowTab deviceID={id} mgmtIP={d?.mgmt_ip ?? ""} />}
       {tab === "History" && <HistoryTab deviceID={id} />}
       {tab === "Alerts" && <AlertsTab deviceID={id} />}
     </div>

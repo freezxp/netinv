@@ -307,6 +307,75 @@ export function seriesExpr(
     .join(" or ");
 }
 
+// --- flow (doc 34) --------------------------------------------------------
+//
+// Flow series are shaped unlike every other metric here, and getting it wrong
+// is silent rather than loud. `netinv_flow_bytes` is **not cumulative**: each
+// sample holds the bytes counted during that one aggregation interval, so
+// rate() — the reflex everywhere else in this file — would divide a per-minute
+// total by the lookback and under-report by that factor without erroring.
+//
+// sum_over_time over the step is the correct reduction: total bytes in the
+// window, divided by the window, is average bits per second however the step
+// is sized. It also stays honest when a bucket drops out of the top N for part
+// of the window — those minutes contribute nothing rather than being averaged
+// away, which is what actually happened.
+export const FLOW_INTERVAL_S = 60;
+
+export type FlowDimension = "talker" | "conversation" | "application";
+
+export function flowSelector(
+  exporter: string,
+  dimension: FlowDimension,
+  ifIndex?: string,
+) {
+  const parts = [`exporter="${exporter}"`, `dimension="${dimension}"`];
+  if (ifIndex) parts.push(`if_index="${ifIndex}"`);
+  return `{${parts.join(",")}}`;
+}
+
+// flowWindow never goes below the aggregation interval: a window shorter than
+// one interval can fall between samples and return nothing at all.
+export function flowWindow(stepS: number) {
+  return Math.max(stepS, FLOW_INTERVAL_S);
+}
+
+// flowRateExpr gives average bits/sec per bucket, summed across interfaces
+// when no single one is selected.
+export function flowRateExpr(selector: string, windowS: number) {
+  return (
+    `sum by (value) (sum_over_time(netinv_flow_bytes${selector}[${windowS}s]))` +
+    ` * 8 / ${windowS}`
+  );
+}
+
+// flowTotalExpr gives total bytes per bucket over the whole visible range,
+// which is what ranks a top-N table — ranking on the latest sample alone would
+// reorder the table every minute on ordinary jitter.
+export function flowTotalExpr(selector: string, rangeS: number) {
+  return `sum by (value) (sum_over_time(netinv_flow_bytes${selector}[${rangeS}s]))`;
+}
+
+interface Vector {
+  data: {
+    result: Array<{ metric: Record<string, string>; value: [number, string] }>;
+  };
+}
+
+// useInstantQuery evaluates an expression at a single point in time.
+export function useInstantQuery(expr: string, enabled = true) {
+  return useQuery({
+    queryKey: ["instant", expr],
+    queryFn: async () => {
+      const params = new URLSearchParams({ query: expr });
+      const res = await api<Vector>(`/metrics/query?${params}`);
+      return res.data.result;
+    },
+    enabled,
+    refetchInterval: 30_000,
+  });
+}
+
 // useQueryRange fetches a MetricsQL range through the scope-guarded proxy.
 export function useQueryRange(expr: string, rangeHours: number, stepS = 60) {
   return useQuery({

@@ -12,6 +12,21 @@ export function formatBps(bps: number): string {
   return `${v >= 100 ? v.toFixed(0) : v.toFixed(1)} ${units[i]}`;
 }
 
+// Volume rather than rate: flow tables rank on bytes moved over the visible
+// range, which is a different quantity from the bits/sec on the chart beside
+// it and must not borrow that formatter.
+export function formatBytes(bytes: number): string {
+  if (!isFinite(bytes) || bytes <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB", "PB"];
+  let i = 0;
+  let v = bytes;
+  while (v >= 1000 && i < units.length - 1) {
+    v /= 1000;
+    i++;
+  }
+  return `${v >= 100 || i === 0 ? v.toFixed(0) : v.toFixed(1)} ${units[i]}`;
+}
+
 export function formatMs(seconds: number): string {
   const ms = seconds * 1000;
   if (ms < 1) return `${(ms * 1000).toFixed(0)} µs`;
