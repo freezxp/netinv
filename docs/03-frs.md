@@ -24,7 +24,7 @@ Requirement IDs: `FR-<MODULE>-<nn>`. Every requirement is testable; acceptance c
 
 ## DEV — Device & inventory
 
-- **FR-DEV-01** A device record MUST carry: display name, management IP (v4/v6), site, vendor/connector binding, credential reference, polling profile, enabled flag, tags, and free-text notes.
+- **FR-DEV-01** A device record MUST carry: display name, management IP (v4/v6), site, vendor/connector binding, credential reference, polling profile, enabled flag, tags, and free-text notes. Every one of those is editable after creation, the management IP and SNMP port included — equipment gets renumbered, and a monitoring system that cannot follow it forces a delete-and-recreate that discards the device's history.
 - **FR-DEV-02** Devices MUST be creatable singly (form/API) and in bulk via CSV import with per-row validation report.
 - **FR-DEV-03** Inventory search MUST match name, IP, serial, model, sysDescr, and tag values with <1 s response at 100k devices (indexed per doc 08).
 - **FR-DEV-04** Filters MUST compose (vendor ∧ site ∧ status ∧ firmware-version ∧ group) and be shareable as URL state.

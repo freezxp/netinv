@@ -12,7 +12,7 @@ import (
 
 // stubRepo accepts everything, so any rejection in these tests comes from
 // validation rather than from a repository refusing the write.
-type stubRepo struct{ created *domain.Device }
+type stubRepo struct{ created, updated *domain.Device }
 
 func (r *stubRepo) List(context.Context, DeviceFilter) ([]*domain.Device, string, error) {
 	return nil, "", nil
@@ -23,8 +23,11 @@ func (r *stubRepo) Get(_ context.Context, id string) (*domain.Device, error) {
 	}
 	return &domain.Device{ID: id}, nil
 }
-func (r *stubRepo) Create(_ context.Context, d *domain.Device) error             { r.created = d; return nil }
-func (r *stubRepo) Update(context.Context, *domain.Device) error                 { return nil }
+func (r *stubRepo) Create(_ context.Context, d *domain.Device) error { r.created = d; return nil }
+func (r *stubRepo) Update(_ context.Context, d *domain.Device) error {
+	r.updated = d
+	return nil
+}
 func (r *stubRepo) SetStatus(context.Context, string, domain.DeviceStatus) error { return nil }
 func (r *stubRepo) Purge(context.Context, string) error                          { return nil }
 func (r *stubRepo) RefsExist(context.Context, string, string, string, string) error {
@@ -100,6 +103,91 @@ func TestCreateAcceptsPortsInRange(t *testing.T) {
 			if got != port {
 				t.Errorf("port %d: stored %v", port, got)
 			}
+		}
+	}
+}
+
+// The API accepted a re-address, returned 200, and changed nothing: neither
+// the service nor the repository's UPDATE touched mgmt_ip. A device that moved
+// could only be corrected by deleting it, which loses its history.
+func TestUpdateAppliesManagementAddress(t *testing.T) {
+	svc, repo := newService()
+	repo.created = &domain.Device{
+		ID: "d_1", MgmtIP: "198.51.100.7", Name: "edge-01",
+		SiteID: "s_default", CredentialID: "cr_1",
+		Attrs: map[string]any{},
+	}
+
+	got, err := svc.Update(context.Background(), "d_1",
+		DeviceInput{MgmtIP: "198.51.100.9"}, Meta{})
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if got.MgmtIP != "198.51.100.9" {
+		t.Errorf("mgmt_ip = %q, want the new address", got.MgmtIP)
+	}
+	if repo.updated == nil || repo.updated.MgmtIP != "198.51.100.9" {
+		t.Error("the new address never reached the repository")
+	}
+}
+
+func TestUpdateRejectsAnUnparseableAddress(t *testing.T) {
+	svc, repo := newService()
+	repo.created = &domain.Device{ID: "d_1", MgmtIP: "198.51.100.7",
+		Attrs: map[string]any{}}
+
+	_, err := svc.Update(context.Background(), "d_1",
+		DeviceInput{MgmtIP: "not-an-ip"}, Meta{})
+	if err == nil {
+		t.Fatal("an unparseable address was accepted")
+	}
+	if errx.KindOf(err) != errx.KindInvalid {
+		t.Errorf("kind = %v, want KindInvalid", errx.KindOf(err))
+	}
+}
+
+// The port lives in attrs and is read at poll time, so it must round-trip the
+// same way — and 161 has to *clear* the override rather than pin the device to
+// today's default.
+func TestUpdateManagesTheSNMPPortOverride(t *testing.T) {
+	svc, repo := newService()
+	repo.created = &domain.Device{ID: "d_1", MgmtIP: "198.51.100.7",
+		Attrs: map[string]any{}}
+
+	if _, err := svc.Update(context.Background(), "d_1",
+		DeviceInput{SNMPPort: 1161}, Meta{}); err != nil {
+		t.Fatalf("set port: %v", err)
+	}
+	if got := repo.updated.Attrs["snmp_port"]; got != 1161 {
+		t.Errorf("snmp_port = %v, want 1161", got)
+	}
+
+	// Absent from a partial update means "leave it".
+	if _, err := svc.Update(context.Background(), "d_1",
+		DeviceInput{Name: "renamed"}, Meta{}); err != nil {
+		t.Fatalf("partial update: %v", err)
+	}
+	if got := repo.updated.Attrs["snmp_port"]; got != 1161 {
+		t.Errorf("snmp_port = %v after an unrelated update, want it untouched", got)
+	}
+
+	if _, err := svc.Update(context.Background(), "d_1",
+		DeviceInput{SNMPPort: 161}, Meta{}); err != nil {
+		t.Fatalf("reset port: %v", err)
+	}
+	if _, still := repo.updated.Attrs["snmp_port"]; still {
+		t.Error("161 should clear the override, not store it")
+	}
+}
+
+func TestUpdateRejectsAnOutOfRangePort(t *testing.T) {
+	svc, repo := newService()
+	repo.created = &domain.Device{ID: "d_1", MgmtIP: "198.51.100.7",
+		Attrs: map[string]any{}}
+	for _, bad := range []int{-1, 65536, 99999} {
+		if _, err := svc.Update(context.Background(), "d_1",
+			DeviceInput{SNMPPort: bad}, Meta{}); err == nil {
+			t.Errorf("port %d was accepted on update", bad)
 		}
 	}
 }

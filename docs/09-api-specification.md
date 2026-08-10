@@ -95,9 +95,11 @@ Below, one full worked example per resource family; sibling endpoints share shap
 | POST | `/devices` | `devices:write` | 201, 409 (duplicate IP), 422 |
 | POST | `/devices/import` (CSV multipart) | `devices:write` | 200 row-report |
 | GET | `/devices/{id}` | `devices:read` | 200, 404 |
-| PATCH | `/devices/{id}` | `devices:write` | 200 |
+| PATCH | `/devices/{id}` | `devices:write` | 200, 409 (address in use), 422 |
 | POST | `/devices/{id}/retire` · `/enable` · `/disable` | `devices:write` | 200 |
 | DELETE | `/devices/{id}` (hard purge) | `devices:admin` | 204, 409 (not retired) |
+
+`PATCH /devices/{id}` is a partial update over operator-owned fields. Identity discovered by sync — sysName, sysDescr, serial, model — is not writable; a change there would be overwritten by the next sync anyway. **`mgmt_ip` and `snmp_port` are writable**, because a device gets renumbered or moves off DHCP and NetInv has to follow it; until 2026-08-10 both were silently dropped, so a re-address returned 200 and changed nothing, and the only way to correct one was to delete the device and lose its history. Re-addressing onto an address another device holds is a 409, matching create. `snmp_port` omitted means "leave it"; set to 161 it clears the override so the device follows the default rather than pinning to today's value of it.
 | POST | `/devices/{id}/sync` (on-demand) | `devices:write` | 202 `{sync_run_id}` |
 | GET | `/devices/{id}/interfaces` | `devices:read` | 200 |
 | PATCH | `/devices/{id}/interfaces/{ifId}` (`monitor`, notes) | `devices:write` | 200 |

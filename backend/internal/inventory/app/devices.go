@@ -114,9 +114,37 @@ func (s *DeviceService) Update(ctx context.Context, deviceID string, in DeviceIn
 	}
 	before := map[string]any{"name": d.Name, "site_id": d.SiteID,
 		"credential_id": d.CredentialID, "profile_id": d.ProfileID, "notes": d.Notes,
-		"wan_capacity_bps": d.WANCapacityBPS}
-	// Operator-owned fields only (doc 11 §3): identity fields from sync are
-	// not writable here.
+		"wan_capacity_bps": d.WANCapacityBPS, "mgmt_ip": d.MgmtIP,
+		"snmp_port": d.Attrs["snmp_port"]}
+	// Operator-owned fields only (doc 11 §3): identity fields discovered by
+	// sync — sysName, sysDescr, serial — are not writable here.
+	//
+	// The management address *is* operator-owned: a device gets renumbered, or
+	// moves off DHCP, and NetInv has to follow it. It was previously dropped
+	// silently, so a re-address returned 200 and changed nothing, and the only
+	// way to correct one was to delete the device and lose its history.
+	if in.MgmtIP != "" && in.MgmtIP != d.MgmtIP {
+		if _, err := netip.ParseAddr(in.MgmtIP); err != nil {
+			return nil, errx.New(errx.KindInvalid, "mgmt_ip is not a valid IP address")
+		}
+		d.MgmtIP = in.MgmtIP
+	}
+	// 0 means "leave it alone" — the field is absent from a partial update.
+	// Setting it explicitly to 161 clears the attribute, so the device follows
+	// the default rather than pinning to today's value of it.
+	if in.SNMPPort != 0 {
+		if in.SNMPPort < 1 || in.SNMPPort > 65535 {
+			return nil, errx.New(errx.KindInvalid, "snmp_port must be between 1 and 65535")
+		}
+		if d.Attrs == nil {
+			d.Attrs = map[string]any{}
+		}
+		if in.SNMPPort == 161 {
+			delete(d.Attrs, "snmp_port")
+		} else {
+			d.Attrs["snmp_port"] = in.SNMPPort
+		}
+	}
 	if in.Name != "" {
 		d.Name = in.Name
 	}
@@ -151,7 +179,8 @@ func (s *DeviceService) Update(ctx context.Context, deviceID string, in DeviceIn
 	s.Audit.Write(ctx, m.event("device.update", "device", d.ID, before,
 		map[string]any{"name": d.Name, "site_id": d.SiteID,
 			"credential_id": d.CredentialID, "profile_id": d.ProfileID, "notes": d.Notes,
-			"wan_capacity_bps": d.WANCapacityBPS}))
+			"wan_capacity_bps": d.WANCapacityBPS, "mgmt_ip": d.MgmtIP,
+			"snmp_port": d.Attrs["snmp_port"]}))
 	return d, nil
 }
 

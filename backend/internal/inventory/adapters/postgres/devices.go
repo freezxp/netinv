@@ -190,10 +190,17 @@ func (r *DeviceRepo) Update(ctx context.Context, d *domain.Device) error {
 			UPDATE inventory.devices SET
 				site_id=$2, connector_id=$3, credential_id=$4, profile_id=$5,
 				name=$6, tags=$7, notes=nullif($8,''),
-				wan_capacity_bps=nullif($9::bigint,0), updated_at=now()
+				wan_capacity_bps=nullif($9::bigint,0),
+				mgmt_ip=$10::inet, attrs=coalesce($11,'{}'::jsonb), updated_at=now()
 			WHERE id=$1`,
 			d.ID, d.SiteID, d.ConnectorID, d.CredentialID, d.ProfileID,
-			d.Name, d.Tags, d.Notes, d.WANCapacityBPS)
+			d.Name, d.Tags, d.Notes, d.WANCapacityBPS, d.MgmtIP, d.Attrs)
+		// Same conflict as Create: mgmt_ip is unique, and re-addressing a device
+		// onto an address another one already holds must say so rather than
+		// surface as an opaque 500.
+		if isUnique(err) {
+			return errx.New(errx.KindConflict, "a device with that management IP already exists")
+		}
 		if err != nil {
 			return errx.Wrap(errx.KindTransient, err, "update device")
 		}
