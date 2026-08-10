@@ -3,10 +3,13 @@
 **Status:** draft · **Depends on:** 32 · Deploying the Compose stack inside an
 LXC container on Proxmox VE, rather than on a VM or bare metal.
 
-> **Verified on hardware.** Everything here except §4.1 was run on Proxmox VE
-> 9.2.10 with a Debian 13 unprivileged container and Docker 26.1.5: the `pct`
-> flags, the package names, the ICMP behaviour and its fix. §4.1 (ZFS storage
-> driver) was not — that host uses LVM-thin, where `overlay2` works. If you run
+> **Verified on hardware, end to end.** Everything here except §4.1 was run on
+> Proxmox VE 9.2.10 with a Debian 13 unprivileged container and Docker 26.1.5:
+> the `pct` flags, the package names, the ICMP behaviour and its fix. The
+> resulting install collected ICMP from a real gateway — `netinv_icmp_up = 1`,
+> RTT 0.18 ms, no permission errors — which is the check that would have failed
+> before the fix in §4.2. §4.1 (ZFS storage driver) was not exercised: that host
+> uses LVM-thin, where `overlay2` works. If you run
 > a ZFS rootfs, §6's first check is the one to watch, and please
 > [report what you get](https://github.com/freezxp/netinv/issues/new/choose).
 
