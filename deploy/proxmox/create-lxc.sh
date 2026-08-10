@@ -80,7 +80,7 @@ cat <<EOF
 Container $CTID is up. Next, inside it:
 
   pct enter $CTID
-  apt update && apt install -y docker.io docker-compose-v2 git
+  apt update && apt install -y docker.io docker-compose git   # trixie; bookworm: docker-compose-v2
   git clone https://github.com/freezxp/netinv.git && cd netinv
   ./deploy/compose-app/quickstart.sh
 
@@ -90,8 +90,11 @@ Then verify the two things that behave differently under LXC (doc 33 §6):
       want overlay2. "vfs" means the rootfs cannot host overlay layers —
       usually ZFS — and images will take several times the space.
 
-  docker run --rm alpine cat /proc/sys/net/ipv4/ping_group_range
-      want "0	2147483647". If it reads "1	0", unprivileged ICMP is
-      unavailable: every device will report down over ICMP while SNMP keeps
-      working and the rest of the UI looks healthy. Doc 33 §4.2 has the fix.
+  docker inspect netinv-poller-1 --format '{{.HostConfig.Sysctls}}'
+      want "map[net.ipv4.ping_group_range:0 65534]". Inside an unprivileged
+      LXC, Docker clamps its usual ping_group_range to "65534 65534" — one gid,
+      and not the poller's — so unprivileged ICMP is refused. The compose file
+      sets the range explicitly, which is what makes availability work here.
+      Without it every device reports down over ICMP while SNMP keeps working
+      and the rest of the UI looks healthy. Doc 33 §4.2.
 EOF

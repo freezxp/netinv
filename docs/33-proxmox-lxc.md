@@ -3,13 +3,12 @@
 **Status:** draft · **Depends on:** 32 · Deploying the Compose stack inside an
 LXC container on Proxmox VE, rather than on a VM or bare metal.
 
-> **What is verified and what is not.** The container-level behaviour described
-> in §4 was measured on a running NetInv deployment: Docker's handling of
-> `ping_group_range`, the poller's non-root user, and the ICMP path. The
-> Proxmox-specific parts — `pct` flags, ZFS storage-driver behaviour — are from
-> Proxmox and Docker documentation and have **not** been run against a Proxmox
-> host by the author. §6 is a checklist for confirming them on yours; please
-> [report what actually happens](https://github.com/freezxp/netinv/issues/new/choose).
+> **Verified on hardware.** Everything here except §4.1 was run on Proxmox VE
+> 9.2.10 with a Debian 13 unprivileged container and Docker 26.1.5: the `pct`
+> flags, the package names, the ICMP behaviour and its fix. §4.1 (ZFS storage
+> driver) was not — that host uses LVM-thin, where `overlay2` works. If you run
+> a ZFS rootfs, §6's first check is the one to watch, and please
+> [report what you get](https://github.com/freezxp/netinv/issues/new/choose).
 
 ## 1. Should you use LXC at all?
 
@@ -98,52 +97,62 @@ Check which you got, inside the container:
 docker info --format '{{.Driver}}'
 ```
 
-### 4.2 ICMP availability checks
+### 4.2 ICMP availability checks — the one that bites
 
-This is the one most likely to bite, because it fails **silently and
-partially**: SNMP keeps working, graphs keep filling, and only availability
-goes wrong — which is the same shape as the two collection outages recorded in
-this project's history.
+This fails **silently and partially**: SNMP keeps working, graphs keep filling,
+and only availability goes wrong — the same shape as the two collection
+outages in this project's history. It is also the one thing here that does
+*not* behave the way it does on a normal Docker host.
 
-NetInv's poller runs as a **non-root** user and by default uses *unprivileged*
-ICMP — UDP sockets of type `SOCK_DGRAM`, not raw sockets. The kernel allows
-those only for GIDs inside `net.ipv4.ping_group_range`, which is namespaced per
-network namespace.
+NetInv's poller runs as a **non-root** user (uid 65532) and uses *unprivileged*
+ICMP — `SOCK_DGRAM` sockets, not raw ones. The kernel permits those only for
+GIDs inside `net.ipv4.ping_group_range`, which is namespaced per network
+namespace.
 
-Measured on a working deployment: the Docker host had
-`net.ipv4.ping_group_range = 1 0` — an empty range, unprivileged ping disabled
-— and ICMP still worked, because **Docker sets `0 2147483647` inside each
-container's network namespace** regardless of the host value. That is what the
-poller relies on, and it is why nothing on the host needs changing.
+On an ordinary Docker host this is invisible: Docker writes
+`0 2147483647` into every container's netns, so any uid may ping. Measured on
+one such host, the *host* value was `1 0` — an empty range, unprivileged ping
+disabled — and containers pinged fine regardless.
 
-Inside an unprivileged LXC, Docker is root in the container's user namespace
-and the sysctl is namespaced, so the same write should succeed. Confirm rather
-than assume:
+**Inside an unprivileged LXC it does not work.** `2147483647` is not a
+mappable GID in the container's user namespace, so Docker's write is clamped,
+and each container ends up with:
 
-```bash
-docker run --rm alpine cat /proc/sys/net/ipv4/ping_group_range
-# want: 0	2147483647
+```
+net.ipv4.ping_group_range = 65534	65534
 ```
 
-If it reads `1 0`, unprivileged ping is unavailable and every device will
-report down over ICMP while SNMP looks fine. Two fixes:
+A range of exactly one GID — and not the poller's 65532. Measured, in order:
 
-```bash
-# On the Proxmox host, for that container's namespace:
-sysctl -w net.ipv4.ping_group_range="0 2147483647"
-```
+| Attempt | Result |
+|---|---|
+| Poller uid 65532, unprivileged ICMP | **denied** |
+| `sysctl -w …="0 2147483647"` inside the LXC | `Invalid argument` — not mappable |
+| `sysctl -w …="0 65534"` inside the LXC | succeeds, but Docker overrides it per container |
+| `--cap-add=NET_RAW` + raw sockets as non-root | **denied** — the capability is dropped for a non-root uid in a userns |
+| **`--sysctl net.ipv4.ping_group_range="0 65534"` on the container** | **works** |
 
-or switch the poller to raw sockets, which needs a capability:
+The fix is therefore a per-container sysctl, and it is already in
+`deploy/compose-app/docker-compose.deploy.yml`:
 
 ```yaml
-# deploy/compose-app/docker-compose.deploy.yml, poller service
-environment:
-  NETINV_ICMP_PRIVILEGED: "1"
-cap_add: [NET_RAW]
+poller:
+  sysctls:
+    net.ipv4.ping_group_range: "0 65534"
 ```
 
-Prefer the first. `NET_RAW` lets the poller construct arbitrary packets, which
-is more authority than availability checking needs.
+Nothing to do — a clone of this repo deploys correctly in an LXC. It is
+harmless on a normal Docker host, where uids sit far below 65534 anyway.
+
+Two approaches that look reasonable and are not:
+
+- **Setting the sysctl on the Proxmox host or inside the LXC.** Docker rewrites
+  the value in each container's netns when the container starts, so the outer
+  value is discarded.
+- **Granting `NET_RAW` and switching to `NETINV_ICMP_PRIVILEGED=1`.** In an
+  unprivileged userns the capability is not effective for a non-root uid, so
+  raw sockets are still refused — and it would be more authority than
+  availability checking needs even if it worked.
 
 ### 4.3 SNMP is fine
 
@@ -156,7 +165,8 @@ works from the poller.
 Inside the container, exactly as [doc 32](32-quickstart.md):
 
 ```bash
-apt update && apt install -y docker.io docker-compose-v2 git
+apt update && apt install -y docker.io docker-compose git   # Debian 13 (trixie)
+# On Debian 12 (bookworm) the compose package is docker-compose-v2 instead.
 git clone https://github.com/freezxp/netinv.git && cd netinv
 ./deploy/compose-app/quickstart.sh
 ```
@@ -178,7 +188,7 @@ Run these inside the container after the stack is up. Each one checks something
 
 ```bash
 docker info --format 'storage driver: {{.Driver}}'      # want overlay2, not vfs
-docker run --rm alpine cat /proc/sys/net/ipv4/ping_group_range   # want 0 2147483647
+docker run --rm alpine cat /proc/sys/net/ipv4/ping_group_range   # "65534 65534" is normal in LXC
 docker ps --filter name=netinv --format '{{.Names}} {{.Status}}' # 13 containers up
 curl -sf localhost:8090/ >/dev/null && echo "UI ok"
 ```
@@ -187,7 +197,10 @@ Then, from the UI, the two that prove collection actually works end to end:
 
 - **Inventory** — add a device and confirm it leaves `pending`.
 - **Dashboard** — after ~2 minutes, bandwidth and latency should both draw. If
-  bandwidth draws and latency does not, ICMP is the problem: go back to §4.2.
+  bandwidth draws and latency does not, ICMP is the problem: confirm the poller
+  actually got its sysctl with
+  `docker inspect netinv-poller-1 --format '{{.HostConfig.Sysctls}}'`, which
+  should show `0 65534`.
 
 Availability failing alone while SNMP succeeds is the signature of the
 `ping_group_range` issue, and it is worth knowing that shape in advance —
