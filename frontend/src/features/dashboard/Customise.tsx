@@ -5,7 +5,7 @@
 // arranged once and then left alone — the wrong place to spend the complexity.
 import { useState } from "react";
 import { Button, Card, Input, Select, cx } from "../../components/ui";
-import { useMaps, useMetricNames } from "./CustomPanels";
+import { useFlowExporters, useMaps, useMetricNames } from "./CustomPanels";
 import {
   PANEL_LABELS,
   REPEATABLE,
@@ -31,6 +31,7 @@ export function Customise({
 }) {
   const maps = useMaps();
   const metrics = useMetricNames();
+  const exporters = useFlowExporters();
   const [adding, setAdding] = useState<PanelKind>("weathermap");
 
   const panels = layout.panels;
@@ -106,6 +107,66 @@ export function Customise({
                 <span className="text-xs text-slate-500">
                   Only published maps render; a draft shows as unavailable.
                 </span>
+              </div>
+            )}
+
+            {p.kind === "flow" && (
+              <div className="mt-2 flex flex-col gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Select
+                    aria-label="Flow ranking"
+                    value={p.flowDimension ?? "talker"}
+                    onChange={(e) =>
+                      patch(p.id, {
+                        flowDimension: e.target.value as Panel["flowDimension"],
+                      })
+                    }
+                  >
+                    <option value="talker">Top talkers (hosts)</option>
+                    <option value="conversation">
+                      Top conversations (host pairs)
+                    </option>
+                    <option value="application">
+                      Top applications (ports)
+                    </option>
+                  </Select>
+                  <Select
+                    aria-label="Exporter"
+                    value={p.exporter ?? ""}
+                    onChange={(e) => patch(p.id, { exporter: e.target.value })}
+                  >
+                    <option value="">All exporters</option>
+                    {exporters.map((e) => (
+                      <option key={e} value={e}>
+                        {e}
+                      </option>
+                    ))}
+                  </Select>
+                  <Select
+                    aria-label="Rows"
+                    value={String(p.topN ?? 8)}
+                    onChange={(e) =>
+                      patch(p.id, { topN: Number(e.target.value) })
+                    }
+                  >
+                    {[5, 8, 10, 20].map((n) => (
+                      <option key={n} value={n}>
+                        {n} rows
+                      </option>
+                    ))}
+                  </Select>
+                  <Input
+                    aria-label="Panel title"
+                    placeholder="Title (optional)"
+                    value={p.title ?? ""}
+                    onChange={(e) => patch(p.id, { title: e.target.value })}
+                  />
+                </div>
+                <p className="text-xs text-slate-500">
+                  {exporters.length === 0
+                    ? "No device is exporting flow yet, so this panel will be empty. A device must be configured to send NetFlow v5 to this host on UDP 2055 — see docs/34."
+                    : "Only the busiest few buckets per interface are kept each minute, so the share column is of what was recorded, not of all traffic."}
+                </p>
               </div>
             )}
 

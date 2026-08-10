@@ -12,7 +12,7 @@ import {
 } from "../../api/hooks";
 import { Button, Card, EmptyState, SeverityPill } from "../../components/ui";
 import { RangePicker } from "../../components/RangePicker";
-import { MetricPanel, WeathermapPanel } from "./CustomPanels";
+import { FlowPanel, MetricPanel, WeathermapPanel } from "./CustomPanels";
 import { Customise } from "./Customise";
 import {
   DEFAULT_LAYOUT,
@@ -210,6 +210,8 @@ function renderPanel(p: Panel) {
       return <WeathermapPanel panel={p} />;
     case "metric":
       return <MetricPanel panel={p} />;
+    case "flow":
+      return <FlowPanel panel={p} />;
   }
 }
 

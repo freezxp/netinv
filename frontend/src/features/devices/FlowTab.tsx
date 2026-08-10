@@ -6,14 +6,16 @@ import {
   flowTotalExpr,
   flowWindow,
   useDeviceInterfaces,
+  toFlowRows,
   useInstantQuery,
   useQueryRange,
   type FlowDimension,
 } from "../../api/hooks";
 import { useTimeRange } from "../../api/timerange";
+import { FlowTable } from "../../components/FlowTable";
 import { TimeSeries } from "../../components/TimeSeries";
-import { Card, cx, EmptyState, Select } from "../../components/ui";
-import { formatBps, formatBytes } from "../../lib/format";
+import { Card, cx, Select } from "../../components/ui";
+import { formatBps } from "../../lib/format";
 
 const DIMENSIONS: Array<{ key: FlowDimension; label: string; blurb: string }> =
   [
@@ -82,18 +84,7 @@ export function FlowTab({
   );
   const isSampled = (sampled.data?.length ?? 0) > 0;
 
-  const rows = useMemo(() => {
-    const parsed = (totals.data ?? [])
-      .map((r) => ({
-        value: r.metric.value ?? "—",
-        bytes: parseFloat(r.value[1]),
-      }))
-      .filter((r) => isFinite(r.bytes) && r.bytes > 0);
-    parsed.sort((a, b) => b.bytes - a.bytes);
-    return parsed;
-  }, [totals.data]);
-
-  const grandTotal = rows.reduce((sum, r) => sum + r.bytes, 0);
+  const rows = useMemo(() => toFlowRows(totals.data ?? []), [totals.data]);
 
   // Chart only the heaviest few, chosen by the same ranking as the table so
   // the two agree.
@@ -178,69 +169,12 @@ export function FlowTab({
       <Card
         title={`Top ${DIMENSIONS.find((d) => d.key === dimension)?.label.toLowerCase()} (${range.short})`}
       >
-        {rows.length === 0 ? (
-          <EmptyState>
-            Nothing in this window. Flow is kept per interval, so a range with
-            no exported traffic is simply empty.
-          </EmptyState>
-        ) : (
-          <table className="w-full text-sm">
-            {/* Headers are not decoration here. Two of these columns are byte
-                totals and one is a rate, and "434 MB … 40.2 Kbps" on the same
-                row is unreadable without being told that the rate is averaged
-                across the whole selected range — which is far below the peak
-                on the chart below whenever traffic covers only part of it. */}
-            <thead>
-              <tr className="text-xs uppercase text-slate-500 dark:text-slate-400">
-                <th className="pb-2 text-left font-medium">
-                  {dimension === "application"
-                    ? "Application"
-                    : dimension === "conversation"
-                      ? "Conversation"
-                      : "Host"}
-                </th>
-                <th />
-                <th className="pb-2 pl-2 text-right font-medium">Total</th>
-                <th className="pb-2 pl-3 text-right font-medium">Share</th>
-                <th className="pb-2 pl-3 text-right font-medium whitespace-nowrap">
-                  Avg over {range.short}
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r) => {
-                const share = grandTotal > 0 ? r.bytes / grandTotal : 0;
-                return (
-                  <tr
-                    key={r.value}
-                    className="border-b border-slate-100 last:border-0 dark:border-slate-800"
-                  >
-                    <td className="py-1.5 pr-3 mono whitespace-nowrap">
-                      {r.value}
-                    </td>
-                    <td className="w-full px-2">
-                      <div className="h-2 w-full rounded bg-slate-100 dark:bg-slate-800">
-                        <div
-                          className="h-2 rounded bg-sky-500"
-                          style={{ width: `${Math.max(share * 100, 1)}%` }}
-                        />
-                      </div>
-                    </td>
-                    <td className="py-1.5 pl-2 text-right tabular-nums whitespace-nowrap">
-                      {formatBytes(r.bytes)}
-                    </td>
-                    <td className="py-1.5 pl-3 text-right tabular-nums text-slate-500 whitespace-nowrap">
-                      {(share * 100).toFixed(1)}%
-                    </td>
-                    <td className="py-1.5 pl-3 text-right tabular-nums text-slate-500 whitespace-nowrap">
-                      {formatBps((r.bytes * 8) / Math.max(rangeS, 1))}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        )}
+        <FlowTable
+          rows={rows}
+          dimension={dimension}
+          rangeShort={range.short}
+          rangeS={rangeS}
+        />
       </Card>
 
       <Card title={`Top ${CHART_SERIES} over time (${range.short})`}>
@@ -312,18 +246,30 @@ function NoFlow({
         )}
         <ul className="list-disc space-y-1 pl-5 text-slate-500 dark:text-slate-400">
           <li>
-            <strong>NetFlow v5 only.</strong> v9, IPFIX and sFlow are not
-            decoded yet — an exporter sending those will look exactly like one
-            sending nothing.
+            <strong>NetFlow v5 only, and it must be set explicitly.</strong>{" "}
+            Most platforms default to v9 or IPFIX, which are not decoded yet —
+            an exporter sending those looks exactly like one sending nothing.
+            This is the most common reason a correctly-pointed exporter shows up
+            here empty.
           </li>
           <li>
-            A flow with no ingress or egress ifIndex cannot be attributed to an
-            interface and is discarded.
+            <strong>Set the active timeout to 1 minute.</strong> The usual
+            30-minute default reports a long transfer once per half hour as one
+            huge record, which charts as a spike surrounded by nothing.
+          </li>
+          <li>
+            Enable export <em>on the interfaces</em>, ingress direction — global
+            configuration alone collects nothing on most platforms. A flow with
+            no ingress or egress ifIndex cannot be attributed and is discarded.
           </li>
           <li>
             The collector logs <span className="mono">flow intake</span> when it
             receives packets it cannot use, so its log distinguishes a
             misconfigured exporter from no exporter at all.
+          </li>
+          <li>
+            Per-vendor configuration snippets and a step-by-step check are in{" "}
+            <span className="mono">docs/34-flow-collection.md</span> §4.2–4.3.
           </li>
         </ul>
       </div>

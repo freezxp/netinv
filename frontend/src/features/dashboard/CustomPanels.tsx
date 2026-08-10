@@ -4,10 +4,18 @@ import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { ReactFlow, Background, ConnectionMode } from "@xyflow/react";
 import { api } from "../../api/client";
-import { useQueryRange, useMetricsLimits } from "../../api/hooks";
+import {
+  flowSelector,
+  flowTotalExpr,
+  toFlowRows,
+  useInstantQuery,
+  useMetricsLimits,
+  useQueryRange,
+} from "../../api/hooks";
 import { rateWindow, useTimeRange } from "../../api/timerange";
 import { Card, EmptyState } from "../../components/ui";
 import { TimeSeries } from "../../components/TimeSeries";
+import { DIMENSION_NOUN, FlowTable } from "../../components/FlowTable";
 import { edgeTypes, nodeTypes, toFlow } from "../maps/canvas";
 import { useMapDef, useMapLive } from "../maps/api";
 import type { Panel } from "./layout";
@@ -151,6 +159,60 @@ export function MetricPanel({ panel }: { panel: Panel }) {
             panel.metric ||
             "series"
           }
+        />
+      )}
+    </Card>
+  );
+}
+
+// Exporters currently sending flow, for the panel editor's picker. Offering a
+// free-text box instead would invite a typo that renders an empty panel with
+// no hint that the address is simply wrong.
+export function useFlowExporters() {
+  const q = useInstantQuery("count by (exporter) (netinv_flow_bytes)");
+  return (q.data ?? [])
+    .map((r) => r.metric.exporter)
+    .filter(Boolean)
+    .sort();
+}
+
+const FLOW_DEFAULT_TOPN = 8;
+
+// Top talkers, conversations or applications — fleet-wide by default, or for
+// one exporter.
+//
+// Deliberately a table and not a chart. The dashboard question is "what is
+// consuming the network right now", which is a ranking; five overlapping lines
+// answer it far worse in the same space, and the device Flow tab already
+// carries the time dimension for anyone who wants it.
+export function FlowPanel({ panel }: { panel: Panel }) {
+  const range = useTimeRange();
+  const dimension = panel.flowDimension ?? "talker";
+  const rangeS = Math.round(range.hours * 3600);
+  const selector = flowSelector(panel.exporter ?? "", dimension);
+  const totals = useInstantQuery(flowTotalExpr(selector, rangeS));
+  const rows = toFlowRows(totals.data ?? []);
+
+  const scope = panel.exporter ? panel.exporter : "all exporters";
+  const title =
+    panel.title ||
+    `Top ${DIMENSION_NOUN[dimension].toLowerCase()}s — ${scope} (${range.short})`;
+
+  return (
+    <Card title={title}>
+      {rows.length === 0 ? (
+        <EmptyState>
+          No flow recorded in this window. Flow arrives only from devices
+          configured to export it; see the device’s Flow tab for what is
+          reaching NetInv.
+        </EmptyState>
+      ) : (
+        <FlowTable
+          rows={rows}
+          dimension={dimension}
+          rangeShort={range.short}
+          rangeS={rangeS}
+          limit={panel.topN ?? FLOW_DEFAULT_TOPN}
         />
       )}
     </Card>

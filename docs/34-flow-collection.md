@@ -134,6 +134,8 @@ interval, and the two are independent on purpose.
 
 ## 4. Configuration
 
+### 4.1 The collector
+
 | Variable | Default | Meaning |
 |---|---|---|
 | `NETINV_FLOW_ADDR` | `:2055` | UDP listen address |
@@ -142,6 +144,120 @@ interval, and the two are independent on purpose.
 
 A bare address in `NETINV_FLOW_ALLOW` becomes a `/32` or `/128`, which is what
 an operator listing a single exporter means.
+
+The Compose stack publishes `2055/udp` from the `flow` service. If NetInv runs
+behind a firewall, that port has to be reachable from each exporter — flow is
+pushed to the collector, not polled from it, which is the opposite direction to
+everything else NetInv does.
+
+### 4.2 Configuring a device to export NetFlow v5
+
+> **None of the snippets below were run against hardware.** No device in the
+> reference pilot can export flow, so these come from vendor documentation and
+> are the starting point for a first attempt, not a verified recipe. If you get
+> one working — or find it wrong — that is exactly the report the project is
+> asking for (`/CONTRIBUTING.md`).
+
+Four things apply on every platform and cause most first-attempt failures:
+
+1. **Force version 5.** Nearly every current platform defaults to v9 or IPFIX.
+   NetInv counts those as undecodable and says so in its log (§5), but it will
+   not chart them. This is the single most common reason a correctly-pointed
+   exporter produces an empty Flow tab.
+2. **Set the active timeout to 1 minute.** Defaults are typically 30 minutes:
+   a long-lived transfer is then reported once per half hour, as one enormous
+   record, and the chart shows a spike surrounded by nothing rather than a
+   sustained flow. One minute matches the aggregation interval (§3.1).
+3. **Enable it on the interfaces you care about**, in the ingress direction.
+   Global export configuration alone collects nothing on most platforms.
+4. **v5 is IPv4-only.** There is no IPv6 in the v5 record format at all — a
+   dual-stack link will silently report only half its traffic. If your traffic
+   is meaningfully v6, v5 is the wrong format and NetInv cannot yet read the
+   right one.
+
+**Cisco IOS / IOS-XE**
+
+```
+ip flow-export version 5
+ip flow-export destination <netinv-host> 2055
+ip flow-cache timeout active 1
+ip flow-cache timeout inactive 15
+!
+interface GigabitEthernet0/1
+ ip flow ingress
+```
+
+**Juniper Junos** — sampling rather than a flow cache, so the sampling rate is
+explicit and NetInv will label the results as estimates:
+
+```
+set forwarding-options sampling instance NETINV family inet output flow-server <netinv-host> port 2055
+set forwarding-options sampling instance NETINV family inet output flow-server <netinv-host> version 5
+set forwarding-options sampling instance NETINV input rate 100
+set interfaces ge-0/0/0 unit 0 family inet sampling input
+```
+
+**Huawei VRP** (NetStream):
+
+```
+ip netstream export version 5
+ip netstream export host <netinv-host> 2055
+ip netstream timeout active 1
+interface GigabitEthernet0/0/1
+ ip netstream inbound
+```
+
+**MikroTik RouterOS**:
+
+```
+/ip traffic-flow set enabled=yes active-flow-timeout=1m
+/ip traffic-flow target add dst-address=<netinv-host> port=2055 version=5
+```
+
+**VyOS**:
+
+```
+set system flow-accounting netflow version 5
+set system flow-accounting netflow server <netinv-host> port 2055
+set system flow-accounting netflow timeout expiry-interval 60
+set system flow-accounting interface eth0
+```
+
+**Any Linux host or appliance** (pfSense and OPNsense both package softflowd;
+this is also the way to get flow off a device whose firmware cannot export it):
+
+```
+softflowd -i eth0 -v 5 -t maxlife=60 -n <netinv-host>:2055
+```
+
+**Ubiquiti UniFi gateways cannot do this.** UDM/UCG firmware exposes no NetFlow
+export, and none of the switches tested advertise the sFlow MIB. There is no
+configuration that makes the pilot fleet export flow, which is why this feature
+has never seen a real exporter.
+
+**ZTE ZXR10** is untested and undocumented here; the platform's NetFlow support
+varies by model and software train enough that guessing at a snippet would be
+worse than saying nothing.
+
+### 4.3 Checking it worked
+
+In order, because each step rules out the one before it:
+
+1. `docker logs netinv-flow-1` — `flow intake` lines mean packets are arriving
+   but cannot be used (wrong version, or refused by the allow-list). **No
+   output at all means nothing is arriving**: the exporter is not sending, or
+   cannot reach the port.
+2. `tcpdump -ni any udp port 2055` on the NetInv host, if the log is silent.
+   This separates "the network is not delivering it" from "the collector is not
+   reading it".
+3. The device's **Flow** tab. If it reports flow arriving from an address that
+   is not the device's management IP, attribution is the problem, not
+   collection — flow keys on the datagram's source address, and a router
+   exporting from a loopback will not match. Either change the export source
+   address on the device or record the device on the address it exports from.
+4. Allow up to two minutes. The collector aggregates for a minute before
+   writing, and VictoriaMetrics withholds the most recent 30 seconds from
+   instant queries (§5).
 
 ## 5. Operating it
 

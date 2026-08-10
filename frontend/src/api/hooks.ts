@@ -324,14 +324,40 @@ export const FLOW_INTERVAL_S = 60;
 
 export type FlowDimension = "talker" | "conversation" | "application";
 
+// An empty exporter means every exporter, which is what a fleet-wide dashboard
+// panel wants — the busiest hosts on the network, not on one device.
 export function flowSelector(
   exporter: string,
   dimension: FlowDimension,
   ifIndex?: string,
 ) {
-  const parts = [`exporter="${exporter}"`, `dimension="${dimension}"`];
+  const parts = [`dimension="${dimension}"`];
+  if (exporter) parts.unshift(`exporter="${exporter}"`);
   if (ifIndex) parts.push(`if_index="${ifIndex}"`);
   return `{${parts.join(",")}}`;
+}
+
+export interface FlowRow {
+  value: string;
+  bytes: number;
+}
+
+// toFlowRows ranks a flow vector by volume over the queried range.
+//
+// Ranking on total bytes rather than the newest sample is deliberate: top-N
+// membership churns between intervals, so ordering by the latest value would
+// reshuffle the table every minute on ordinary jitter and make it unreadable
+// exactly when someone is trying to read it.
+export function toFlowRows(
+  result: Array<{ metric: Record<string, string>; value: [number, string] }>,
+): FlowRow[] {
+  return result
+    .map((r) => ({
+      value: r.metric.value ?? "—",
+      bytes: parseFloat(r.value[1]),
+    }))
+    .filter((r) => isFinite(r.bytes) && r.bytes > 0)
+    .sort((a, b) => b.bytes - a.bytes);
 }
 
 // flowWindow never goes below the aggregation interval: a window shorter than

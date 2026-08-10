@@ -19,7 +19,8 @@ export type PanelKind =
   | "heatmap"
   | "watchlist"
   | "weathermap"
-  | "metric";
+  | "metric"
+  | "flow";
 
 export interface Panel {
   /** Stable within a layout; lets two panels of the same kind coexist. */
@@ -39,6 +40,12 @@ export interface Panel {
   groupBy?: string;
   /** metric: treat as a counter and rate() it. */
   rate?: boolean;
+  /** flow: which ranking to show. */
+  flowDimension?: "talker" | "conversation" | "application";
+  /** flow: a single exporter, or empty for the whole fleet. */
+  exporter?: string;
+  /** flow: how many rows to list. */
+  topN?: number;
 }
 
 export interface DashboardLayout {
@@ -72,10 +79,14 @@ export const PANEL_LABELS: Record<PanelKind, string> = {
   watchlist: "Capacity watchlist",
   weathermap: "Weathermap",
   metric: "Custom metric",
+  flow: "Top flow (talkers/apps)",
 };
 
 /** Panels that can appear more than once, because each instance is configured. */
-export const REPEATABLE: PanelKind[] = ["weathermap", "metric"];
+// flow repeats because the three dimensions answer different questions, and
+// wanting talkers and applications side by side is the normal case rather than
+// an edge one.
+export const REPEATABLE: PanelKind[] = ["weathermap", "metric", "flow"];
 
 interface Prefs {
   dashboard?: DashboardLayout;
