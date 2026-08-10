@@ -85,7 +85,7 @@ core site's id after creating the site (step 4).
       memory / temperature (not empty). Record verified model + OS in each
       connector's README. ZTE and Huawei are the risk items (R-07) — if health
       is empty, the device still delivers traffic/availability; open an issue
-      with an `snmpwalk` capture (`scripts/walk-recorder`, arriving with the
+      with an `snmpwalk` capture (`scripts/record-fixture.sh`, which redacts identity at capture time, including the
       first connector fix) so the OID map can be extended.
 - [ ] **Alert path**: shut an interface (or `admin-down`) and confirm the alert
       fires and notifies within 60 s; ack it; bring it back and confirm resolve.

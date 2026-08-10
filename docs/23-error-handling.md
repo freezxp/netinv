@@ -32,7 +32,7 @@ Circuit breakers (`platform/retryx.Breaker`) guard each external dependency per 
 
 ## 3. Queue poison handling
 
-Consumer error → classify: `transient` → nack+requeue with per-message redelivery cap (x-delivery-count, 5) → DLQ; `invalid`/`internal` (malformed payload, handler bug) → straight to DLQ with reason header. DLQs are monitored (doc 22 §3); an admin CLI (`scripts/dlq-replay`) supports inspect/replay/purge after fixes. Nothing loops forever; nothing is silently dropped.
+Consumer error → classify: `transient` → nack+requeue with per-message redelivery cap (x-delivery-count, 5) → DLQ; `invalid`/`internal` (malformed payload, handler bug) → straight to DLQ with reason header. DLQs are monitored (doc 22 §3); an admin CLI (`scripts/dlq-replay`, **not yet built**) is to support inspect/replay/purge after fixes. Nothing loops forever; nothing is silently dropped.
 
 ## 4. Degradation ladder (NFR-25)
 

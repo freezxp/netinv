@@ -70,7 +70,7 @@ tests writing into a live database.
 
 ## 5. Test data & environments
 
-Seeded demo dataset (`scripts/seed-demo`): 2 sites, 40 simulated devices, 3 maps, default rules firing a couple of alerts — the same dataset drives local dev (NFR-73), E2E, screenshots in docs, and sales demos later. Environments: `compose` (local/CI E2E) → `staging` (k8s, nightly load/soak) → `prod`. No test touches prod; staging data is synthetic only.
+Seeded demo dataset (`scripts/seed-demo.sh`): 2 sites, 40 simulated devices, 3 maps, default rules firing a couple of alerts — the same dataset drives local dev (NFR-73), E2E, screenshots in docs, and sales demos later. Environments: `compose` (local/CI E2E) → `staging` (k8s, nightly load/soak) → `prod`. No test touches prod; staging data is synthetic only.
 
 ## 6. Definition of Done (every PR)
 

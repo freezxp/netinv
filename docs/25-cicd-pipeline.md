@@ -40,7 +40,7 @@ Load profile on staging (doc 24 §4) → SLO assertions (fail = issue auto-filed
 
 ## 3. CD — on-prem pull model
 
-**Argo CD** (or Flux; chart-agnostic) in the on-prem cluster watches `deploy/environments/{staging,prod}` in this repo (image digests + values per env):
+**Argo CD** (or Flux; chart-agnostic) in the on-prem cluster watches `deploy/environments/{staging,prod}` — **none of this section is built**; there is no `deploy/environments/` and no cluster. It describes the intended CD, and the deployments that exist today are the single-host Compose stack (doc 32) and the Proxmox LXC installer (doc 33). Planned: in this repo (image digests + values per env):
 - **staging:** auto-sync on every main merge → smoke suite runs in-cluster (Argo hook Job) → notifies.
 - **prod:** sync gated on git tag promotion PR (human approves the environment diff) → Helm upgrade with pre-upgrade migration Job (doc 19 §4) → post-sync smoke → auto-rollback on hook failure (`helm rollback`, safe one version per NFR-51).
 Remote-site pollers: same registry, `netinv-poller` chart per site cluster (or compose `docker compose pull && up -d` via cron/watchtower-style for non-k8s sites) — core tolerates ±1 version skew (doc 10 §3).
@@ -57,7 +57,7 @@ GitHub side holds **no** cluster credentials; GHCR pull secrets in-cluster. Acti
 
 §2's diagram is the target shape; the pipeline as built is a subset, and the gap is recorded here rather than left to be discovered.
 
-**Implemented in `ci.yml`:** paths-filter; backend build/vet/test (`-race`, with a PostgreSQL service for integration tests); golangci-lint over both Go modules (config in `/.golangci.yml`); connector tests and `make connector-lint`; the coverage ratchet (`scripts/coverage.sh`); frontend typecheck/lint/build; gitleaks, `make licenses`, govulncheck and `npm audit`; `helm lint` plus template rendering and kubeconform validation; and a Playwright E2E smoke against PostgreSQL, VictoriaMetrics and Redis.
+**Implemented in `ci.yml`:** paths-filter; backend build/vet/test (`-race`, with a PostgreSQL service for integration tests); golangci-lint over both Go modules (config in `/.golangci.yml`); connector tests and `make connector-lint`; the coverage ratchet (`scripts/coverage.sh`); frontend typecheck/lint/build; gitleaks, `make licenses`, govulncheck, `npm audit` and shellcheck over every tracked `*.sh`; `helm lint` plus template rendering and kubeconform validation; and a Playwright E2E smoke against PostgreSQL, VictoriaMetrics and Redis.
 
 **Not wired, and why:**
 

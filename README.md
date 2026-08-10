@@ -24,6 +24,11 @@ It generates secrets, builds the images, starts the whole platform (six
 services + UI + a bundled data tier and SNMP simulator), and prints your login.
 Open **http://localhost:8090**. Full guide: [docs/32-quickstart.md](docs/32-quickstart.md).
 
+Running **Proxmox**? `deploy/proxmox/netinv-lxc.sh create` does all of the above
+inside a new LXC container, in about ten minutes, and `destroy` removes it —
+which also makes it a cheap way to test a branch against real hardware
+([docs/33-proxmox-lxc.md](docs/33-proxmox-lxc.md)).
+
 ## What it does (v1)
 
 - **Collects** interface traffic, errors/discards, device health (CPU/memory/temp/PSU/optics), ICMP availability/latency, and inventory metadata from network devices over SNMP v2c/v3.
@@ -60,7 +65,7 @@ netinv/
 ├── backend/           ← Go services: api, scheduler, poller, ingester, alerter, notifier
 ├── connectors/        ← vendor connector packages (cisco, juniper, huawei, zte, ubiquiti, ruckus)
 ├── frontend/          ← React + TypeScript app
-├── deploy/            ← Helm charts, k8s manifests, docker-compose
+├── deploy/            ← Helm charts, k8s manifests, docker-compose, Proxmox LXC installer
 └── scripts/           ← dev and CI helpers (seed-demo, licences, connector contract)
 ```
 

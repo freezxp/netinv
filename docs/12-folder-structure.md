@@ -27,12 +27,16 @@ netinv/
 ├── deploy/
 │   ├── helm/netinv/           # the product chart (doc 19)
 │   ├── helm/netinv-poller/    # standalone remote-site poller chart
-│   └── compose-poller/        # docker-compose for non-k8s remote sites
+│   ├── compose-app/           # whole stack on one host: quickstart.sh (doc 32)
+│   ├── compose-poller/        # docker-compose for non-k8s remote sites
+│   └── proxmox/               # netinv-lxc.sh: create/verify/destroy an LXC (doc 33)
 ├── tools/
 │   ├── snmpsim/               # simulator configs + recorded device walks (doc 24)
 │   ├── loadgen/               # NFR load harness
 │   └── mibs/                  # vendored MIB files used by connectors (reference only)
-└── scripts/                   # repo-level dev/ops scripts (backup, seed, walk-recorder)
+└── scripts/                   # repo-level dev/ops scripts: backup/restore, seed-demo,
+                               # record-fixture (+redact-walk.awk), licences,
+                               # connector-lint, coverage ratchet
 ```
 
 ## Ownership & boundary rules
