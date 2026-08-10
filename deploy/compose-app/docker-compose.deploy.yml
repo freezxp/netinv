@@ -76,6 +76,19 @@ services:
     # stopped fleet-wide and nothing else in the stack reported a problem.
     tmpfs: ["/var/lib/netinv-poller:mode=1777"]
 
+  # The only service that accepts unsolicited input from the network. Its port
+  # is published deliberately — an exporter has to reach it — and
+  # NETINV_FLOW_ALLOW should list the exporters once they are known, because
+  # anything that can reach 2055/udp can otherwise write series (ADR-020).
+  flow:
+    restart: unless-stopped
+    profiles: [app]
+    ports: ["2055:2055/udp"]
+    environment:
+      NETINV_VM_URL: http://victoriametrics:8428
+      NETINV_FLOW_ADDR: ":2055"
+      NETINV_FLOW_ALLOW: ${NETINV_FLOW_ALLOW:-}
+
   ingester:
     restart: unless-stopped
     profiles: [app]

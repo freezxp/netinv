@@ -1,6 +1,6 @@
 # NetInv Design Package — Document Index
 
-33 documents. Numbers are canonical references ("doc 09" = API spec). Read top-to-bottom for the full picture, or follow the role guides below.
+34 documents. Numbers are canonical references ("doc 09" = API spec). Read top-to-bottom for the full picture, or follow the role guides below.
 
 | # | Document | One-liner | Status |
 |---|---|---|---|
@@ -37,6 +37,7 @@
 | 31 | [Pilot & Production Runbook](31-pilot-runbook.md) | Operator checklist: install, enroll, validate, back up, widen | draft |
 | 32 | [Quick Start (Docker Compose)](32-quickstart.md) | One-command single-host test deployment | draft |
 | 33 | [Proxmox LXC deployment](33-proxmox-lxc.md) | Running the Compose stack in an LXC container: nesting/keyctl, storage driver, unprivileged ICMP | draft |
+| 34 | [Flow collection](34-flow-collection.md) | The `netinv-flow` collector: NetFlow decode, ingest-time top-N aggregation, and the exposure of listening on a socket | draft |
 
 ## Role guides
 
@@ -46,6 +47,7 @@
 - **Frontend work:** 30, 09, 14, 02.
 - **Ops/deploy:** 18, 19, 21, 22, 25, 04; single-host installs 32 (Docker Compose) and 33 (Proxmox LXC).
 - **Product/management:** 01, 02, 26, 27, 28, 29.
+- **Flow (NetFlow/sFlow):** 34, then ADR-020 in `/DECISIONS.md` for why it aggregates rather than stores.
 
 ## Conventions
 
