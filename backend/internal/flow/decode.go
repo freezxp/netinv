@@ -13,7 +13,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"net/netip"
-	"time"
 )
 
 // Record is one decoded flow, normalised across export formats.
@@ -37,15 +36,18 @@ type Record struct {
 }
 
 // Packet is a decoded export packet.
+//
+// It carries no timestamp. A v5 record's times are relative to the exporter's
+// uptime, and the aggregator stamps each interval with its own drain time
+// anyway (see collector.go), so decoding the export's clock would produce a
+// field that exists only to be ignored — and to suggest to the next reader
+// that flow timestamps come from the device, which they do not.
 type Packet struct {
 	// ExporterIP is the source address of the datagram, not anything inside
 	// it: NetFlow v5 carries no exporter identity, and a spoofable field would
 	// be a poor key for attributing traffic to a device anyway.
 	ExporterIP netip.Addr
-	Version    uint16
 	Records    []Record
-	// SysUptime and UnixSecs anchor the relative timestamps in v5 records.
-	ExportedAt time.Time
 }
 
 const (
@@ -98,8 +100,6 @@ func DecodeNetFlowV5(b []byte, from netip.Addr) (*Packet, error) {
 		return nil, ErrShortPacket{Want: need, Got: len(b)}
 	}
 
-	sysUptimeMS := binary.BigEndian.Uint32(b[4:8])
-	unixSecs := binary.BigEndian.Uint32(b[8:12])
 	// Bits 14-15 select the sampling mode; the low 14 bits are the interval.
 	// Mode 0 means no sampling, and an interval of 0 or 1 means one-for-one —
 	// treating either as a multiplier would zero or double every byte count.
@@ -112,13 +112,7 @@ func DecodeNetFlowV5(b []byte, from netip.Addr) (*Packet, error) {
 		sampled = true
 	}
 
-	p := &Packet{
-		ExporterIP: from,
-		Version:    5,
-		ExportedAt: time.Unix(int64(unixSecs), 0).UTC(),
-		Records:    make([]Record, 0, count),
-	}
-	_ = sysUptimeMS // v5 per-record times are relative to it; unused for aggregation
+	p := &Packet{ExporterIP: from, Records: make([]Record, 0, count)}
 
 	for i := 0; i < count; i++ {
 		r := b[netflowV5HeaderLen+i*netflowV5RecordLen:]

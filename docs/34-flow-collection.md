@@ -1,9 +1,8 @@
 # 34 — Flow collection (NetFlow / sFlow)
 
 **Status:** draft · **Depends on:** 05, 09, 13, 29 · The `netinv-flow` service:
-what it receives, what it stores, what it deliberately throws away, and the
-exposure that comes with listening on a socket, and the Flow tab that reads
-it.
+what it receives, what it stores, what it deliberately throws away, the
+exposure that comes with listening on a socket, and the UI that reads it.
 
 > **Validated against a generated source, not against hardware.** Nothing in the
 > reference pilot exports flow: the UniFi gateways do not emit NetFlow natively,
@@ -12,7 +11,7 @@ it.
 > USW-Lite16. Everything below was exercised by sending real NetFlow v5
 > datagrams at the collector and reading the resulting series back out of
 > VictoriaMetrics. Treat the v5 decode as working and the rest of §2 as
-> unwritten code, not as untested code — see §7.
+> unwritten code, not as untested code — see §8.
 
 ## 1. Why this service exists, and why it is shaped like this
 
@@ -103,8 +102,14 @@ would be a poor key for attributing traffic to a device in any case.
 
 The three dimensions:
 
-- **`talker`** — one host, counted in whichever direction it appeared. Both ends
-  of every flow are counted, so a busy server appears once with its total.
+- **`talker`** — one host, counted in whichever direction it appeared. Both
+  ends of every flow are counted, so a busy server appears once with its total.
+
+  That doubling is worth stating because it changes what a share means: the
+  talker totals sum to roughly twice the traffic on the link, so a host that is
+  one end of everything approaches 50%, not 100%. Shares here are of endpoint
+  traffic, not of link traffic. The alternative — counting only one end — would
+  make "top talkers" depend on which direction the exporter happened to see.
 - **`conversation`** — an unordered host pair rendered `A ⇄ B`, so A→B and B→A
   accumulate together. An operator asking what a link carries means the
   exchange, not each half of it separately.

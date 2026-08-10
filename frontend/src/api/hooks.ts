@@ -320,7 +320,9 @@ export function seriesExpr(
 // is sized. It also stays honest when a bucket drops out of the top N for part
 // of the window — those minutes contribute nothing rather than being averaged
 // away, which is what actually happened.
-export const FLOW_INTERVAL_S = 60;
+// Not exported: callers should size windows with flowWindow rather than
+// reimplementing the floor it enforces.
+const FLOW_INTERVAL_S = 60;
 
 export type FlowDimension = "talker" | "conversation" | "application";
 

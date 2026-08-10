@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"time"
 )
 
@@ -45,7 +46,7 @@ func (w *VMWriter) WriteFlow(ctx context.Context, at time.Time, buckets []Bucket
 	for _, b := range buckets {
 		labels := map[string]string{
 			"exporter":  b.Key.ExporterIP,
-			"if_index":  itoa(uint64(b.Key.IfIndex)),
+			"if_index":  strconv.FormatUint(uint64(b.Key.IfIndex), 10),
 			"dimension": string(b.Key.Dimension),
 			"value":     b.Key.Value,
 		}

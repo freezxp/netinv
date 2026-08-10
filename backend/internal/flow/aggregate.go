@@ -3,6 +3,7 @@ package flow
 import (
 	"net/netip"
 	"sort"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -196,7 +197,6 @@ func conversation(a, b netip.Addr) string {
 // Only when neither side is recognised does the lower port decide, which is
 // still the better guess between two unknowns.
 func application(r Record) string {
-	name := protoName(r.Protocol)
 	src, srcOK := wellKnown[portProto{r.SrcPort, r.Protocol}]
 	dst, dstOK := wellKnown[portProto{r.DstPort, r.Protocol}]
 	switch {
@@ -217,10 +217,11 @@ func application(r Record) string {
 	if r.DstPort < port || port == 0 {
 		port = r.DstPort
 	}
+	name := protoName(r.Protocol)
 	if port == 0 {
 		return name
 	}
-	return name + "/" + itoa(uint64(port))
+	return name + "/" + strconv.Itoa(int(port))
 }
 
 type portProto struct {
@@ -257,22 +258,8 @@ func protoName(p uint8) string {
 	case 58:
 		return "icmp6"
 	default:
-		return "ip/" + itoa(uint64(p))
+		return "ip/" + strconv.Itoa(int(p))
 	}
-}
-
-func itoa(v uint64) string {
-	if v == 0 {
-		return "0"
-	}
-	var b [20]byte
-	i := len(b)
-	for v > 0 {
-		i--
-		b[i] = byte('0' + v%10)
-		v /= 10
-	}
-	return string(b[i:])
 }
 
 // Interval is the aggregation window. It matches the shortest poll cadence so

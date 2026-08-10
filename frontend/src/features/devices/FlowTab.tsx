@@ -23,7 +23,8 @@ const DIMENSIONS: Array<{ key: FlowDimension; label: string; blurb: string }> =
     {
       key: "talker",
       label: "Talkers",
-      blurb: "Individual hosts, counted in whichever direction they appeared.",
+      blurb:
+        "Individual hosts, counted in whichever direction they appeared. Both ends of every flow are counted, so shares are of endpoint traffic rather than of link traffic — a server that is one end of everything approaches 50%, not 100%.",
     },
     {
       key: "conversation",
@@ -57,16 +58,20 @@ export function FlowTab({
 
   const interfaces = useDeviceInterfaces(deviceID);
 
-  // Three probes, because "no chart" has three different causes and an
-  // operator needs to know which one they have (doc 34 §5). Nothing arriving
-  // anywhere, nothing arriving from this device, and a device that exports
-  // from an address other than the one NetInv manages it on are three separate
-  // problems with three separate fixes.
-  const anyFlow = useInstantQuery("count(netinv_flow_bytes)");
+  // Two probes answer the three questions an empty tab raises (doc 34 §5):
+  // whether anything is arriving at all, whether any of it is from this
+  // device, and — the common case — whether it is arriving under a different
+  // address. `exporters` covers the first and third; grouping the second by
+  // `sampled` as well as `if_index` gets the interface list and the sampling
+  // flag from one query instead of two. Every one of these refetches on a
+  // timer, so a redundant probe costs continuously, not once.
   const exporters = useInstantQuery("count by (exporter) (netinv_flow_bytes)");
   const deviceIfs = useInstantQuery(
-    `count by (if_index) (netinv_flow_bytes{exporter="${mgmtIP}"})`,
+    `count by (if_index, sampled) (netinv_flow_bytes{exporter="${mgmtIP}"})`,
     !!mgmtIP,
+  );
+  const isSampled = (deviceIfs.data ?? []).some(
+    (r) => r.metric.sampled === "true",
   );
 
   const selector = flowSelector(mgmtIP, dimension, ifIndex || undefined);
@@ -79,11 +84,6 @@ export function FlowTab({
     range.hours,
     range.stepS,
   );
-  const sampled = useInstantQuery(
-    `count(netinv_flow_bytes{exporter="${mgmtIP}",sampled="true"})`,
-    !!mgmtIP,
-  );
-  const isSampled = (sampled.data?.length ?? 0) > 0;
 
   const rows = useMemo(() => toFlowRows(totals.data ?? []), [totals.data]);
 
@@ -93,9 +93,11 @@ export function FlowTab({
   const chart = (series.data ?? []).filter((s) => head.has(s.metric.value));
 
   const ifOptions = useMemo(() => {
-    const withFlow = (deviceIfs.data ?? [])
-      .map((r) => r.metric.if_index)
-      .filter(Boolean);
+    // Grouping by `sampled` as well means one ifIndex can appear twice; the
+    // selector must list it once.
+    const withFlow = [
+      ...new Set((deviceIfs.data ?? []).map((r) => r.metric.if_index)),
+    ].filter(Boolean);
     return withFlow.map((idx) => {
       const iface = interfaces.data?.data.find(
         (i) => String(i.if_index) === idx,
@@ -107,14 +109,14 @@ export function FlowTab({
     });
   }, [deviceIfs.data, interfaces.data]);
 
-  const loading = anyFlow.isLoading || deviceIfs.isLoading;
+  const loading = exporters.isLoading || deviceIfs.isLoading;
   const haveDeviceFlow = (deviceIfs.data?.length ?? 0) > 0;
 
   if (!loading && !haveDeviceFlow) {
     return (
       <NoFlow
         mgmtIP={mgmtIP}
-        anywhere={(anyFlow.data?.length ?? 0) > 0}
+        anywhere={(exporters.data?.length ?? 0) > 0}
         exporters={(exporters.data ?? [])
           .map((r) => r.metric.exporter)
           .filter(Boolean)}
@@ -220,7 +222,7 @@ export function FlowTab({
 // obvious placeholder is better than a plausible mistake.
 const LOOPBACK = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
 
-export function collectorHost() {
+function collectorHost() {
   const h = window.location.hostname;
   if (!h || LOOPBACK.has(h.toLowerCase())) return "";
   return h;

@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net"
 	"net/netip"
+	"strings"
 	"sync/atomic"
 	"time"
 )
@@ -230,7 +231,11 @@ func (c *Collector) Stats() (packets, records, refused, malformed uint64) {
 // listing one exporter means.
 func ParseAllow(s string) ([]netip.Prefix, error) {
 	var out []netip.Prefix
-	for _, part := range splitComma(s) {
+	for _, part := range strings.Split(s, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
 		if p, err := netip.ParsePrefix(part); err == nil {
 			out = append(out, p)
 			continue
@@ -242,25 +247,4 @@ func ParseAllow(s string) ([]netip.Prefix, error) {
 		out = append(out, netip.PrefixFrom(a, a.BitLen()))
 	}
 	return out, nil
-}
-
-func splitComma(s string) []string {
-	var out []string
-	cur := ""
-	for _, r := range s {
-		switch r {
-		case ',':
-			if cur != "" {
-				out = append(out, cur)
-			}
-			cur = ""
-		case ' ', '\t':
-		default:
-			cur += string(r)
-		}
-	}
-	if cur != "" {
-		out = append(out, cur)
-	}
-	return out
 }

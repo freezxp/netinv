@@ -527,11 +527,6 @@ func TestVersionAndProtoNames(t *testing.T) {
 			t.Errorf("protoName(%d) = %q, want %q", proto, got, want)
 		}
 	}
-	for v, want := range map[uint64]string{0: "0", 7: "7", 42: "42", 1234567890: "1234567890"} {
-		if got := itoa(v); got != want {
-			t.Errorf("itoa(%d) = %q, want %q", v, got, want)
-		}
-	}
 }
 
 func mustAllow(t *testing.T, s string) []netip.Prefix {
