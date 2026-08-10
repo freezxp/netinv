@@ -184,20 +184,41 @@ func conversation(a, b netip.Addr) string {
 	return b.String() + " ⇄ " + a.String()
 }
 
-// application names the well-known side of the exchange. The lower port is a
-// good proxy for the service: an ephemeral client port is high and arbitrary,
-// so keying on it would produce one bucket per connection.
+// application names the service side of the exchange.
+//
+// A recognised port wins over the lower one. "Lower port is the service" is a
+// decent fallback but it is wrong for every service that lives above the
+// ephemeral floor: WireGuard on 51820 loses to a client port of 28778, and the
+// bucket then keys on the client — one row per connection, which is precisely
+// the cardinality blow-up this function exists to prevent. It showed up as a
+// wall of udp/NNNNN rows crowding wireguard out of the table.
+//
+// Only when neither side is recognised does the lower port decide, which is
+// still the better guess between two unknowns.
 func application(r Record) string {
+	name := protoName(r.Protocol)
+	src, srcOK := wellKnown[portProto{r.SrcPort, r.Protocol}]
+	dst, dstOK := wellKnown[portProto{r.DstPort, r.Protocol}]
+	switch {
+	case srcOK && dstOK:
+		// Both recognised (a service talking to a service): the lower port is
+		// conventionally the more specific end.
+		if r.SrcPort <= r.DstPort {
+			return src
+		}
+		return dst
+	case srcOK:
+		return src
+	case dstOK:
+		return dst
+	}
+
 	port := r.SrcPort
 	if r.DstPort < port || port == 0 {
 		port = r.DstPort
 	}
-	name := protoName(r.Protocol)
 	if port == 0 {
 		return name
-	}
-	if svc, ok := wellKnown[portProto{port, r.Protocol}]; ok {
-		return svc
 	}
 	return name + "/" + itoa(uint64(port))
 }

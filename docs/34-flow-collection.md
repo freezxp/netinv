@@ -107,11 +107,16 @@ The three dimensions:
 - **`conversation`** — an unordered host pair rendered `A ⇄ B`, so A→B and B→A
   accumulate together. An operator asking what a link carries means the
   exchange, not each half of it separately.
-- **`application`** — the *lower* of the two ports, plus protocol. The low port
-  is a good proxy for the service: the client's port is high and arbitrary, so
-  keying on it would produce one bucket per connection and defeat the whole
-  aggregation. Well-known ports get names (`https`, `wireguard`); everything
-  else falls back to `tcp/9418`, which is perfectly readable.
+- **`application`** — whichever side of the exchange is a **recognised**
+  service port, falling back to the *lower* port when neither is. Well-known
+  ports get names (`https`, `wireguard`); anything else reads `tcp/9418`.
+
+  Recognition has to beat "lower wins", because plenty of services live above
+  the ephemeral floor: a WireGuard flow on 51820 loses to a client port of
+  28778, and the bucket then keys on the client — one row per connection, which
+  is exactly the cardinality blow-up the heuristic exists to prevent. The
+  lower-port rule only decides between two unrecognised ports, where it is
+  still the better guess.
 
 ### 3.1 Interface attribution
 

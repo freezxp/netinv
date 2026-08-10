@@ -576,3 +576,68 @@ func TestIntakeIsReportedPerIntervalNotCumulatively(t *testing.T) {
 		t.Errorf("Stats totals = %d/%d/%d, want 2/2/1", p, r, m)
 	}
 }
+
+// A service above the ephemeral floor must still be recognised. "Lower port
+// wins" put a WireGuard flow (51820) under its client's port whenever that
+// port happened to be lower — one bucket per connection, which is the exact
+// cardinality blow-up the heuristic is there to avoid.
+func TestApplicationPrefersRecognisedPortOverLowerPort(t *testing.T) {
+	cases := []struct {
+		name     string
+		src, dst uint16
+		proto    uint8
+		want     string
+	}{
+		{"wireguard below client port", 28778, 51820, 17, "wireguard"},
+		{"wireguard above client port", 51820, 58000, 17, "wireguard"},
+		{"https from high client port", 51000, 443, 6, "https"},
+		{"https as source", 443, 51000, 6, "https"},
+		{"rdp above 1024", 3389, 60001, 6, "rdp"},
+		{"neither recognised falls back to the lower port", 40000, 9418, 6, "tcp/9418"},
+		{"both recognised keeps the lower", 443, 51820, 6, "https"},
+		{"no ports at all", 0, 0, 1, "icmp"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := application(Record{SrcPort: c.src, DstPort: c.dst, Protocol: c.proto})
+			if got != c.want {
+				t.Errorf("application(%d->%d proto %d) = %q, want %q",
+					c.src, c.dst, c.proto, got, c.want)
+			}
+		})
+	}
+}
+
+// The consequence that matters: a busy WireGuard tunnel collapses to one
+// bucket instead of one per client port.
+func TestWireguardDoesNotFanOutIntoOneBucketPerConnection(t *testing.T) {
+	a := NewAggregator()
+	recs := make([]Record, 0, 40)
+	for i := 0; i < 40; i++ {
+		recs = append(recs, Record{
+			SrcAddr: addr("10.0.0.1"), DstAddr: addr("10.0.0.2"),
+			SrcPort: uint16(20000 + i), DstPort: 51820, Protocol: 17,
+			Bytes: 100, Packets: 1, InputIf: 1,
+		})
+	}
+	a.Add(&Packet{ExporterIP: addr("192.0.2.1"), Records: recs})
+
+	var apps int
+	var total uint64
+	for _, b := range a.Drain() {
+		if b.Key.Dimension != DimApplication {
+			continue
+		}
+		apps++
+		total += b.Bytes
+		if b.Key.Value != "wireguard" {
+			t.Errorf("unexpected application bucket %q", b.Key.Value)
+		}
+	}
+	if apps != 1 {
+		t.Errorf("got %d application buckets, want 1", apps)
+	}
+	if total != 4000 {
+		t.Errorf("bytes = %d, want 4000", total)
+	}
+}
