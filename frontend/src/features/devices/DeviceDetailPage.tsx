@@ -259,7 +259,7 @@ function InterfacesTab({
       <Card
         title={
           focused
-            ? `Traffic — ${focused.name || `if ${focused.if_index}`} (6h)`
+            ? `Traffic — ${focused.name || `if ${focused.if_index}`} (${range.short})`
             : "Traffic"
         }
       >
