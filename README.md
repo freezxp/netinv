@@ -29,6 +29,30 @@ inside a new LXC container, in about ten minutes, and `destroy` removes it —
 which also makes it a cheap way to test a branch against real hardware
 ([docs/33-proxmox-lxc.md](docs/33-proxmox-lxc.md)).
 
+## What it looks like
+
+The flagship view — a live weathermap, links coloured by utilization, each rate
+naming the direction it runs:
+
+![Weathermap](.github/assets/weathermap.png)
+
+The dashboard: status strip, inbound and outbound bandwidth per site, alerts,
+and a shared time range using Cacti's graph timespans.
+
+![Dashboard](.github/assets/dashboard.png)
+
+Device detail, and the capacity view that answers whether the disk can hold the
+retention you asked for:
+
+<p align="center">
+  <img src=".github/assets/device-detail.png" width="49%" alt="Device detail" />
+  <img src=".github/assets/capacity.png" width="49%" alt="Storage capacity" />
+</p>
+
+*All screenshots are the bundled demo fleet against the SNMP simulator — the
+same dataset `scripts/seed-demo.sh` creates, so anyone can reproduce them. No
+real network appears in them.*
+
 ## What it does (v1)
 
 - **Collects** interface traffic, errors/discards, device health (CPU/memory/temp/PSU/optics), ICMP availability/latency, and inventory metadata from network devices over SNMP v2c/v3.

@@ -41,6 +41,7 @@ tests writing into a live database.
 
 
 - **Recorded-walk fixtures:** connectors ship `testdata/*.snmpwalk` recorded from real devices (`scripts/record-fixture.sh`, which redacts serials, addresses and MACs at capture time — values *and* table indices, since tables like the Ruckus per-AP one are indexed by MAC). Four of seven have one today: `generic`/`cisco` from the simulator, `ruckus`/`ubiquiti` from real hardware; `huawei`/`juniper`/`zte` have no hardware to record from. Unit tests replay fixtures through a fake `Session` — connector tests need no network, run in ms, and lock in vendor behavior forever (a regression = a diff in normalized output).
+- **Generated counters.** The demo profiles' octet counters are snmpsim `numeric` variation rather than fixed values, so `rate()` produces real throughput and a seeded fleet draws live graphs instead of flat lines at zero — which is what makes the dataset usable for screenshots (§5). Only the 64-bit `ifHCInOctets`/`ifHCOutOctets` are generated: the module computes `value = seconds_since_start × rate` and clamps at the type maximum, so a Counter32 at any realistic line rate pins to `0xffffffff` within minutes and stops moving. The generic connector prefers the HC counters anyway, with the 32-bit pair as fallback.
 - **snmpsim** (`tools/snmpsim/`): serves those same walks over real UDP 161 for integration/E2E — the compose stack boots with 12 simulated devices (all 5 vendors + generic + edge cases: 32-bit-only counters, 4k-interface chassis, v3-authPriv, agent that times out intermittently, ifIndex-shifting device).
 - **Real-hardware pass (Sprint 17):** the connector matrix (doc 10 §5) is validated against at least one physical unit per vendor; results recorded in each connector's README (model, OS, families verified). ZTE explicitly risk-flagged (R-07).
 
@@ -70,7 +71,9 @@ tests writing into a live database.
 
 ## 5. Test data & environments
 
-Seeded demo dataset (`scripts/seed-demo.sh`): 2 sites, 40 simulated devices, 3 maps, default rules firing a couple of alerts — the same dataset drives local dev (NFR-73), E2E, screenshots in docs, and sales demos later. Environments: `compose` (local/CI E2E) → `staging` (k8s, nightly load/soak) → `prod`. No test touches prod; staging data is synthetic only.
+Seeded demo dataset (`scripts/seed-demo.sh`): 2 sites, simulated devices, default rules — the same dataset drives local dev (NFR-73), E2E, screenshots in docs, and sales demos later. The README screenshots are taken from it.
+
+**Known limitation:** `seed-demo.sh` addresses devices as `127.0.1.x`, which reaches the simulator only when the services run on the host (`make dev`). In the containerised deployment (doc 32/33) that address is the *poller's own* loopback, so ICMP succeeds — it pings itself — while SNMP has nothing listening, and devices sit in `pending` with graphs that never fill. It needs to resolve the simulator's address on the container network instead. Environments: `compose` (local/CI E2E) → `staging` (k8s, nightly load/soak) → `prod`. No test touches prod; staging data is synthetic only.
 
 ## 6. Definition of Done (every PR)
 
