@@ -28,7 +28,7 @@ func (c *Connector) Match(sys sdk.SysInfo) sdk.MatchScore {
 }
 
 func (c *Connector) Capabilities() []sdk.Capability {
-	return append(c.Base.Capabilities(), sdk.CapHealth)
+	return sdk.AddCaps(c.Base.Capabilities(), sdk.CapHealth)
 }
 
 const (

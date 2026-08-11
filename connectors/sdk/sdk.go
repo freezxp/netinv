@@ -176,6 +176,32 @@ func BestMatch(sys SysInfo) (Connector, MatchScore) {
 	return best, bestScore
 }
 
+// AddCaps returns base plus any of extra it does not already contain.
+//
+// Vendor connectors declare what they add on top of the generic base, and the
+// obvious spelling — append(c.Base.Capabilities(), CapHealth) — silently
+// duplicates whatever the base already had. The base does declare health, so
+// six connectors were reporting it twice and the catalogue rendered a doubled
+// badge. Appending through here keeps the declaration explicit and the result
+// a set.
+func AddCaps(base []Capability, extra ...Capability) []Capability {
+	out := make([]Capability, len(base))
+	copy(out, base)
+	for _, c := range extra {
+		found := false
+		for _, have := range out {
+			if have == c {
+				found = true
+				break
+			}
+		}
+		if !found {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
 // PrefixScore is the standard sysObjectID matcher: longest matching prefix.
 func PrefixScore(sys SysInfo, prefixes []string) MatchScore {
 	best := 0
