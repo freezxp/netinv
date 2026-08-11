@@ -115,7 +115,14 @@ func DecodeNetFlowV5(b []byte, from netip.Addr) (*Packet, error) {
 	p := &Packet{ExporterIP: from, Records: make([]Record, 0, count)}
 
 	for i := 0; i < count; i++ {
-		r := b[netflowV5HeaderLen+i*netflowV5RecordLen:]
+		// Convert to a fixed-size array rather than reslicing. The length
+		// check above already guarantees the bytes are present, but only
+		// across the whole loop; an array makes every field read provably in
+		// range at the point it happens — to a reader and to gosec alike —
+		// instead of resting on an invariant established forty lines earlier.
+		// It costs one 48-byte copy per record.
+		off := netflowV5HeaderLen + i*netflowV5RecordLen
+		r := [netflowV5RecordLen]byte(b[off : off+netflowV5RecordLen])
 		src, okS := netip.AddrFromSlice(r[0:4])
 		dst, okD := netip.AddrFromSlice(r[4:8])
 		if !okS || !okD {

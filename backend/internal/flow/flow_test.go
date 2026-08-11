@@ -256,13 +256,6 @@ func TestKeyCapFoldsIntoOtherRatherThanDropping(t *testing.T) {
 	}
 }
 
-type fakeWriter struct{ got []Bucket }
-
-func (f *fakeWriter) WriteFlow(_ context.Context, _ time.Time, b []Bucket) error {
-	f.got = append(f.got, b...)
-	return nil
-}
-
 // The collector is the first component accepting unsolicited network input.
 // Without the allow-list anyone who can reach the port can write series.
 func TestAllowListRefusesUnlistedSources(t *testing.T) {
@@ -610,10 +603,10 @@ func TestApplicationPrefersRecognisedPortOverLowerPort(t *testing.T) {
 func TestWireguardDoesNotFanOutIntoOneBucketPerConnection(t *testing.T) {
 	a := NewAggregator()
 	recs := make([]Record, 0, 40)
-	for i := 0; i < 40; i++ {
+	for i := uint16(0); i < 40; i++ {
 		recs = append(recs, Record{
 			SrcAddr: addr("10.0.0.1"), DstAddr: addr("10.0.0.2"),
-			SrcPort: uint16(20000 + i), DstPort: 51820, Protocol: 17,
+			SrcPort: 20000 + i, DstPort: 51820, Protocol: 17,
 			Bytes: 100, Packets: 1, InputIf: 1,
 		})
 	}
@@ -659,10 +652,10 @@ func TestApplicationWithTwoRecognisedPortsPicksTheLower(t *testing.T) {
 func TestDrainWithUnsetTopNUsesTheDefault(t *testing.T) {
 	a := &Aggregator{counts: map[Key]*counters{}} // TopN and MaxKeys both zero
 	recs := make([]Record, 0, DefaultTopN+5)
-	for i := 0; i < DefaultTopN+5; i++ {
+	for i := uint64(0); i < DefaultTopN+5; i++ {
 		recs = append(recs, Record{
 			SrcAddr: netip.AddrFrom4([4]byte{10, 0, 0, byte(i)}),
-			DstAddr: addr("10.9.9.9"), Bytes: uint64(100 * (i + 1)), Packets: 1, InputIf: 1,
+			DstAddr: addr("10.9.9.9"), Bytes: 100 * (i + 1), Packets: 1, InputIf: 1,
 		})
 	}
 	a.Add(&Packet{ExporterIP: addr("192.0.2.1"), Records: recs})
@@ -857,3 +850,41 @@ var errUnavailable = errors.New("metrics store unavailable")
 type writerFunc func() error
 
 func (f writerFunc) WriteFlow(context.Context, time.Time, []Bucket) error { return f() }
+
+// Packets that decode but attribute to nothing must be reported, with the
+// reason. This is the one intake case where the collector is working, the
+// exporter is reachable, and the tab is still empty — and the ifIndex hint is
+// the only thing that tells an operator where to look.
+func TestFlowWithNoIfIndexIsReportedNotSilentlyDropped(t *testing.T) {
+	log := &syncBuffer{}
+	c := &Collector{
+		Agg:   NewAggregator(),
+		Write: writerFunc(func() error { return nil }),
+		Log:   slog.New(slog.NewTextHandler(log, &slog.HandlerOptions{Level: slog.LevelInfo})),
+		Every: 20 * time.Millisecond,
+	}
+	// InputIf and OutputIf both zero: decodes fine, attributes to nothing.
+	c.handle(v5Packet(t, 0, 0, Record{
+		SrcAddr: addr("10.0.0.1"), DstAddr: addr("10.0.0.2"),
+		SrcPort: 51000, DstPort: 443, Protocol: 6, Bytes: 1000, Packets: 5,
+	}), &net.UDPAddr{IP: net.ParseIP("192.0.2.1"), Port: 5000})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go c.drainLoop(ctx, c.Every)
+
+	deadline := time.After(3 * time.Second)
+	for {
+		if strings.Contains(log.String(), "nothing aggregated") {
+			if !strings.Contains(log.String(), "ifIndex") {
+				t.Errorf("the report omits the reason; log was: %q", log.String())
+			}
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("an unattributable flow was never reported; log was: %q", log.String())
+		case <-time.After(20 * time.Millisecond):
+		}
+	}
+}

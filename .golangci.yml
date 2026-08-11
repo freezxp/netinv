@@ -53,6 +53,14 @@ issues:
       # G101 on a SQL column list that happens to contain "cred". It is a
       # projection of inventory.credentials, not a credential.
       text: "G101"
+    - path: internal/flow/flow_test\.go
+      linters: [gosec]
+      # G115 in the NetFlow v5 packet builder. Writing the wire format means
+      # narrowing the decoded type back down to it — a uint32 ifIndex into the
+      # v5 record's uint16 field, uint64 counters into its uint32 ones — which
+      # is the format's own limit, not a lapse. Every input is a literal in the
+      # same file. The decoder going the other way widens and cannot overflow.
+      text: "G115"
     - path: _test\.go
       linters: [noctx]
       # http.Get against an httptest server. There is no deadline to respect
