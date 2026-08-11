@@ -23,7 +23,10 @@ func main() {
 		}
 		addr := os.Getenv("NETINV_FLOW_ADDR")
 		if addr == "" {
-			addr = ":2055"
+			// Both conventional ports: NetFlow on 2055, IPFIX on 4739. An
+			// exporter that cannot be told which to use will use its own
+			// convention, and version is read from the datagram either way.
+			addr = ":2055,:4739"
 		}
 		c := &flow.Collector{
 			Addr:  addr,

@@ -68,11 +68,27 @@ const (
 type templateField struct {
 	typ    uint16
 	length uint16
+	// enterprise is non-zero for an IPFIX enterprise-specific element. Those
+	// are vendor extensions with no registry-wide meaning, so they are skipped
+	// by length rather than interpreted — a type ID only identifies a field
+	// within its enterprise, and treating one as a standard IE would read some
+	// vendor's private counter as a byte count.
+	enterprise uint32
 }
 
+// varLength marks an IPFIX field whose width is carried in the record instead
+// of the template (RFC 7011 §7). v9 has no such thing.
+const varLength = 0xFFFF
+
+func (f templateField) variable() bool { return f.length == varLength }
+
 type template struct {
-	fields    []templateField
+	fields []templateField
+	// recordLen is the fixed record width, valid only when hasVarLen is false.
 	recordLen int
+	// hasVarLen means at least one field's width is per-record, so records
+	// cannot be indexed by multiplication and must be walked in order.
+	hasVarLen bool
 	// scopeFields counts the leading fields that are scope rather than data.
 	// Only options templates have them, and their presence is how a data
 	// FlowSet is recognised as options data rather than flows.
@@ -86,6 +102,11 @@ type templateKey struct {
 	exporter netip.Addr
 	sourceID uint32
 	id       uint16
+	// version separates v9 and IPFIX template spaces. An exporter running both
+	// can legitimately use ID 300 for two different layouts, and sharing one
+	// key would let each overwrite the other — misreading every record while
+	// looking healthy.
+	version uint16
 }
 
 // TemplateCache holds the field layouts exporters have announced.
@@ -252,7 +273,7 @@ func DecodeNetFlowV9(b []byte, from netip.Addr, tc *TemplateCache, now time.Time
 		case fsID == fsIDOptionsTemplate:
 			parseOptionsTemplates(body, from, sourceID, tc, now)
 		case fsID >= fsIDMinData:
-			t, ok := tc.get(templateKey{from, sourceID, fsID}, now)
+			t, ok := tc.get(templateKey{from, sourceID, fsID, 9}, now)
 			if !ok {
 				awaiting++
 				break
@@ -302,7 +323,7 @@ func parseTemplates(body []byte, from netip.Addr, sourceID uint32, tc *TemplateC
 		if t.recordLen == 0 {
 			continue // a template describing nothing would divide by zero later
 		}
-		tc.put(templateKey{from, sourceID, id}, t, now)
+		tc.put(templateKey{from, sourceID, id, 9}, t, now)
 	}
 }
 
@@ -332,26 +353,89 @@ func parseOptionsTemplates(body []byte, from netip.Addr, sourceID uint32, tc *Te
 		if t.recordLen == 0 || t.scopeFields == 0 {
 			continue
 		}
-		tc.put(templateKey{from, sourceID, id}, t, now)
+		tc.put(templateKey{from, sourceID, id, 9}, t, now)
 		// Options templates are padded to a 4-byte boundary; the loop's own
 		// bounds check handles the remainder.
 	}
 }
 
-// readFlowData turns a data FlowSet into records using its template.
-func readFlowData(body []byte, t *template) []Record {
-	if t.recordLen <= 0 {
-		return nil
+// eachRecord walks a data set, calling fn with one record's field values.
+//
+// Two shapes in one function because IPFIX allows a field whose width lives in
+// the record rather than the template. A fixed-width record can be indexed by
+// multiplication; a variable one has to be walked, and a walker that assumed
+// otherwise would slide off the field boundary and read every subsequent
+// record as garbage that still parses.
+func eachRecord(body []byte, t *template, fn func(vals [][]byte)) {
+	if len(t.fields) == 0 {
+		return
 	}
-	n := len(body) / t.recordLen // trailing bytes are padding, by design
-	out := make([]Record, 0, n)
-	for i := 0; i < n; i++ {
-		rec := body[i*t.recordLen : (i+1)*t.recordLen]
+	if !t.hasVarLen {
+		if t.recordLen <= 0 {
+			return
+		}
+		vals := make([][]byte, len(t.fields))
+		for i := 0; i+t.recordLen <= len(body); i += t.recordLen {
+			rec := body[i : i+t.recordLen]
+			off := 0
+			for j, f := range t.fields {
+				vals[j] = rec[off : off+int(f.length)]
+				off += int(f.length)
+			}
+			fn(vals)
+		}
+		return
+	}
+
+	// Variable-length: RFC 7011 §7 encodes the width in the record, as one
+	// byte, or 255 followed by two bytes when the value is 255 bytes or longer.
+	off := 0
+	for off < len(body) {
+		start := off
+		vals := make([][]byte, len(t.fields))
+		ok := true
+		for j, f := range t.fields {
+			width := int(f.length)
+			if f.variable() {
+				if off >= len(body) {
+					ok = false
+					break
+				}
+				width = int(body[off])
+				off++
+				if width == 255 {
+					if off+2 > len(body) {
+						ok = false
+						break
+					}
+					width = int(binary.BigEndian.Uint16(body[off : off+2]))
+					off += 2
+				}
+			}
+			if off+width > len(body) {
+				ok = false
+				break
+			}
+			vals[j] = body[off : off+width]
+			off += width
+		}
+		if !ok || off == start {
+			return // truncated, or a record that consumed nothing: stop
+		}
+		fn(vals)
+	}
+}
+
+// readFlowData turns a data set into records using its template.
+func readFlowData(body []byte, t *template) []Record {
+	var out []Record
+	eachRecord(body, t, func(vals [][]byte) {
 		var r Record
-		off := 0
-		for _, f := range t.fields {
-			val := rec[off : off+int(f.length)]
-			off += int(f.length)
+		for i, f := range t.fields {
+			if f.enterprise != 0 {
+				continue // vendor-private: no registry meaning, skip by length
+			}
+			val := vals[i]
 			switch f.typ {
 			case fInBytes, fOutBytes:
 				r.Bytes += beUint(val)
@@ -381,8 +465,8 @@ func readFlowData(body []byte, t *template) []Record {
 				// Inline sampling on the flow record itself. Rare, but when it
 				// is here it is authoritative for this record.
 				if iv := beUint(val); iv > 1 {
-					r.Bytes *= uint64(iv)
-					r.Packets *= uint64(iv)
+					r.Bytes *= iv
+					r.Packets *= iv
 					r.Sampled = true
 				}
 			}
@@ -390,10 +474,10 @@ func readFlowData(body []byte, t *template) []Record {
 		// A record with no addresses is not a flow — most likely a template
 		// mismatch, where the layout parsed but described something else.
 		if !r.SrcAddr.IsValid() || !r.DstAddr.IsValid() {
-			continue
+			return
 		}
 		out = append(out, r)
-	}
+	})
 	return out
 }
 
@@ -404,23 +488,19 @@ func readFlowData(body []byte, t *template) []Record {
 // error anywhere. That is the same class of silent wrongness the v5 decoder
 // guards against, arriving by a different route.
 func readOptionsData(body []byte, t *template, from netip.Addr, sourceID uint32, tc *TemplateCache) {
-	if t.recordLen <= 0 {
-		return
-	}
-	for i := 0; i+t.recordLen <= len(body); i += t.recordLen {
-		rec := body[i : i+t.recordLen]
-		off := 0
-		for _, f := range t.fields {
-			val := rec[off : off+int(f.length)]
-			off += int(f.length)
+	eachRecord(body, t, func(vals [][]byte) {
+		for i, f := range t.fields {
+			if f.enterprise != 0 {
+				continue
+			}
 			switch f.typ {
 			case fSamplingInterval, fSamplerRandomInt, fSamplerInterval:
-				if iv := beUint(val); iv > 0 {
+				if iv := beUint(vals[i]); iv > 0 {
 					tc.putSampling(samplingKey{from, sourceID}, narrow32(iv))
 				}
 			}
 		}
-	}
+	})
 }
 
 // narrow16 and narrow32 bring an exporter-declared value down to the width the

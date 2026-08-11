@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/netip"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -24,7 +25,13 @@ type Writer interface {
 // are built in rather than left to deployment: an optional source allow-list,
 // and a hard bound on how much state one interval can accumulate.
 type Collector struct {
-	Addr  string // e.g. ":2055"
+	// Addr is one or more comma-separated listen addresses, e.g.
+	// ":2055,:4739". NetFlow conventionally arrives on 2055 and IPFIX on 4739,
+	// and an exporter that cannot be told otherwise will use its convention —
+	// so the collector meets both rather than making the operator translate.
+	// Version is read from the datagram regardless of which socket it came in
+	// on, so any format on any listed port works.
+	Addr  string
 	Agg   *Aggregator
 	Write Writer
 	Log   *slog.Logger
@@ -67,22 +74,56 @@ func (c *Collector) Run(ctx context.Context) error {
 		every = Interval
 	}
 
-	pc, err := net.ListenPacket("udp", c.Addr)
-	if err != nil {
-		return fmt.Errorf("flow: listen %s: %w", c.Addr, err)
+	addrs := splitAddrs(c.Addr)
+	if len(addrs) == 0 {
+		return fmt.Errorf("flow: no listen address configured")
 	}
-	defer pc.Close()
-	c.Log.Info("flow collector listening", "addr", c.Addr,
+
+	// Bind every socket before serving any. A partial bind — one port taken by
+	// another process — must fail the service outright rather than leave it
+	// listening on some ports and silently deaf on others, which would look
+	// exactly like an exporter that is not sending.
+	conns := make([]net.PacketConn, 0, len(addrs))
+	for _, a := range addrs {
+		pc, err := net.ListenPacket("udp", a)
+		if err != nil {
+			for _, open := range conns {
+				open.Close()
+			}
+			return fmt.Errorf("flow: listen %s: %w", a, err)
+		}
+		conns = append(conns, pc)
+	}
+	defer func() {
+		for _, pc := range conns {
+			pc.Close()
+		}
+	}()
+	c.Log.Info("flow collector listening", "addr", strings.Join(addrs, ","),
 		"allow", len(c.Allow), "interval", every.String())
 
 	go c.drainLoop(ctx, every)
 
+	var wg sync.WaitGroup
+	for _, pc := range conns {
+		wg.Add(1)
+		go func(pc net.PacketConn) {
+			defer wg.Done()
+			c.serve(ctx, pc)
+		}(pc)
+	}
+	wg.Wait()
+	return nil
+}
+
+// serve reads one socket until the context is cancelled.
+func (c *Collector) serve(ctx context.Context, pc net.PacketConn) {
 	// One datagram is at most 64 KB; flow exports are far smaller, but a
 	// short buffer would silently truncate a packet into a decode error.
 	buf := make([]byte, 65535)
 	for {
 		if ctx.Err() != nil {
-			return nil
+			return
 		}
 		// A deadline rather than a blocking read, so cancellation is noticed
 		// on a quiet network instead of at the next packet — which on a fleet
@@ -94,13 +135,25 @@ func (c *Collector) Run(ctx context.Context) error {
 				continue
 			}
 			if ctx.Err() != nil {
-				return nil
+				return
 			}
 			c.Log.Warn("flow read failed", "err", err)
 			continue
 		}
 		c.handle(buf[:n], addr)
 	}
+}
+
+// splitAddrs accepts the comma-separated form and tolerates the spacing of a
+// hand-written list.
+func splitAddrs(s string) []string {
+	var out []string
+	for _, part := range strings.Split(s, ",") {
+		if part = strings.TrimSpace(part); part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
 }
 
 func (c *Collector) handle(b []byte, addr net.Addr) {
@@ -136,11 +189,15 @@ func (c *Collector) handle(b []byte, addr net.Addr) {
 		c.stats.packets.Add(1)
 		c.stats.records.Add(uint64(len(p.Records)))
 		c.Agg.Add(p)
-	case 9:
+	case 9, 10:
 		if c.Templates == nil {
 			c.Templates = NewTemplateCache()
 		}
-		p, awaiting, err := DecodeNetFlowV9(b, from, c.Templates, time.Now())
+		decode := DecodeNetFlowV9
+		if version == 10 {
+			decode = DecodeIPFIX
+		}
+		p, awaiting, err := decode(b, from, c.Templates, time.Now())
 		if err != nil {
 			c.stats.malformed.Add(1)
 			c.Log.Debug("flow decode failed", "from", from.String(), "err", err)
@@ -157,9 +214,9 @@ func (c *Collector) handle(b []byte, addr net.Addr) {
 		c.stats.records.Add(uint64(len(p.Records)))
 		c.Agg.Add(p)
 	default:
-		// IPFIX (10) and sFlow (its own port) are not decoded yet. Counted
-		// rather than logged so an operator can see that something is arriving
-		// and being ignored.
+		// sFlow (version 5 on its own port, with a different datagram shape)
+		// is not decoded yet. Counted rather than logged so an operator can
+		// see that something is arriving and being ignored.
 		c.stats.malformed.Add(1)
 	}
 }

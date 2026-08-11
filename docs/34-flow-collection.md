@@ -46,14 +46,21 @@ ADR. This service will not grow into it by accident.
 |---|---|---|
 | NetFlow v5 | 2055/udp | **Implemented** |
 | NetFlow v9 | 2055/udp | **Implemented**, including options templates and sampling (§2.1–2.2) |
-| IPFIX | 4739/udp | Not implemented — same template model, different header and enterprise fields |
-| sFlow v5 | 6343/udp | Not implemented — needs its own decoder |
+| IPFIX | 4739/udp | **Implemented**, including variable-length and enterprise fields (§2.1) |
+| sFlow v5 | 6343/udp | Not implemented — samples packet headers rather than exporting flow records, so none of this machinery transfers |
+
+The collector listens on **both 2055 and 4739** and reads the version from the
+datagram, so any of the three formats works on either port. An exporter that
+cannot be told which port to use will use its convention, and meeting both is
+cheaper than making every operator translate.
 
 v5 came first because it is the one format that decodes without per-exporter
 state: fixed 24-byte header, fixed 48-byte records, at most 30 per datagram, no
 templates. v9 followed because that is where the hardware is — the two firewall
 platforms added in ADR-021 cannot export v5 at all — and because v5 is IPv4-only,
-so a dual-stack link was silently half-reported.
+so a dual-stack link was silently half-reported. IPFIX came with it: once the
+template machinery existed, IPFIX was that machinery plus a different header and
+a handful of encodings (§2.1).
 
 Unrecognised versions are counted, not logged (§5), so an operator can tell "an
 exporter is sending me v9" apart from "nothing is arriving" without reading a
@@ -93,6 +100,32 @@ four consequences worth knowing before touching it (ADR-022):
 v9 also carries IPv6, which v5 cannot express at all — the reason a dual-stack
 link was previously reported at roughly half its real volume with no indication
 that anything was missing.
+
+**IPFIX is that model standardised**, and shares the cache, the record walker
+and the field mapping. What it does not share is where a decoder treating it as
+"v9 with a different version number" reads the wrong bytes without failing:
+
+- The header is **16 bytes, not 20**, and carries the message's **total length**
+  where v9 carries a **record count**. Trusting the v9 field walks past the end
+  or stops early. The declared length also bounds the message, so trailing bytes
+  added by a middlebox are ignored rather than parsed.
+- Template sets are **ID 2 and 3**, where v9 uses 0 and 1.
+- An options template declares a scope **field count**; v9 declares scope and
+  option **byte lengths**. Same idea, same 16-bit field, same position,
+  different unit.
+- Fields may be **enterprise-specific**: the high bit of the element ID means a
+  4-byte enterprise number follows *in the template*. Miss it and every
+  subsequent field is offset by four bytes — which still parses, and produces
+  confident nonsense. Those fields are vendor-private with no registry-wide
+  meaning, so they are skipped by length rather than interpreted.
+- A field may be **variable-length**, with its width in the record rather than
+  the template. Such a record cannot be indexed by multiplication; it has to be
+  walked, and a walker that assumed otherwise slides off the field boundary and
+  reads every later record as garbage that still parses.
+
+v9 and IPFIX number their templates independently, so the cache key includes the
+version: an exporter running both can legitimately use ID 256 for two different
+layouts, and sharing one key would let each overwrite the other.
 
 ### 2.2 Sampling
 
@@ -187,14 +220,17 @@ interval, and the two are independent on purpose.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `NETINV_FLOW_ADDR` | `:2055` | UDP listen address |
+| `NETINV_FLOW_ADDR` | `:2055,:4739` | Comma-separated UDP listen addresses |
 | `NETINV_FLOW_ALLOW` | *(empty)* | Comma-separated CIDRs or bare addresses |
 | `NETINV_VM_URL` | — | VictoriaMetrics write endpoint |
 
 A bare address in `NETINV_FLOW_ALLOW` becomes a `/32` or `/128`, which is what
 an operator listing a single exporter means.
 
-The Compose stack publishes `2055/udp` from the `flow` service. If NetInv runs
+The Compose stack publishes `2055/udp` and `4739/udp` from the `flow` service.
+Every listed address must bind or the service fails to start: a partial bind
+would leave the collector listening on some ports and silently deaf on others,
+which looks exactly like an exporter that is not sending. If NetInv runs
 behind a firewall, that port has to be reachable from each exporter — flow is
 pushed to the collector, not polled from it, which is the opposite direction to
 everything else NetInv does.
@@ -216,29 +252,31 @@ everything else NetInv does.
 
 Four things apply on every platform and cause most first-attempt failures:
 
-1. **Send v5 or v9, not IPFIX or sFlow.** Both NetFlow versions are decoded;
-   IPFIX and sFlow are not, and an exporter sending those looks exactly like one
-   sending nothing (§5 tells the two apart). Most platforms default to v9, which
-   is fine — and preferable, since v9 carries IPv6 and v5 does not.
+1. **Send NetFlow or IPFIX, not sFlow.** v5, v9 and IPFIX are all decoded;
+   sFlow is not, and an exporter sending it looks exactly like one sending
+   nothing (§5 tells the two apart). Prefer **v9 or IPFIX** — they are
+   equivalent here, and both carry IPv6 where v5 cannot.
 2. **Set the active timeout to 1 minute.** Defaults are typically 30 minutes:
    a long-lived transfer is then reported once per half hour, as one enormous
    record, and the chart shows a spike surrounded by nothing rather than a
    sustained flow. One minute matches the aggregation interval (§3.1).
 3. **Enable it on the interfaces you care about**, in the ingress direction.
    Global export configuration alone collects nothing on most platforms.
-4. **Prefer v9 on a dual-stack link.** The v5 record format has no IPv6 fields
-   at all, so a v5 exporter on a dual-stack link silently reports only half its
-   traffic. v9 carries both.
-5. **After a NetInv restart, v9 goes quiet until templates are resent** —
-   commonly 10-20 minutes. That is the protocol working, not a fault; the
-   collector reports it as `awaiting_template` (§5). Lowering the exporter's
-   template refresh interval shortens the gap.
+4. **Prefer v9 or IPFIX on a dual-stack link.** The v5 record format has no
+   IPv6 fields at all, so a v5 exporter on a dual-stack link silently reports
+   only half its traffic.
+5. **After a NetInv restart, v9 and IPFIX go quiet until templates are
+   resent** — commonly 10-20 minutes, and 30 on some defaults. That is the
+   protocol working, not a fault; the collector reports it as
+   `awaiting_template` (§5). Lowering the exporter's template refresh interval
+   shortens the gap. v5 has no such window.
 
 **Cisco IOS / IOS-XE**
 
 ```
-ip flow-export version 5
+ip flow-export version 9
 ip flow-export destination <netinv-host> 2055
+ip flow-export template refresh-rate 30
 ip flow-cache timeout active 1
 ip flow-cache timeout inactive 15
 !
@@ -246,12 +284,18 @@ interface GigabitEthernet0/1
  ip flow ingress
 ```
 
+Substitute `version 5` and drop the refresh-rate line for v5. IPFIX on IOS-XE
+means Flexible NetFlow with a custom record and exporter, which is a longer
+configuration than this.
+
 **Juniper Junos** — sampling rather than a flow cache, so the sampling rate is
 explicit and NetInv will label the results as estimates:
 
 ```
 set forwarding-options sampling instance NETINV family inet output flow-server <netinv-host> port 2055
-set forwarding-options sampling instance NETINV family inet output flow-server <netinv-host> version 5
+set forwarding-options sampling instance NETINV family inet output flow-server <netinv-host> version9 template NETINV-V4
+set services flow-monitoring version9 template NETINV-V4 ipv4-template
+set services flow-monitoring version9 template NETINV-V4 template-refresh-rate seconds 60
 set forwarding-options sampling instance NETINV input rate 100
 set interfaces ge-0/0/0 unit 0 family inet sampling input
 ```
@@ -259,7 +303,7 @@ set interfaces ge-0/0/0 unit 0 family inet sampling input
 **Huawei VRP** (NetStream):
 
 ```
-ip netstream export version 5
+ip netstream export version 9
 ip netstream export host <netinv-host> 2055
 ip netstream timeout active 1
 interface GigabitEthernet0/0/1
@@ -270,13 +314,13 @@ interface GigabitEthernet0/0/1
 
 ```
 /ip traffic-flow set enabled=yes active-flow-timeout=1m
-/ip traffic-flow target add dst-address=<netinv-host> port=2055 version=5
+/ip traffic-flow target add dst-address=<netinv-host> port=2055 version=9
 ```
 
 **VyOS**:
 
 ```
-set system flow-accounting netflow version 5
+set system flow-accounting netflow version 9
 set system flow-accounting netflow server <netinv-host> port 2055
 set system flow-accounting netflow timeout expiry-interval 60
 set system flow-accounting interface eth0
@@ -286,7 +330,7 @@ set system flow-accounting interface eth0
 this is also the way to get flow off a device whose firmware cannot export it):
 
 ```
-softflowd -i eth0 -v 5 -t maxlife=60 -n <netinv-host>:2055
+softflowd -i eth0 -v 9 -t maxlife=60 -n <netinv-host>:2055
 ```
 
 **Fortinet FortiGate** (FortiOS exports v9):
@@ -429,11 +473,9 @@ number invites the reader to think one of the two is wrong.
 Stated explicitly so nobody reads §2's table as a to-do list that is nearly
 finished:
 
-- **IPFIX and sFlow are not implemented.** IPFIX is now the smaller of the two:
-  it shares v9's template model, so what remains is its different header, its
-  Set-ID numbering and enterprise-specific fields. sFlow still needs a decoder
-  of its own — it samples packet headers rather than exporting flow records, so
-  none of the machinery here transfers.
+- **sFlow is not implemented.** It samples packet headers rather than exporting
+  flow records, so none of the template machinery here transfers — it needs a
+  decoder of its own.
 - **No IPv6 exporter transport.** Flow *about* IPv6 traffic works (v9 carries
   it); the collector still listens on UDP over IPv4 only.
 - **Template state is not persisted across a restart.** It could be, and that

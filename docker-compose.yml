@@ -103,7 +103,7 @@ services:
     profiles: [app]
     build: { context: ., dockerfile: backend/Dockerfile, args: { SERVICE: flow } }
     environment: *appenv
-    ports: ["2055:2055/udp"]
+    ports: ["2055:2055/udp", "4739:4739/udp"]
   alerter:
     restart: unless-stopped
     profiles: [app]
