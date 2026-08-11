@@ -25,6 +25,12 @@ export interface Device {
   id: string;
   name: string;
   mgmt_ip: string;
+  /**
+   * Extra source addresses this device exports flow from. Flow is attributed
+   * by the datagram's source, and a router routinely exports from an uplink or
+   * loopback rather than its management address.
+   */
+  flow_exporters?: string[];
   site_id: string;
   connector_id: string;
   credential_id: string;

@@ -70,9 +70,11 @@ type deviceView struct {
 	Tags         []string `json:"tags"`
 	Notes        string   `json:"notes,omitempty"`
 	// Subscribed uplink rate in bits/s; 0 when nobody has stated it.
-	WANCapacityBPS int64  `json:"wan_capacity_bps"`
-	CreatedAt      string `json:"created_at"`
-	UpdatedAt      string `json:"updated_at"`
+	WANCapacityBPS int64 `json:"wan_capacity_bps"`
+	// Extra source addresses this device exports flow from, beyond mgmt_ip.
+	FlowExporters []string `json:"flow_exporters,omitempty"`
+	CreatedAt     string   `json:"created_at"`
+	UpdatedAt     string   `json:"updated_at"`
 }
 
 func toDeviceView(d *domain.Device) deviceView {
@@ -84,8 +86,31 @@ func toDeviceView(d *domain.Device) deviceView {
 		Vendor: d.Vendor, Model: d.Model, SerialNumber: d.SerialNumber,
 		OSVersion: d.OSVersion, Tags: d.Tags, Notes: d.Notes,
 		WANCapacityBPS: d.WANCapacityBPS,
+		FlowExporters:  flowExporters(d.Attrs),
 		CreatedAt:      d.CreatedAt.UTC().Format(rfc), UpdatedAt: d.UpdatedAt.UTC().Format(rfc),
 	}
+}
+
+// flowExporters reads the attribute back out of jsonb, where a []string went in
+// and a []any comes out.
+func flowExporters(attrs map[string]any) []string {
+	raw, ok := attrs["flow_exporters"]
+	if !ok {
+		return nil
+	}
+	switch v := raw.(type) {
+	case []string:
+		return v
+	case []any:
+		out := make([]string, 0, len(v))
+		for _, a := range v {
+			if s, ok := a.(string); ok && s != "" {
+				out = append(out, s)
+			}
+		}
+		return out
+	}
+	return nil
 }
 
 func (h *DeviceHandler) list(w http.ResponseWriter, r *http.Request) {

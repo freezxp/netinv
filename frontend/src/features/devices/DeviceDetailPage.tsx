@@ -164,7 +164,13 @@ export function DeviceDetailPage() {
       {tab === "Health" && <HealthTab deviceID={id} />}
       {tab === "Wireless" && <WirelessTab deviceID={id} />}
       {tab === "Availability" && <AvailabilityTab deviceID={id} />}
-      {tab === "Flow" && <FlowTab deviceID={id} mgmtIP={d?.mgmt_ip ?? ""} />}
+      {tab === "Flow" && (
+        <FlowTab
+          deviceID={id}
+          mgmtIP={d?.mgmt_ip ?? ""}
+          extraExporters={d?.flow_exporters ?? []}
+        />
+      )}
       {tab === "History" && <HistoryTab deviceID={id} />}
       {tab === "Alerts" && <AlertsTab deviceID={id} />}
     </div>

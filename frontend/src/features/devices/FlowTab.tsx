@@ -5,6 +5,8 @@ import {
   flowSelector,
   flowTotalExpr,
   flowWindow,
+  reQuote,
+  useClaimFlowExporter,
   useDeviceInterfaces,
   toFlowRows,
   useInstantQuery,
@@ -15,7 +17,7 @@ import { useTimeRange } from "../../api/timerange";
 import { FlowTable } from "../../components/FlowTable";
 import { FlowSetupGuide } from "./FlowSetupGuide";
 import { TimeSeries } from "../../components/TimeSeries";
-import { Card, cx, Select } from "../../components/ui";
+import { Button, Card, cx, Select } from "../../components/ui";
 import { formatBps } from "../../lib/format";
 
 const DIMENSIONS: Array<{ key: FlowDimension; label: string; blurb: string }> =
@@ -48,9 +50,12 @@ const CHART_SERIES = 5;
 export function FlowTab({
   deviceID,
   mgmtIP,
+  extraExporters = [],
 }: {
   deviceID: string;
   mgmtIP: string;
+  /** Additional source addresses claimed for this device. */
+  extraExporters?: string[];
 }) {
   const range = useTimeRange();
   const [dimension, setDimension] = useState<FlowDimension>("talker");
@@ -58,7 +63,14 @@ export function FlowTab({
 
   const interfaces = useDeviceInterfaces(deviceID);
 
-  const selector = flowSelector(mgmtIP, dimension, ifIndex || undefined);
+  // A device is attributed by its management address plus anything claimed
+  // for it, because a router routinely exports from an uplink or loopback.
+  const mine = useMemo(
+    () => [mgmtIP, ...extraExporters].filter(Boolean),
+    [mgmtIP, extraExporters],
+  );
+  const mineRe = mine.map(reQuote).join("|");
+  const selector = flowSelector(mine, dimension, ifIndex || undefined);
   const rangeS = Math.round(range.hours * 3600);
   const windowS = flowWindow(range.stepS);
 
@@ -80,7 +92,7 @@ export function FlowTab({
     `count by (exporter) (max_over_time(netinv_flow_bytes[${rangeS}s]))`,
   );
   const deviceIfs = useInstantQuery(
-    `count by (if_index, sampled) (max_over_time(netinv_flow_bytes{exporter="${mgmtIP}"}[${rangeS}s]))`,
+    `count by (if_index, sampled) (max_over_time(netinv_flow_bytes{exporter=~"${mineRe}"}[${rangeS}s]))`,
     !!mgmtIP,
   );
   const isSampled = (deviceIfs.data ?? []).some(
@@ -126,14 +138,16 @@ export function FlowTab({
   // operator who picks "Last 30 Minutes" while a bursty exporter is between
   // sends should be told to widen the range, not that nothing is arriving.
   const wider = useInstantQuery(
-    `count(max_over_time(netinv_flow_bytes{exporter="${mgmtIP}"}[7d]))`,
+    `count(max_over_time(netinv_flow_bytes{exporter=~"${mineRe}"}[7d]))`,
     !!mgmtIP && !loading && !haveDeviceFlow,
   );
 
   if (!loading && !haveDeviceFlow) {
     return (
       <NoFlow
+        deviceID={deviceID}
         mgmtIP={mgmtIP}
+        mine={mine}
         anywhere={(exporters.data?.length ?? 0) > 0}
         outsideRange={(wider.data?.length ?? 0) > 0}
         rangeLabel={range.label.toLowerCase()}
@@ -253,20 +267,25 @@ function collectorHost() {
 // a page can say, and the failure this collector actually presents is silence
 // (doc 34 §5).
 function NoFlow({
+  deviceID,
   mgmtIP,
+  mine,
   anywhere,
   outsideRange,
   rangeLabel,
   exporters,
 }: {
+  deviceID: string;
   mgmtIP: string;
+  mine: string[];
   anywhere: boolean;
   /** Flow exists from this device, just not inside the selected range. */
   outsideRange: boolean;
   rangeLabel: string;
   exporters: string[];
 }) {
-  const others = exporters.filter((e) => e !== mgmtIP);
+  const others = exporters.filter((e) => !mine.includes(e));
+  const claim = useClaimFlowExporter(deviceID);
 
   // The most reassuring answer of the four, and the one a bursty exporter
   // produces constantly: it is working, you are just looking at a gap.
@@ -314,14 +333,37 @@ function NoFlow({
               which is not always the address NetInv manages the device on — a
               router exporting from a loopback is the usual reason for this
               mismatch.
-              {others.length > 0 && (
-                <>
-                  {" "}
-                  Currently receiving from:{" "}
-                  <span className="mono">{others.join(", ")}</span>.
-                </>
-              )}
             </p>
+            {others.length > 0 && (
+              <div className="mb-3 rounded-md border border-slate-200 p-3 dark:border-slate-800">
+                <div className="mb-2 text-xs text-slate-500 dark:text-slate-400">
+                  Flow is currently arriving from these addresses. If one of
+                  them is this device exporting from another interface, claim it
+                  — its flow will be attributed here from the next interval on,
+                  and polling is unaffected.
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  {others.map((e) => (
+                    <Button
+                      key={e}
+                      variant="ghost"
+                      className="mono border border-slate-300 text-xs dark:border-slate-700"
+                      disabled={claim.isPending}
+                      onClick={() =>
+                        claim.mutate([...mine.filter((m) => m !== mgmtIP), e])
+                      }
+                    >
+                      {claim.isPending ? "…" : `Claim ${e}`}
+                    </Button>
+                  ))}
+                </div>
+                {claim.isError && (
+                  <div className="mt-2 text-xs text-red-500">
+                    {(claim.error as Error).message}
+                  </div>
+                )}
+              </div>
+            )}
           </>
         )}
         <div className="mt-5 border-t border-slate-200 pt-4 dark:border-slate-800">

@@ -213,6 +213,24 @@ export function useDeviceAlerts(id: string) {
   });
 }
 
+// useClaimFlowExporter attaches a source address to a device, so flow arriving
+// from it is attributed there. Offered from the Flow tab's empty state, which
+// is where the unattributed address is discovered in the first place.
+export function useClaimFlowExporter(deviceID: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (exporters: string[]) =>
+      api<Device>(`/devices/${deviceID}`, {
+        method: "PATCH",
+        body: JSON.stringify({ flow_exporters: exporters }),
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["device", deviceID] });
+      qc.invalidateQueries({ queryKey: ["instant"] });
+    },
+  });
+}
+
 export function useSyncNow() {
   const qc = useQueryClient();
   return useMutation({
@@ -328,15 +346,42 @@ export type FlowDimension = "talker" | "conversation" | "application";
 
 // An empty exporter means every exporter, which is what a fleet-wide dashboard
 // panel wants — the busiest hosts on the network, not on one device.
+//
+// More than one address is a regular occurrence rather than an edge case: a
+// device is attributed by its management address plus any source it was
+// observed exporting from, so the selector has to match a set.
 export function flowSelector(
-  exporter: string,
+  exporter: string | string[],
   dimension: FlowDimension,
   ifIndex?: string,
 ) {
+  const list = (Array.isArray(exporter) ? exporter : [exporter]).filter(
+    Boolean,
+  );
   const parts = [`dimension="${dimension}"`];
-  if (exporter) parts.unshift(`exporter="${exporter}"`);
+  if (list.length === 1) {
+    parts.unshift(`exporter="${list[0]}"`);
+  } else if (list.length > 1) {
+    parts.unshift(`exporter=~"${list.map(reQuote).join("|")}"`);
+  }
   if (ifIndex) parts.push(`if_index="${ifIndex}"`);
   return `{${parts.join(",")}}`;
+}
+
+// reQuote escapes an address for use inside a MetricsQL regex matcher.
+//
+// The backslash is doubled because the value passes through two layers before
+// it reaches the regex engine: MetricsQL first unescapes the double-quoted
+// string, then compiles what remains. A single backslash therefore never
+// reaches the regex — it is consumed as a string escape, and `\.` is not a
+// valid one, so the store rejects the whole query with a parse error rather
+// than matching too much. Writing `\\.` in the query text yields `\.` at the
+// regex, which is what was meant.
+//
+// Escaping at all matters because an unescaped dot matches any character:
+// 10.0.0.1 would also match 10x0y0z1.
+export function reQuote(s: string) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\\\$&");
 }
 
 export interface FlowRow {

@@ -55,6 +55,15 @@ type DeviceInput struct {
 	// WANCapacityBPS is the subscribed uplink rate; nil leaves it untouched, 0
 	// clears it back to unknown (FR-MAP-08).
 	WANCapacityBPS *int64 `json:"wan_capacity_bps"`
+	// FlowExporters are additional source addresses this device sends flow
+	// from. Flow is attributed by the datagram's source address, and a router
+	// routinely exports from an uplink or loopback rather than the address
+	// NetInv manages it on — in the pilot, two gateways managed on their LAN
+	// addresses export from their WAN side. Without this the flow arrives,
+	// decodes, and belongs to no device.
+	//
+	// nil leaves the list untouched; an empty slice clears it.
+	FlowExporters *[]string `json:"flow_exporters"`
 }
 
 func (s *DeviceService) validate(ctx context.Context, in DeviceInput) error {
@@ -162,6 +171,20 @@ func (s *DeviceService) Update(ctx context.Context, deviceID string, in DeviceIn
 	}
 	if in.Tags != nil {
 		d.Tags = in.Tags
+	}
+	if in.FlowExporters != nil {
+		clean, err := cleanFlowExporters(in.FlowExporters, d.MgmtIP)
+		if err != nil {
+			return nil, err
+		}
+		if d.Attrs == nil {
+			d.Attrs = map[string]any{}
+		}
+		if len(clean) == 0 {
+			delete(d.Attrs, "flow_exporters")
+		} else {
+			d.Attrs["flow_exporters"] = clean
+		}
 	}
 	d.Notes = in.Notes
 	if in.WANCapacityBPS != nil {
@@ -335,4 +358,40 @@ func (s *DeviceService) WalkOIDs(ctx context.Context, deviceID, root string,
 	s.Audit.Write(ctx, m.event("device.oid_walk", "device", deviceID, nil,
 		map[string]any{"root": root, "returned": len(values)}))
 	return values, nil
+}
+
+// cleanFlowExporters validates and normalises the extra source addresses a
+// device exports flow from.
+//
+// An address that does not parse is rejected rather than stored: it would sit
+// in the device record matching nothing, and the Flow tab would go on reporting
+// that flow is arriving from somewhere unattributed, with the cause now hidden
+// in a field somebody had already filled in.
+func cleanFlowExporters(in *[]string, mgmtIP string) ([]string, error) {
+	if in == nil {
+		return nil, nil
+	}
+	out := make([]string, 0, len(*in))
+	for _, a := range *in {
+		a = strings.TrimSpace(a)
+		if a == "" {
+			continue
+		}
+		if _, err := netip.ParseAddr(a); err != nil {
+			return nil, errx.New(errx.KindInvalid,
+				"flow_exporters: %q is not a valid IP address", a)
+		}
+		// The management address is always attributed; listing it again would
+		// put a duplicate into every selector built from the two.
+		if a != mgmtIP {
+			out = append(out, a)
+		}
+	}
+	return out, nil
+}
+
+// validateFlowExporters reports whether the list would be accepted.
+func validateFlowExporters(in *[]string) error {
+	_, err := cleanFlowExporters(in, "")
+	return err
 }

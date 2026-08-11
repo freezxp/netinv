@@ -223,7 +223,29 @@ The three dimensions:
   lower-port rule only decides between two unrecognised ports, where it is
   still the better guess.
 
-### 3.1 Interface attribution
+### 3.1 Device attribution
+
+Flow is keyed by the datagram's source address, and NetInv matches that against
+a device's management address. Real routers routinely export from somewhere
+else — an uplink or a loopback — so a device can carry a list of **additional
+exporter addresses** (`flow_exporters` on the device, settable via `PATCH
+/devices/{id}`). Both are matched, so claiming an address changes attribution
+without touching how the device is polled.
+
+Two pilot gateways demonstrated the need: managed on their LAN addresses, they
+export from their WAN side, so their flow arrived, decoded, and belonged to no
+device. The Flow tab's empty state names the unattributed addresses it can see
+and offers to claim one, because that state is where the problem is discovered.
+
+> **A MetricsQL trap, if you build a selector from that list.** Matching several
+> addresses needs `exporter=~"a|b"`, and the escaping has two layers: MetricsQL
+> unescapes the double-quoted string first, then compiles what remains as a
+> regex. A single backslash never reaches the regex — it is consumed as a string
+> escape, and `\.` is not a valid one, so the store rejects the entire query
+> with a parse error. The query text needs `\\.` to yield `\.` at the regex.
+> Use `reQuote` from `api/hooks.ts` rather than escaping by hand.
+
+### 3.2 Interface attribution
 
 A flow is attributed to its **ingress** ifIndex, falling back to egress when
 ingress is zero. **A flow with neither is dropped**, deliberately: it would
@@ -281,7 +303,7 @@ Four things apply on every platform and cause most first-attempt failures:
 2. **Set the active timeout to 1 minute.** Defaults are typically 30 minutes:
    a long-lived transfer is then reported once per half hour, as one enormous
    record, and the chart shows a spike surrounded by nothing rather than a
-   sustained flow. One minute matches the aggregation interval (§3.1).
+   sustained flow. One minute matches the aggregation interval (§3.2).
 3. **Enable it on the interfaces you care about**, in the ingress direction.
    Global export configuration alone collects nothing on most platforms.
 4. **Prefer v9 or IPFIX on a dual-stack link.** The v5 record format has no
@@ -450,7 +472,7 @@ outside, so the collector distinguishes them in its log at info level:
   running totals**, so the line stops appearing when the problem stops; a
   cumulative version would re-report one bad packet every minute forever.
 - `flow received but nothing aggregated` — packets decoded but produced no
-  buckets, which in practice means flows with no usable ifIndex (§3.1).
+  buckets, which in practice means flows with no usable ifIndex (§3.2).
 - `flow key cap reached` (warn) — the per-interval key cap was hit and detail
   is being folded into an `other` bucket. Totals stay honest; detail is gone.
 
