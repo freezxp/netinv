@@ -4,16 +4,33 @@
 what it receives, what it stores, what it deliberately throws away, the
 exposure that comes with listening on a socket, and the UI that reads it.
 
-> **Validated against a generated source, not against hardware.** Nothing in the
-> reference pilot exports flow: the UniFi gateways do not emit NetFlow natively,
-> and probing the sFlow MIB (`1.3.6.1.4.1.14706.1`) returned "No more variables
-> left" on the UDM-Pro and "No Such Object" on both an EdgeSwitch 16XG and a
-> USW-Lite16. Everything below was exercised by sending real NetFlow v5 and v9
-> datagrams — including IPv6 flows and a sampled export declaring its rate in an
-> options record — at the collector, and reading the resulting series back out
-> of VictoriaMetrics. That is a generated source behaving as the RFCs describe,
-> which is not the same as a real exporter behaving as its firmware actually
-> does. §8 lists what remains unwritten.
+> **Decoding validated against real hardware (2026-08-12); volumes are not.**
+> A UniFi gateway in the reference pilot exports NetFlow v5 to the collector and
+> it decodes cleanly — series appear, records parse, the sampled flag is set,
+> and the exporter address matched a managed device without intervention. Not a
+> single packet was refused or undecodable.
+>
+> **What is not yet established is whether the numbers are right.** Summed over
+> an hour, the flow totals for two interfaces came to roughly 0.06% of what the
+> SNMP counters recorded for the same interfaces over the same window. At least
+> three things contribute — sparse exports (7 minutes of data in 45), the
+> top-N cut discarding everything outside the busiest ten buckets, and possibly
+> a declared sampling interval that does not match the rate configured on the
+> device — and until they are separated, treat flow here as showing *shape*
+> rather than *volume*. SNMP remains the authority (§2.2), which is the reason
+> that rule exists. §4.2 records the rest.
+>
+> An earlier version of this document stated that UniFi gateways cannot export
+> flow. **That was wrong** — the feature is in the UniFi Network application
+> under Traffic Logging, offering v5, v9 and IPFIX. The claim was never tested,
+> only inferred from the absence of an sFlow MIB, and it stood here for two
+> days. Recorded rather than quietly deleted, because a confident wrong claim in
+> a document is worse than a gap and this one would have stopped an operator
+> from trying.
+>
+> v9, IPFIX, IPv6 flows and options-record sampling remain validated against a
+> generated source only — the RFCs' behaviour, not a given firmware's. §8 lists
+> what is still unwritten.
 
 ## 1. Why this service exists, and why it is shaped like this
 
@@ -360,10 +377,34 @@ Interfaces → *interface* → Advanced → NetFlow Profile**. Assigning the pro
 to the interface is the equivalent of FortiOS's per-interface sampler, and the
 same thing to forget.
 
-**Ubiquiti UniFi gateways cannot do this.** UDM/UCG firmware exposes no NetFlow
-export, and none of the switches tested advertise the sFlow MIB. There is no
-configuration that makes the pilot fleet export flow, which is why this feature
-has never seen a real exporter.
+**Ubiquiti UniFi** — validated on a real gateway. In the UniFi Network
+application: **Settings → Traffic Logging → NetFlow (IPFIX)**. Tick the networks
+to export, set **Collector Address** to the NetInv host and **Port** to 2055
+(or 4739 if you pick IPFIX), and choose a **Version** — the panel is labelled
+"NetFlow (IPFIX)" but offers 10, 9 and 5, so the heading is the feature's name
+rather than the format in use.
+
+Four things about that panel are worth knowing, all learned by running it:
+
+- **Export is per network, not per interface.** Only the networks ticked at the
+  top are exported. A network left unticked contributes nothing and looks
+  exactly like a quiet one — this is the UniFi equivalent of forgetting the
+  per-interface sampler on FortiOS.
+- **Sampling defaults to on.** The pilot's gateway was set to Hash mode at
+  1-in-512, so every byte count NetInv receives is an extrapolation ×512. The
+  header carries the rate, NetInv scales by it and marks the series
+  `sampled="true"`, and the Flow tab says so — but treat the totals as
+  estimates and keep SNMP as the authority for volume (§2.2). Set **Sampling
+  Mode → Off** if you want counted rather than estimated bytes.
+- **Timeout Rate is the active timeout**, in minutes, and 5 is the default. That
+  is why exports arrive as a burst every five minutes rather than continuously,
+  which charts as spikes separated by empty buckets. Lower it if the panel lets
+  you.
+- **Refresh Rate** is the v9/IPFIX template refresh, expressed in *packets*
+  rather than minutes. It greys out on v5, which has no templates.
+
+The switches remain a separate matter: none tested advertise the sFlow MIB, and
+this panel is a gateway feature.
 
 **ZTE ZXR10** is untested and undocumented here; the platform's NetFlow support
 varies by model and software train enough that guessing at a snippet would be
@@ -486,6 +527,10 @@ finished:
   existing metrics proxy like any other metric, which is why no new endpoint
   was needed; there is no server-side flow resource to version or document in
   doc 09.
-- **No validation against a real exporter**, because the pilot has none. This is
-  the single most useful thing an outside contributor could report — see
-  `/CONTRIBUTING.md` and the hardware-validation ask in Discussions.
+- **Only one real exporter, on one platform, in one format.** A UniFi gateway
+  exporting v5 is now validated end to end (§4.2). v9, IPFIX, IPv6 and
+  options-record sampling have been exercised only against a generated source,
+  and no Cisco, Juniper, Huawei, FortiGate or PAN-OS exporter has ever reached
+  this collector. Reports from those remain the most useful thing an outside
+  contributor could send — see `/CONTRIBUTING.md` and the hardware-validation
+  ask in Discussions.

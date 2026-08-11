@@ -64,6 +64,18 @@ interface Vendor {
 // RouterOS/VyOS for the small routers that turn up at branch sites.
 const VENDORS: Vendor[] = [
   {
+    key: "unifi",
+    label: "Ubiquiti UniFi",
+    config: {},
+    gui: {
+      v5: "UniFi Network → Settings → Traffic Logging → NetFlow (IPFIX). Tick the networks you want exported, set Collector Address to %DEST_IP% and Port to %DEST_PORT%, and choose Version 5. The panel is called “NetFlow (IPFIX)” but offers 10, 9 and 5 — that heading is the feature's name, not the format. Export is per network, not per interface: a network left unticked contributes nothing and looks exactly like a quiet one.",
+      v9: "UniFi Network → Settings → Traffic Logging → NetFlow (IPFIX). Tick the networks you want exported, set Collector Address to %DEST_IP% and Port to %DEST_PORT%, and choose Version 9. Refresh Rate is the template refresh and is counted in packets rather than minutes. Export is per network, not per interface: a network left unticked contributes nothing and looks exactly like a quiet one.",
+      ipfix:
+        "UniFi Network → Settings → Traffic Logging → NetFlow (IPFIX). Tick the networks you want exported, set Collector Address to %DEST_IP% and Port to %DEST_PORT%, and choose Version 10. Refresh Rate is the template refresh and is counted in packets rather than minutes. Export is per network, not per interface: a network left unticked contributes nothing and looks exactly like a quiet one.",
+    },
+    note: "Validated on a real UniFi gateway. Two defaults to check: Sampling Mode is on (Hash, 1-in-512 on the unit tested), so counts arrive as extrapolations and the tab marks them “sampled” — switch it Off for counted bytes. Timeout Rate is the active timeout in minutes and defaults to 5, which is why exports arrive as a burst every five minutes rather than continuously.",
+  },
+  {
     key: "cisco",
     label: "Cisco IOS / IOS-XE",
     config: {
@@ -396,11 +408,12 @@ export function FlowSetupGuide({
       )}
 
       <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">
-        <strong>Ubiquiti UniFi gateways cannot export flow</strong> — the
-        firmware offers no NetFlow export and the switches do not advertise the
-        sFlow MIB. Run a software exporter on a host behind them instead.
-        Support on ZTE varies by model and software train, so no snippet is
-        given rather than a wrong one.
+        UniFi <em>switches</em> are a separate matter from gateways: none tested
+        advertise the sFlow MIB, and the Traffic Logging panel is a gateway
+        feature. Support on ZTE varies by model and software train, so no
+        snippet is given rather than a wrong one. For anything whose firmware
+        cannot export at all, run a software exporter on a host in the traffic
+        path.
       </p>
 
       <div className="mt-4 border-t border-slate-200 pt-3 dark:border-slate-800">
