@@ -142,7 +142,21 @@ Decisions ADR-001 … ADR-017 were made with the product owner on **2026-08-07**
 **Consequences:**
 - `netinv_firewall_*` is the metric namespace: `netinv_firewall_session_count`, `_session_max`, `_session_setup_rate`. Session *utilization* is expressed as a query against count and max rather than stored, so it cannot drift from them.
 - Six platforms become eight. Two of the eight now have no realistic path to hardware validation in this project, joining `cisco-ios`, `juniper-junos`, `huawei-vrp` and `zte-zxr`: **six of eight connectors are unvalidated against real units**, and doc 10 must keep saying so per connector rather than in a footnote.
-- **Neither platform can feed the Flow tab.** FortiOS exports NetFlow v9 and IPFIX (and sFlow); PAN-OS exports NetFlow v9 only. Neither offers v5, which is all the collector decodes (ADR-020). So the vendors most likely to have flow worth looking at are exactly the ones that cannot deliver it here — v9 template support moves from "a format we skipped" to the thing blocking the feature for its best-suited hardware.
+- ~~**Neither platform can feed the Flow tab.**~~ **Resolved by ADR-022 (2026-08-11):** this was true when written — FortiOS exports v9/IPFIX/sFlow and PAN-OS exports v9, and the collector decoded only v5 — and it is what made v9 the next thing built rather than a format left on a list. Both platforms now feed the Flow tab.
 - Admitting session counts reopens category 11 by a measured amount. The test for anything further is the one above: a scalar about the appliance is in; a table about its policy is not, and needs its own ADR to become so.
 
 ---
+
+---
+
+## ADR-022: NetFlow v9 is decoded, which makes the collector stateful
+**Status:** accepted (2026-08-11, extends ADR-020)
+**Context:** ADR-020 shipped v5 only, on the reasoning that v5 is the one format decodable without per-exporter state. That was the right first increment and the wrong permanent position: ADR-021 then added two firewall connectors, and neither platform can export v5 at all — FortiOS does v9/IPFIX/sFlow, PAN-OS does v9. The devices whose traffic composition an operator most wants were precisely the ones the collector could not read. v5 is also IPv4-only, so a dual-stack link was silently half-reported.
+**Decision:** Decode NetFlow v9, including options templates, and apply the sampling interval an exporter announces through them. IPFIX and sFlow remain undecoded.
+**Rationale:** v9 is where the hardware is, and the template machinery it forces is the same machinery IPFIX will need — building it once buys both. Options templates are not optional extra credit: sampling on v9 is normally declared in an options data record rather than on the flow, so a decoder that skips them under-reports by the sampling rate with nothing anywhere indicating a problem. That is the failure mode this collector is built to refuse.
+**Consequences:**
+- **The collector is now stateful.** A template names the fields a later data record will contain; without it the record is an opaque byte run. State means a cache, an expiry, a bound, and a policy for data that outruns its template.
+- **A restart loses every template**, and flow stays missing until each exporter resends — commonly 10-20 minutes. Nothing is wrong during that window, so it is counted and reported as `awaiting_template` rather than as an undecodable packet: filing it under "malformed" would send an operator hunting a fault that does not exist.
+- **Templates are attacker-influenced state on an unauthenticated UDP port.** A spoofed source can mint a new `(exporter, observation domain, template ID)` per packet, so the cache is capped (10 000) and entries expire (60 min). When full of live templates it refuses new ones rather than evicting a working one — degrading what is learned next, never what is already working.
+- **v9 carries IPv6**, so dual-stack links are reported whole for the first time. The aggregator needed no change; addresses were already strings.
+- IPFIX is now a smaller job than it was — same template model, different header and enterprise-field handling — and sFlow still needs a decoder of its own.

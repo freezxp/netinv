@@ -8,10 +8,12 @@ exposure that comes with listening on a socket, and the UI that reads it.
 > reference pilot exports flow: the UniFi gateways do not emit NetFlow natively,
 > and probing the sFlow MIB (`1.3.6.1.4.1.14706.1`) returned "No more variables
 > left" on the UDM-Pro and "No Such Object" on both an EdgeSwitch 16XG and a
-> USW-Lite16. Everything below was exercised by sending real NetFlow v5
-> datagrams at the collector and reading the resulting series back out of
-> VictoriaMetrics. Treat the v5 decode as working and the rest of §2 as
-> unwritten code, not as untested code — see §8.
+> USW-Lite16. Everything below was exercised by sending real NetFlow v5 and v9
+> datagrams — including IPv6 flows and a sampled export declaring its rate in an
+> options record — at the collector, and reading the resulting series back out
+> of VictoriaMetrics. That is a generated source behaving as the RFCs describe,
+> which is not the same as a real exporter behaving as its firmware actually
+> does. §8 lists what remains unwritten.
 
 ## 1. Why this service exists, and why it is shaped like this
 
@@ -42,23 +44,57 @@ ADR. This service will not grow into it by accident.
 
 | Format | Port | Status |
 |---|---|---|
-| NetFlow v5 | 2055/udp | **Implemented and validated** |
-| NetFlow v9 | 2055/udp | Not implemented — needs template state |
-| IPFIX | 4739/udp | Not implemented — needs template state |
+| NetFlow v5 | 2055/udp | **Implemented** |
+| NetFlow v9 | 2055/udp | **Implemented**, including options templates and sampling (§2.1–2.2) |
+| IPFIX | 4739/udp | Not implemented — same template model, different header and enterprise fields |
 | sFlow v5 | 6343/udp | Not implemented — needs its own decoder |
 
 v5 came first because it is the one format that decodes without per-exporter
 state: fixed 24-byte header, fixed 48-byte records, at most 30 per datagram, no
-templates. v9 and IPFIX cannot decode a single packet until the exporter has
-sent a matching template, so they need template storage, expiry, and a decision
-about what to do with data that arrives before its template — a design question,
-not a coding task, and one this increment does not answer.
+templates. v9 followed because that is where the hardware is — the two firewall
+platforms added in ADR-021 cannot export v5 at all — and because v5 is IPv4-only,
+so a dual-stack link was silently half-reported.
 
 Unrecognised versions are counted, not logged (§5), so an operator can tell "an
 exporter is sending me v9" apart from "nothing is arriving" without reading a
 packet capture.
 
-### 2.1 Sampling
+### 2.1 v9 and template state
+
+v9 is not self-describing. An exporter first sends a **template** naming the
+fields it will use and their widths; every later data record is an opaque byte
+run that means nothing without it. Field widths are the exporter's choice —
+`INPUT_SNMP` is 2 bytes on one platform and 4 on another — so nothing may assume
+a size, and fields the decoder does not recognise are skipped by their declared
+length rather than breaking the record.
+
+That single difference turns a pure function into a stateful component, with
+four consequences worth knowing before touching it (ADR-022):
+
+- **A restart loses every template.** Exporters resend on their own schedule,
+  commonly every 10-20 minutes, so flow can be missing for that long after a
+  restart while nothing is wrong. Data arriving ahead of its template is
+  counted as `awaiting_template` and reported separately from undecodable
+  packets — filing it as "malformed" would send an operator hunting a fault
+  that does not exist.
+- **A packet can carry templates and data at once**, so decoding is not
+  all-or-nothing: whatever can be read is returned, and the rest is counted as
+  awaiting. Discarding the whole packet would throw away usable flows during
+  exactly the window where flow is scarcest.
+- **Templates are attacker-influenced state on an unauthenticated port.** A
+  spoofed source can mint a new `(exporter, observation domain, template ID)`
+  per packet, so the cache is capped at 10 000 entries and expires them after
+  60 minutes. Full of *live* templates, it refuses new ones rather than evicting
+  a working one.
+- **A template may be redefined under the same ID.** The newest definition wins,
+  which is what exporters do after a configuration change; holding the old
+  layout would misread every subsequent record while looking perfectly healthy.
+
+v9 also carries IPv6, which v5 cannot express at all — the reason a dual-stack
+link was previously reported at roughly half its real volume with no indication
+that anything was missing.
+
+### 2.2 Sampling
 
 NetFlow v5 carries the sampling rate in bytes 22–24 of the header: the top two
 bits are the mode, the low fourteen are the interval. Counts are scaled by that
@@ -69,6 +105,14 @@ numbers rather than errors: **mode 0 means no sampling** regardless of what the
 interval field says, and **an interval of 0 or 1 means one-for-one**. Multiplying
 by a zero interval zeroes every byte count; treating mode 0 as sampled doubles
 them. Neither would look like a failure on a chart.
+
+On v9 the rate usually arrives in an **options data record** describing the
+sampler, not on the flow record itself. A decoder that skipped options
+templates would therefore under-report by the whole sampling rate with nothing
+anywhere signalling a problem, so options templates are parsed and the interval
+they announce is applied per exporter and observation domain. An interval
+carried inline on a flow record is honoured too, and takes precedence for that
+record.
 
 Records carry a `Sampled` flag through to the series as a `sampled="true"`
 label, because ADR-020 requires the UI to be able to say when a number is an
@@ -172,20 +216,23 @@ everything else NetInv does.
 
 Four things apply on every platform and cause most first-attempt failures:
 
-1. **Force version 5.** Nearly every current platform defaults to v9 or IPFIX.
-   NetInv counts those as undecodable and says so in its log (§5), but it will
-   not chart them. This is the single most common reason a correctly-pointed
-   exporter produces an empty Flow tab.
+1. **Send v5 or v9, not IPFIX or sFlow.** Both NetFlow versions are decoded;
+   IPFIX and sFlow are not, and an exporter sending those looks exactly like one
+   sending nothing (§5 tells the two apart). Most platforms default to v9, which
+   is fine — and preferable, since v9 carries IPv6 and v5 does not.
 2. **Set the active timeout to 1 minute.** Defaults are typically 30 minutes:
    a long-lived transfer is then reported once per half hour, as one enormous
    record, and the chart shows a spike surrounded by nothing rather than a
    sustained flow. One minute matches the aggregation interval (§3.1).
 3. **Enable it on the interfaces you care about**, in the ingress direction.
    Global export configuration alone collects nothing on most platforms.
-4. **v5 is IPv4-only.** There is no IPv6 in the v5 record format at all — a
-   dual-stack link will silently report only half its traffic. If your traffic
-   is meaningfully v6, v5 is the wrong format and NetInv cannot yet read the
-   right one.
+4. **Prefer v9 on a dual-stack link.** The v5 record format has no IPv6 fields
+   at all, so a v5 exporter on a dual-stack link silently reports only half its
+   traffic. v9 carries both.
+5. **After a NetInv restart, v9 goes quiet until templates are resent** —
+   commonly 10-20 minutes. That is the protocol working, not a fault; the
+   collector reports it as `awaiting_template` (§5). Lowering the exporter's
+   template refresh interval shortens the gap.
 
 **Cisco IOS / IOS-XE**
 
@@ -242,14 +289,32 @@ this is also the way to get flow off a device whose firmware cannot export it):
 softflowd -i eth0 -v 5 -t maxlife=60 -n <netinv-host>:2055
 ```
 
-**FortiGate and Palo Alto cannot do this either**, which is worth stating
-plainly because they are the platforms most likely to have flow worth looking
-at. FortiOS exports NetFlow v9, IPFIX and sFlow; PAN-OS exports NetFlow v9.
-Neither offers v5 at any version, so no configuration on the device makes this
-work — the blocker is on NetInv's side (§2), and the interim answer is a
-software exporter on a host in the traffic path. ADR-021 records this as the
-reason v9 template support moved from "a format we skipped" to the thing
-holding the feature back for its best-suited hardware.
+**Fortinet FortiGate** (FortiOS exports v9):
+
+```
+config system netflow
+    set collector-ip <netinv-host>
+    set collector-port 2055
+    set active-flow-timeout 60
+end
+config system interface
+    edit "port1"
+        set netflow-sampler both
+    next
+end
+```
+
+The per-interface `netflow-sampler` is the step that is easy to miss: the
+global block alone configures a collector and exports nothing.
+
+**Palo Alto PAN-OS** (exports v9) is configured in the GUI rather than usefully
+in one CLI line: **Device → Server Profiles → NetFlow**, add a server at
+`<netinv-host>:2055`, set the template refresh to something short (PAN-OS
+defaults to 30 minutes, which is also how long flow stays missing after a NetInv
+restart), then assign that profile to each ingress interface under **Network →
+Interfaces → *interface* → Advanced → NetFlow Profile**. Assigning the profile
+to the interface is the equivalent of FortiOS's per-interface sampler, and the
+same thing to forget.
 
 **Ubiquiti UniFi gateways cannot do this.** UDM/UCG firmware exposes no NetFlow
 export, and none of the switches tested advertise the sFlow MIB. There is no
@@ -364,8 +429,17 @@ number invites the reader to think one of the two is wrong.
 Stated explicitly so nobody reads §2's table as a to-do list that is nearly
 finished:
 
-- **NetFlow v9, IPFIX and sFlow are not implemented.** See §2 for why v9/IPFIX
-  are a design question rather than a coding one.
+- **IPFIX and sFlow are not implemented.** IPFIX is now the smaller of the two:
+  it shares v9's template model, so what remains is its different header, its
+  Set-ID numbering and enterprise-specific fields. sFlow still needs a decoder
+  of its own — it samples packet headers rather than exporting flow records, so
+  none of the machinery here transfers.
+- **No IPv6 exporter transport.** Flow *about* IPv6 traffic works (v9 carries
+  it); the collector still listens on UDP over IPv4 only.
+- **Template state is not persisted across a restart.** It could be, and that
+  would remove the 10-20 minute gap after a restart, but it means writing
+  attacker-influenced state to disk — see ADR-022 before deciding that is worth
+  it.
 - **No API endpoint fronts these series.** The UI reads them through the
   existing metrics proxy like any other metric, which is why no new endpoint
   was needed; there is no server-side flow resource to version or document in

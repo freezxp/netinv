@@ -405,7 +405,7 @@ func TestCollectorRefusesDisallowedSource(t *testing.T) {
 	pkt := v5Packet(t, 0, 0, Record{SrcAddr: addr("10.0.0.1"),
 		DstAddr: addr("10.0.0.2"), InputIf: 1, Bytes: 100, Packets: 1})
 	c.handle(pkt, &net.UDPAddr{IP: net.ParseIP("198.51.100.7"), Port: 5000})
-	if _, _, refused, _ := c.Stats(); refused != 1 {
+	if _, _, refused, _, _ := c.Stats(); refused != 1 {
 		t.Errorf("refused=%d, want 1", refused)
 	}
 	if got := c.Agg.Drain(); len(got) != 0 {
@@ -413,7 +413,7 @@ func TestCollectorRefusesDisallowedSource(t *testing.T) {
 	}
 
 	c.handle(pkt, &net.UDPAddr{IP: net.ParseIP("192.0.2.9"), Port: 5000})
-	if pkts, recs, _, _ := c.Stats(); pkts != 1 || recs != 1 {
+	if pkts, recs, _, _, _ := c.Stats(); pkts != 1 || recs != 1 {
 		t.Errorf("allowed packet: packets=%d records=%d, want 1/1", pkts, recs)
 	}
 }
@@ -431,7 +431,7 @@ func TestUndecodableVersionsAreCounted(t *testing.T) {
 	} {
 		c.handle(b, &net.UDPAddr{IP: net.ParseIP("192.0.2.1"), Port: 5000})
 	}
-	if _, _, _, malformed := c.Stats(); malformed != 4 {
+	if _, _, _, malformed, _ := c.Stats(); malformed != 4 {
 		t.Errorf("malformed=%d, want 4", malformed)
 	}
 }
@@ -546,23 +546,23 @@ func TestIntakeIsReportedPerIntervalNotCumulatively(t *testing.T) {
 
 	c.handle(good, from)
 	c.handle([]byte{0, 5, 0, 30}, from) // undecodable
-	if p, r, _, m := c.interval(); p != 1 || r != 1 || m != 1 {
+	if p, r, _, m, _ := c.interval(); p != 1 || r != 1 || m != 1 {
 		t.Fatalf("first interval: packets=%d records=%d malformed=%d, want 1/1/1", p, r, m)
 	}
 
 	// A quiet interval must report nothing, not repeat the previous one.
-	if p, r, rf, m := c.interval(); p != 0 || r != 0 || rf != 0 || m != 0 {
+	if p, r, rf, m, _ := c.interval(); p != 0 || r != 0 || rf != 0 || m != 0 {
 		t.Errorf("quiet interval reported %d/%d/%d/%d, want zeroes", p, r, rf, m)
 	}
 
 	c.handle(good, from)
-	if p, m := func() (uint64, uint64) { p, _, _, m := c.interval(); return p, m }(); p != 1 || m != 0 {
+	if p, m := func() (uint64, uint64) { p, _, _, m, _ := c.interval(); return p, m }(); p != 1 || m != 0 {
 		t.Errorf("third interval: packets=%d malformed=%d, want 1/0", p, m)
 	}
 
 	// Running totals stay cumulative — the delta is a reporting view, not a
 	// replacement for the counters themselves.
-	if p, r, _, m := c.Stats(); p != 2 || r != 2 || m != 1 {
+	if p, r, _, m, _ := c.Stats(); p != 2 || r != 2 || m != 1 {
 		t.Errorf("Stats totals = %d/%d/%d, want 2/2/1", p, r, m)
 	}
 }
@@ -821,7 +821,7 @@ func TestKeyCapIsLoggedWhenItIsReached(t *testing.T) {
 func TestHandleIgnoresNonUDPAddresses(t *testing.T) {
 	c := &Collector{Agg: NewAggregator(), Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	c.handle([]byte{0, 5}, &net.TCPAddr{IP: net.ParseIP("192.0.2.1"), Port: 1})
-	if p, _, r, m := c.Stats(); p != 0 || r != 0 || m != 0 {
+	if p, _, r, m, _ := c.Stats(); p != 0 || r != 0 || m != 0 {
 		t.Errorf("a non-UDP address was counted: %d/%d/%d", p, r, m)
 	}
 }

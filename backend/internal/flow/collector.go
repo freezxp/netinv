@@ -37,16 +37,20 @@ type Collector struct {
 	// Interval between drains. Zero means Interval.
 	Every time.Duration
 
+	// Templates holds v9 field layouts. Zero value is usable; Run installs one
+	// if the caller did not.
+	Templates *TemplateCache
+
 	// Counters are atomic: the receive loop writes them while drainLoop reads
 	// them on the ticker goroutine. Plain uint64s here were a real data race,
 	// caught by -race once the receive path had a test that ran it.
 	stats struct {
-		packets, records, refused, malformed atomic.Uint64
+		packets, records, refused, malformed, awaiting atomic.Uint64
 	}
 	// prev holds the totals as of the last drain, so intake can be reported as
 	// a per-interval delta. Owned by drainLoop alone.
 	prev struct {
-		packets, records, refused, malformed uint64
+		packets, records, refused, malformed, awaiting uint64
 	}
 }
 
@@ -54,6 +58,9 @@ type Collector struct {
 func (c *Collector) Run(ctx context.Context) error {
 	if c.Agg == nil {
 		c.Agg = NewAggregator()
+	}
+	if c.Templates == nil {
+		c.Templates = NewTemplateCache()
 	}
 	every := c.Every
 	if every <= 0 {
@@ -129,10 +136,30 @@ func (c *Collector) handle(b []byte, addr net.Addr) {
 		c.stats.packets.Add(1)
 		c.stats.records.Add(uint64(len(p.Records)))
 		c.Agg.Add(p)
+	case 9:
+		if c.Templates == nil {
+			c.Templates = NewTemplateCache()
+		}
+		p, awaiting, err := DecodeNetFlowV9(b, from, c.Templates, time.Now())
+		if err != nil {
+			c.stats.malformed.Add(1)
+			c.Log.Debug("flow decode failed", "from", from.String(), "err", err)
+			return
+		}
+		// Counted separately from malformed. Data ahead of its template is the
+		// normal state for the first minutes after a restart and says nothing
+		// is wrong; filing it under "undecodable" would send an operator
+		// looking for a fault that does not exist.
+		if awaiting > 0 {
+			c.stats.awaiting.Add(uint64(awaiting))
+		}
+		c.stats.packets.Add(1)
+		c.stats.records.Add(uint64(len(p.Records)))
+		c.Agg.Add(p)
 	default:
-		// v9, IPFIX (10) and sFlow (datagram version 5 on its own port) are
-		// not decoded yet. Counted rather than logged so an operator can see
-		// from /metrics that something is arriving and being ignored.
+		// IPFIX (10) and sFlow (its own port) are not decoded yet. Counted
+		// rather than logged so an operator can see that something is arriving
+		// and being ignored.
 		c.stats.malformed.Add(1)
 	}
 }
@@ -168,16 +195,17 @@ func (c *Collector) drainLoop(ctx context.Context, every time.Duration) {
 			// that just closed. Logging cumulative counters would re-report one
 			// bad packet every minute for the life of the process, and would
 			// attribute packets to an interval that drained cleanly minutes ago.
-			pkts, recs, refused, malformed := c.interval()
-			if refused > 0 || malformed > 0 {
+			pkts, recs, refused, malformed, awaiting := c.interval()
+			if refused > 0 || malformed > 0 || awaiting > 0 {
 				c.Log.Info("flow intake", "packets", pkts, "records", recs,
-					"refused_by_allowlist", refused, "undecodable", malformed)
+					"refused_by_allowlist", refused, "undecodable", malformed,
+					"awaiting_template", awaiting, "templates", c.Templates.Len())
 			}
 
 			dropped := c.Agg.Dropped() // Drain resets it, so sample it first
 			buckets := c.Agg.Drain()
 			if len(buckets) == 0 {
-				if pkts == 0 && malformed == 0 && refused == 0 {
+				if pkts == 0 && malformed == 0 && refused == 0 && awaiting == 0 {
 					continue // genuinely idle: no exporter is sending anything
 				}
 				if pkts == 0 {
@@ -211,19 +239,20 @@ func (c *Collector) drainLoop(ctx context.Context, every time.Duration) {
 // interval returns what arrived since the last call, for reporting on the
 // interval that just closed. Only drainLoop calls it, so the previous-values
 // state needs no lock of its own.
-func (c *Collector) interval() (packets, records, refused, malformed uint64) {
-	p, r, rf, m := c.Stats()
+func (c *Collector) interval() (packets, records, refused, malformed, awaiting uint64) {
+	p, r, rf, m, a := c.Stats()
 	packets, records = p-c.prev.packets, r-c.prev.records
 	refused, malformed = rf-c.prev.refused, m-c.prev.malformed
+	awaiting = a - c.prev.awaiting
 	c.prev.packets, c.prev.records = p, r
-	c.prev.refused, c.prev.malformed = rf, m
-	return packets, records, refused, malformed
+	c.prev.refused, c.prev.malformed, c.prev.awaiting = rf, m, a
+	return packets, records, refused, malformed, awaiting
 }
 
 // Stats reports the running totals since start.
-func (c *Collector) Stats() (packets, records, refused, malformed uint64) {
+func (c *Collector) Stats() (packets, records, refused, malformed, awaiting uint64) {
 	return c.stats.packets.Load(), c.stats.records.Load(),
-		c.stats.refused.Load(), c.stats.malformed.Load()
+		c.stats.refused.Load(), c.stats.malformed.Load(), c.stats.awaiting.Load()
 }
 
 // ParseAllow turns a comma-separated list of CIDRs or bare addresses into

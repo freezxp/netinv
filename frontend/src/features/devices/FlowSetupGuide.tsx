@@ -24,6 +24,8 @@ interface Vendor {
    * not exist.
    */
   blocked?: string;
+  /** Click-path instructions, for platforms with no useful CLI form. */
+  gui?: string;
 }
 
 // Deliberately not exhaustive. These cover the platforms NetInv has connectors
@@ -79,16 +81,23 @@ set system flow-accounting interface eth0`,
   {
     key: "fortigate",
     label: "FortiGate",
-    config: "",
-    blocked:
-      "FortiOS exports NetFlow v9, IPFIX and sFlow — never v5, which is all NetInv decodes today. There is no FortiOS setting that produces a v5 export. Until v9 support lands, the workaround is to run a software exporter (see Linux / pfSense / OPNsense) on a host that sees the traffic.",
+    config: `config system netflow
+    set collector-ip %DEST_IP%
+    set collector-port %DEST_PORT%
+    set active-flow-timeout 60
+end
+config system interface
+    edit "port1"
+        set netflow-sampler both
+    next
+end`,
+    note: "FortiOS exports NetFlow v9, which NetInv decodes. The per-interface netflow-sampler is the step that is easy to miss — the global block alone configures a collector and exports nothing.",
   },
   {
     key: "panos",
     label: "Palo Alto PAN-OS",
     config: "",
-    blocked:
-      "PAN-OS exports NetFlow v9 only — never v5, which is all NetInv decodes today. The same workaround applies: a software exporter on a host in the traffic path.",
+    gui: "PAN-OS exports NetFlow v9, which NetInv decodes, but it is configured in the GUI rather than usefully in one CLI line. Device → Server Profiles → NetFlow: add a server at %DEST_IP%:%DEST_PORT% and set the template refresh short — PAN-OS defaults to 30 minutes, which is also how long flow stays missing after a NetInv restart. Then assign that profile to each ingress interface under Network → Interfaces → interface → Advanced → NetFlow Profile. Assigning it to the interface is the equivalent of FortiOS's per-interface sampler, and the same thing to forget.",
   },
   {
     key: "softflowd",
@@ -102,8 +111,8 @@ set system flow-accounting interface eth0`,
 // error, and silence is indistinguishable from "no exporter configured".
 const RULES: Array<{ head: string; body: string }> = [
   {
-    head: "Set version 5 explicitly",
-    body: "Nearly every current platform defaults to v9 or IPFIX. NetInv does not decode those yet, so an exporter sending them looks exactly like one sending nothing. This is the most common reason a correctly-pointed exporter shows up empty.",
+    head: "Send NetFlow v5 or v9 — not IPFIX or sFlow",
+    body: "Both NetFlow versions are decoded. IPFIX and sFlow are not, and an exporter sending those looks exactly like one sending nothing. Most platforms default to v9, which is fine and generally better: v9 carries IPv6, v5 cannot.",
   },
   {
     head: "Bring the active timeout down to 1 minute",
@@ -114,8 +123,12 @@ const RULES: Array<{ head: string; body: string }> = [
     body: "Global export configuration alone collects nothing on most platforms. A flow carrying no ingress or egress ifIndex cannot be attributed to an interface and is discarded.",
   },
   {
-    head: "NetFlow v5 is IPv4-only",
-    body: "The v5 record format has no IPv6 fields at all, so a dual-stack link silently reports only half its traffic. If your traffic is substantially IPv6, v5 is the wrong format and NetInv cannot read the right one yet.",
+    head: "Prefer v9 on a dual-stack link",
+    body: "The v5 record format has no IPv6 fields at all, so a v5 exporter on a dual-stack link silently reports only half its traffic. v9 carries both.",
+  },
+  {
+    head: "After a NetInv restart, v9 goes quiet until templates are resent",
+    body: "v9 data is meaningless without the template describing it, and exporters resend on their own schedule — commonly every 10-20 minutes. The gap is the protocol working, not a fault; shortening the exporter's template refresh interval shortens it.",
   },
 ];
 
@@ -134,9 +147,9 @@ export function FlowSetupGuide({
   const [vendor, setVendor] = useState(VENDORS[0].key);
   const [copied, setCopied] = useState(false);
   const current = VENDORS.find((v) => v.key === vendor) ?? VENDORS[0];
-  const config = current.config
-    .replaceAll("%DEST_IP%", dest)
-    .replaceAll("%DEST_PORT%", String(destPort));
+  const fill = (t: string) =>
+    t.replaceAll("%DEST_IP%", dest).replaceAll("%DEST_PORT%", String(destPort));
+  const config = fill(current.config);
 
   const copy = async () => {
     try {
@@ -201,7 +214,11 @@ export function FlowSetupGuide({
         ))}
       </div>
 
-      {current.blocked ? (
+      {current.gui ? (
+        <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-xs leading-relaxed dark:border-slate-800 dark:bg-slate-900">
+          {fill(current.gui)}
+        </div>
+      ) : current.blocked ? (
         <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
           <strong>Not usable with NetInv yet.</strong> {current.blocked}
         </div>
