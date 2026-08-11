@@ -4,33 +4,38 @@
 what it receives, what it stores, what it deliberately throws away, the
 exposure that comes with listening on a socket, and the UI that reads it.
 
-> **Decoding validated against real hardware (2026-08-12); volumes are not.**
-> A UniFi gateway in the reference pilot exports NetFlow v5 to the collector and
-> it decodes cleanly — series appear, records parse, the sampled flag is set,
-> and the exporter address matched a managed device without intervention. Not a
-> single packet was refused or undecodable.
+> **Validated against real hardware (2026-08-12).** UniFi gateways in the
+> reference pilot export NetFlow v5 to the collector and it decodes cleanly:
+> series appear, records parse, exporter addresses match managed devices, and
+> not one packet has been refused or counted undecodable.
 >
-> **What is not yet established is whether the numbers are right.** Summed over
-> an hour, the flow totals for two interfaces came to roughly 0.06% of what the
-> SNMP counters recorded for the same interfaces over the same window. At least
-> three things contribute — sparse exports (7 minutes of data in 45), the
-> top-N cut discarding everything outside the busiest ten buckets, and possibly
-> a declared sampling interval that does not match the rate configured on the
-> device — and until they are separated, treat flow here as showing *shape*
-> rather than *volume*. SNMP remains the authority (§2.2), which is the reason
-> that rule exists. §4.2 records the rest.
+> **Sampling is verified against the wire**, not assumed. With the gateway set
+> to Hash 1-in-512 the header read `mode=2 interval=512` and the decoder scaled
+> by 512; with sampling switched off it reads `mode=0 interval=0` and the
+> decoder scales by 1. Both were confirmed by capturing packets and decoding
+> the header by hand.
+>
+> **Flow totals are a fraction of the SNMP counters for the same interface, and
+> that is by design.** Measured on the pilot with sampling off, flow accounted
+> for 3.3% of SNMP bytes on a bridge interface and 10.5% on a tunnel. The cause
+> is §1's top-N cut, confirmed rather than assumed: every interface sat at the
+> ten-bucket cap in every one-minute interval, so everything outside the busiest
+> ten conversations was discarded before storage. Two smaller contributors are
+> the export covering only the networks selected on the device, and SNMP
+> counting a transiting flow on both interfaces where flow attributes it to one.
+>
+> This is why ADR-020 makes SNMP the authority for volume and flow the answer to
+> composition. The rule now has a measurement behind it.
 >
 > An earlier version of this document stated that UniFi gateways cannot export
 > flow. **That was wrong** — the feature is in the UniFi Network application
 > under Traffic Logging, offering v5, v9 and IPFIX. The claim was never tested,
-> only inferred from the absence of an sFlow MIB, and it stood here for two
-> days. Recorded rather than quietly deleted, because a confident wrong claim in
-> a document is worse than a gap and this one would have stopped an operator
-> from trying.
+> only inferred from the absence of an sFlow MIB on the switches. Recorded
+> rather than quietly deleted, because a confident false claim is worse than a
+> gap and this one would have stopped an operator from trying.
 >
-> v9, IPFIX, IPv6 flows and options-record sampling remain validated against a
-> generated source only — the RFCs' behaviour, not a given firmware's. §8 lists
-> what is still unwritten.
+> v9, IPFIX, IPv6 flows and options-record sampling remain exercised only
+> against a generated source. §8 lists what is still unwritten.
 
 ## 1. Why this service exists, and why it is shaped like this
 
@@ -390,12 +395,14 @@ Four things about that panel are worth knowing, all learned by running it:
   top are exported. A network left unticked contributes nothing and looks
   exactly like a quiet one — this is the UniFi equivalent of forgetting the
   per-interface sampler on FortiOS.
-- **Sampling defaults to on.** The pilot's gateway was set to Hash mode at
-  1-in-512, so every byte count NetInv receives is an extrapolation ×512. The
-  header carries the rate, NetInv scales by it and marks the series
-  `sampled="true"`, and the Flow tab says so — but treat the totals as
-  estimates and keep SNMP as the authority for volume (§2.2). Set **Sampling
-  Mode → Off** if you want counted rather than estimated bytes.
+- **Sampling defaults to on, and turning it off is worth doing.** The pilot's
+  gateway shipped at Hash 1-in-512. NetInv reads the rate from the header,
+  scales by it and marks the series `sampled="true"` — verified correct against
+  a packet capture — but at that rate on a quiet link very few flows are
+  sampled at all, and the result is sparse and unreconcilable. Switching
+  **Sampling Mode → Off** took the pilot from 7 minutes of data in 45 to 27 in
+  30, and from 18 series to 166. Counted bytes also cost nothing here: this is
+  a gateway, not a core router.
 - **Timeout Rate is the active timeout**, in minutes, and 5 is the default. That
   is why exports arrive as a burst every five minutes rather than continuously,
   which charts as spikes separated by empty buckets. Lower it if the panel lets
