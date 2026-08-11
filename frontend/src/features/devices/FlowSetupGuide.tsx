@@ -17,6 +17,13 @@ interface Vendor {
   /** `%DEST%` is replaced with the collector address. */
   config: string;
   note?: string;
+  /**
+   * Why this platform cannot feed NetInv, when it cannot. Listing it and
+   * saying so beats omitting it: an operator who owns one would otherwise
+   * read the absence as an oversight and go hunting for a setting that does
+   * not exist.
+   */
+  blocked?: string;
 }
 
 // Deliberately not exhaustive. These cover the platforms NetInv has connectors
@@ -68,6 +75,20 @@ interface GigabitEthernet0/0/1
 set system flow-accounting netflow server %DEST_IP% port %DEST_PORT%
 set system flow-accounting netflow timeout expiry-interval 60
 set system flow-accounting interface eth0`,
+  },
+  {
+    key: "fortigate",
+    label: "FortiGate",
+    config: "",
+    blocked:
+      "FortiOS exports NetFlow v9, IPFIX and sFlow — never v5, which is all NetInv decodes today. There is no FortiOS setting that produces a v5 export. Until v9 support lands, the workaround is to run a software exporter (see Linux / pfSense / OPNsense) on a host that sees the traffic.",
+  },
+  {
+    key: "panos",
+    label: "Palo Alto PAN-OS",
+    config: "",
+    blocked:
+      "PAN-OS exports NetFlow v9 only — never v5, which is all NetInv decodes today. The same workaround applies: a software exporter on a host in the traffic path.",
   },
   {
     key: "softflowd",
@@ -180,18 +201,24 @@ export function FlowSetupGuide({
         ))}
       </div>
 
-      <div className="relative">
-        <pre className="mono overflow-x-auto rounded-md bg-slate-100 p-3 text-xs leading-relaxed dark:bg-slate-950">
-          {config}
-        </pre>
-        <Button
-          variant="ghost"
-          className="absolute top-1.5 right-1.5 text-xs"
-          onClick={copy}
-        >
-          {copied ? "Copied" : "Copy"}
-        </Button>
-      </div>
+      {current.blocked ? (
+        <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
+          <strong>Not usable with NetInv yet.</strong> {current.blocked}
+        </div>
+      ) : (
+        <div className="relative">
+          <pre className="mono overflow-x-auto rounded-md bg-slate-100 p-3 text-xs leading-relaxed dark:bg-slate-950">
+            {config}
+          </pre>
+          <Button
+            variant="ghost"
+            className="absolute top-1.5 right-1.5 text-xs"
+            onClick={copy}
+          >
+            {copied ? "Copied" : "Copy"}
+          </Button>
+        </div>
+      )}
       {current.note && (
         <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
           {current.note}

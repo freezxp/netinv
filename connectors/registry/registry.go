@@ -5,9 +5,11 @@ package registry
 
 import (
 	_ "github.com/freezxp/netinv/connectors/cisco"
+	_ "github.com/freezxp/netinv/connectors/fortinet"
 	_ "github.com/freezxp/netinv/connectors/generic"
 	_ "github.com/freezxp/netinv/connectors/huawei"
 	_ "github.com/freezxp/netinv/connectors/juniper"
+	_ "github.com/freezxp/netinv/connectors/paloalto"
 	_ "github.com/freezxp/netinv/connectors/ruckus"
 	_ "github.com/freezxp/netinv/connectors/ubiquiti"
 	_ "github.com/freezxp/netinv/connectors/zte"

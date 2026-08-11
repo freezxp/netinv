@@ -89,7 +89,10 @@ netinv_optic_rx_power_dbm / _tx_power_dbm{if_index, lane}
 netinv_icmp_rtt_seconds{stat="min|avg|max"} · netinv_icmp_jitter_seconds · netinv_icmp_loss_ratio
 netinv_poll_success{family="traffic|health|icmp"} · netinv_poll_duration_seconds
 netinv_device_uptime_seconds
+netinv_firewall_session_count · netinv_firewall_session_max · netinv_firewall_session_setup_rate
 ```
+
+`netinv_firewall_*` is device-level only (ADR-021): counts about the appliance, never tables about its policy. Session *utilization* is deliberately not a stored metric — it is `netinv_firewall_session_count / netinv_firewall_session_max`, so it cannot drift from the pair it is derived from, and platforms publishing no ceiling (FortiOS) simply return nothing rather than a fabricated denominator. `session_count` is always unlabelled: a per-protocol breakdown under the same name would put labelled and unlabelled series in the store together and double every session under `sum()`.
 
 Cardinality rules (enforced in ingester): label values bounded (no timestamps/errors in labels); `device_id` + `if_index` are the identity; free-text (alias) sanitized and length-capped. Estimated series/device ≈ 15 + 12×interfaces → within NFR-03.
 

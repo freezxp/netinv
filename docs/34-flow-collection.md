@@ -242,6 +242,15 @@ this is also the way to get flow off a device whose firmware cannot export it):
 softflowd -i eth0 -v 5 -t maxlife=60 -n <netinv-host>:2055
 ```
 
+**FortiGate and Palo Alto cannot do this either**, which is worth stating
+plainly because they are the platforms most likely to have flow worth looking
+at. FortiOS exports NetFlow v9, IPFIX and sFlow; PAN-OS exports NetFlow v9.
+Neither offers v5 at any version, so no configuration on the device makes this
+work — the blocker is on NetInv's side (§2), and the interim answer is a
+software exporter on a host in the traffic path. ADR-021 records this as the
+reason v9 template support moved from "a format we skipped" to the thing
+holding the feature back for its best-suited hardware.
+
 **Ubiquiti UniFi gateways cannot do this.** UDM/UCG firmware exposes no NetFlow
 export, and none of the switches tested advertise the sFlow MIB. There is no
 configuration that makes the pilot fleet export flow, which is why this feature
