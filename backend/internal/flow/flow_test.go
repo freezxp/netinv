@@ -1,9 +1,11 @@
 package flow
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net"
@@ -636,3 +638,222 @@ func TestWireguardDoesNotFanOutIntoOneBucketPerConnection(t *testing.T) {
 		t.Errorf("bytes = %d, want 4000", total)
 	}
 }
+
+// --- edge and failure paths -----------------------------------------------
+
+// Both sides recognised: the lower port is the more specific end. The earlier
+// case only exercised src<dst, so the branch that picks the destination was
+// never run.
+func TestApplicationWithTwoRecognisedPortsPicksTheLower(t *testing.T) {
+	if got := application(Record{SrcPort: 443, DstPort: 53, Protocol: 6}); got != "dns" {
+		t.Errorf("443->53/tcp = %q, want dns", got)
+	}
+	if got := application(Record{SrcPort: 53, DstPort: 443, Protocol: 6}); got != "dns" {
+		t.Errorf("53->443/tcp = %q, want dns", got)
+	}
+}
+
+// A zero TopN means "use the default" rather than "keep nothing" — the
+// difference between a working aggregator and one that silently drops every
+// bucket it was asked to publish.
+func TestDrainWithUnsetTopNUsesTheDefault(t *testing.T) {
+	a := &Aggregator{counts: map[Key]*counters{}} // TopN and MaxKeys both zero
+	recs := make([]Record, 0, DefaultTopN+5)
+	for i := 0; i < DefaultTopN+5; i++ {
+		recs = append(recs, Record{
+			SrcAddr: netip.AddrFrom4([4]byte{10, 0, 0, byte(i)}),
+			DstAddr: addr("10.9.9.9"), Bytes: uint64(100 * (i + 1)), Packets: 1, InputIf: 1,
+		})
+	}
+	a.Add(&Packet{ExporterIP: addr("192.0.2.1"), Records: recs})
+
+	var talkers int
+	for _, b := range a.Drain() {
+		if b.Key.Dimension == DimTalker {
+			talkers++
+		}
+	}
+	if talkers != DefaultTopN {
+		t.Errorf("kept %d talkers with TopN unset, want the default %d", talkers, DefaultTopN)
+	}
+}
+
+func TestParseAllowRejectsGarbage(t *testing.T) {
+	if _, err := ParseAllow("not-an-address"); err == nil {
+		t.Error("a value that is neither an address nor a CIDR must be rejected")
+	}
+	// An empty list is not an error — it is the documented "accept anything".
+	got, err := ParseAllow("")
+	if err != nil || len(got) != 0 {
+		t.Errorf("ParseAllow(\"\") = %v, %v; want empty and no error", got, err)
+	}
+	// Whitespace and trailing separators are an operator writing a list by
+	// hand, not a mistake worth failing startup over.
+	got, err = ParseAllow(" 192.0.2.0/24 , 198.51.100.7 ,")
+	if err != nil || len(got) != 2 {
+		t.Fatalf("ParseAllow with spacing = %v, %v; want 2 prefixes", got, err)
+	}
+	if got[1].Bits() != 32 {
+		t.Errorf("bare address became /%d, want /32", got[1].Bits())
+	}
+}
+
+// A decoder handed the wrong version must say so rather than misread the
+// bytes as v5 — the collector routes on version, but the function is exported
+// and cannot assume its caller did.
+func TestDecodeNetFlowV5RejectsOtherVersions(t *testing.T) {
+	b := make([]byte, netflowV5HeaderLen)
+	binary.BigEndian.PutUint16(b[0:2], 9)
+	if _, err := DecodeNetFlowV5(b, addr("192.0.2.1")); err == nil {
+		t.Error("a v9 packet must not decode as v5")
+	}
+}
+
+func TestWriteFlowSkipsTheRequestWhenThereIsNothingToSend(t *testing.T) {
+	var called bool
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		called = true
+	}))
+	defer srv.Close()
+	if err := NewVMWriter(srv.URL).WriteFlow(context.Background(), time.Now(), nil); err != nil {
+		t.Fatal(err)
+	}
+	if called {
+		t.Error("an empty drain must not post an empty body to the metrics store")
+	}
+}
+
+func TestWriteFlowReportsAnUnreachableStore(t *testing.T) {
+	w := NewVMWriter("http://127.0.0.1:1") // nothing listens on port 1
+	w.HTTP.Timeout = 2 * time.Second
+	err := w.WriteFlow(context.Background(), time.Now(),
+		[]Bucket{{Key: Key{"192.0.2.1", 1, DimTalker, "10.0.0.1"}, Bytes: 1}})
+	if err == nil {
+		t.Fatal("an unreachable metrics store must be reported, not swallowed")
+	}
+}
+
+// Binding a port already in use must fail loudly at startup. A collector that
+// silently failed to listen would look exactly like one no exporter is
+// configured for — the failure mode this whole package works to avoid.
+func TestRunFailsWhenThePortIsTaken(t *testing.T) {
+	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pc.Close()
+
+	c := &Collector{
+		Addr: pc.LocalAddr().String(),
+		Log:  slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	if err := c.Run(context.Background()); err == nil {
+		t.Error("Run must report a failure to bind, not return nil")
+	}
+}
+
+// A write failure must not stop collection: the metrics store being briefly
+// unreachable is ordinary, and a collector that gave up would need a restart
+// to resume.
+func TestCollectorKeepsRunningAfterAWriteFailure(t *testing.T) {
+	attempts := make(chan struct{}, 4)
+	c := &Collector{
+		Agg:   NewAggregator(),
+		Write: writerFunc(func() error { attempts <- struct{}{}; return errUnavailable }),
+		Log:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Every: 30 * time.Millisecond,
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go c.drainLoop(ctx, c.Every)
+
+	// Keep feeding, so every interval has something to write and fail on.
+	deadline := time.After(3 * time.Second)
+	for i := 0; i < 2; i++ {
+		for {
+			c.Agg.Add(&Packet{ExporterIP: addr("192.0.2.1"), Records: []Record{
+				{SrcAddr: addr("10.0.0.1"), DstAddr: addr("10.0.0.2"),
+					Bytes: 10, Packets: 1, InputIf: 1},
+			}})
+			select {
+			case <-attempts:
+			case <-deadline:
+				t.Fatalf("only %d write attempts before timeout", i)
+			case <-time.After(10 * time.Millisecond):
+				continue
+			}
+			break
+		}
+	}
+}
+
+// The key cap is a signal an operator needs: totals stay correct while detail
+// silently degrades, so it must be said out loud rather than only counted.
+func TestKeyCapIsLoggedWhenItIsReached(t *testing.T) {
+	log := &syncBuffer{}
+	c := &Collector{
+		Agg:   &Aggregator{TopN: DefaultTopN, MaxKeys: 4, counts: map[Key]*counters{}},
+		Write: writerFunc(func() error { return nil }),
+		Log:   slog.New(slog.NewTextHandler(log, &slog.HandlerOptions{Level: slog.LevelWarn})),
+		Every: 20 * time.Millisecond,
+	}
+	recs := make([]Record, 0, 30)
+	for i := 0; i < 30; i++ {
+		recs = append(recs, Record{
+			SrcAddr: netip.AddrFrom4([4]byte{10, 0, 1, byte(i)}),
+			DstAddr: addr("10.0.0.9"), Bytes: 10, Packets: 1, InputIf: 1,
+		})
+	}
+	c.Agg.Add(&Packet{ExporterIP: addr("192.0.2.1"), Records: recs})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go c.drainLoop(ctx, c.Every)
+
+	deadline := time.After(3 * time.Second)
+	for {
+		if strings.Contains(log.String(), "key cap reached") {
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("key cap was never logged; log was: %q", log.String())
+		case <-time.After(20 * time.Millisecond):
+		}
+	}
+}
+
+// A datagram from a non-UDP address cannot happen through Run, but handle is
+// reachable from tests and future callers; it must ignore rather than panic.
+func TestHandleIgnoresNonUDPAddresses(t *testing.T) {
+	c := &Collector{Agg: NewAggregator(), Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	c.handle([]byte{0, 5}, &net.TCPAddr{IP: net.ParseIP("192.0.2.1"), Port: 1})
+	if p, _, r, m := c.Stats(); p != 0 || r != 0 || m != 0 {
+		t.Errorf("a non-UDP address was counted: %d/%d/%d", p, r, m)
+	}
+}
+
+// slog writes from the drain goroutine while the test polls; an unguarded
+// bytes.Buffer is a race in the test itself.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+var errUnavailable = errors.New("metrics store unavailable")
+
+type writerFunc func() error
+
+func (f writerFunc) WriteFlow(context.Context, time.Time, []Bucket) error { return f() }
