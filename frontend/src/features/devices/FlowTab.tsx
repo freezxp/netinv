@@ -58,25 +58,34 @@ export function FlowTab({
 
   const interfaces = useDeviceInterfaces(deviceID);
 
+  const selector = flowSelector(mgmtIP, dimension, ifIndex || undefined);
+  const rangeS = Math.round(range.hours * 3600);
+  const windowS = flowWindow(range.stepS);
+
   // Two probes answer the three questions an empty tab raises (doc 34 §5):
   // whether anything is arriving at all, whether any of it is from this
   // device, and — the common case — whether it is arriving under a different
   // address. `exporters` covers the first and third; grouping the second by
   // `sampled` as well as `if_index` gets the interface list and the sampling
-  // flag from one query instead of two. Every one of these refetches on a
-  // timer, so a redundant probe costs continuously, not once.
-  const exporters = useInstantQuery("count by (exporter) (netinv_flow_bytes)");
+  // flag from one query instead of two.
+  //
+  // Both look over the **selected range**, not the instant lookback. A bare
+  // instant query only sees the last few minutes, and real exporters are
+  // bursty: a UniFi gateway with a five-minute active timeout is silent
+  // between bursts, so a presence check on the instant value flips the tab to
+  // "no flow is reaching NetInv" while a full day of it sits in the table
+  // query directly below. The presence check has to cover the same window the
+  // table does, or the tab contradicts itself.
+  const exporters = useInstantQuery(
+    `count by (exporter) (max_over_time(netinv_flow_bytes[${rangeS}s]))`,
+  );
   const deviceIfs = useInstantQuery(
-    `count by (if_index, sampled) (netinv_flow_bytes{exporter="${mgmtIP}"})`,
+    `count by (if_index, sampled) (max_over_time(netinv_flow_bytes{exporter="${mgmtIP}"}[${rangeS}s]))`,
     !!mgmtIP,
   );
   const isSampled = (deviceIfs.data ?? []).some(
     (r) => r.metric.sampled === "true",
   );
-
-  const selector = flowSelector(mgmtIP, dimension, ifIndex || undefined);
-  const rangeS = Math.round(range.hours * 3600);
-  const windowS = flowWindow(range.stepS);
 
   const totals = useInstantQuery(flowTotalExpr(selector, rangeS), !!mgmtIP);
   const series = useQueryRange(
@@ -112,11 +121,22 @@ export function FlowTab({
   const loading = exporters.isLoading || deviceIfs.isLoading;
   const haveDeviceFlow = (deviceIfs.data?.length ?? 0) > 0;
 
+  // Only asked when this range looks empty, so the common case still costs two
+  // probes: is there flow from this device *outside* the selected window? An
+  // operator who picks "Last 30 Minutes" while a bursty exporter is between
+  // sends should be told to widen the range, not that nothing is arriving.
+  const wider = useInstantQuery(
+    `count(max_over_time(netinv_flow_bytes{exporter="${mgmtIP}"}[7d]))`,
+    !!mgmtIP && !loading && !haveDeviceFlow,
+  );
+
   if (!loading && !haveDeviceFlow) {
     return (
       <NoFlow
         mgmtIP={mgmtIP}
         anywhere={(exporters.data?.length ?? 0) > 0}
+        outsideRange={(wider.data?.length ?? 0) > 0}
+        rangeLabel={range.label.toLowerCase()}
         exporters={(exporters.data ?? [])
           .map((r) => r.metric.exporter)
           .filter(Boolean)}
@@ -235,13 +255,40 @@ function collectorHost() {
 function NoFlow({
   mgmtIP,
   anywhere,
+  outsideRange,
+  rangeLabel,
   exporters,
 }: {
   mgmtIP: string;
   anywhere: boolean;
+  /** Flow exists from this device, just not inside the selected range. */
+  outsideRange: boolean;
+  rangeLabel: string;
   exporters: string[];
 }) {
   const others = exporters.filter((e) => e !== mgmtIP);
+
+  // The most reassuring answer of the four, and the one a bursty exporter
+  // produces constantly: it is working, you are just looking at a gap.
+  if (outsideRange) {
+    return (
+      <Card>
+        <div className="mx-auto max-w-xl py-6 text-sm text-slate-600 dark:text-slate-300">
+          <div className="mb-2 font-semibold">
+            No flow from <span className="mono">{mgmtIP}</span> in the{" "}
+            {rangeLabel} — but there is some outside that window.
+          </div>
+          <p>
+            Widen the time range. Exporters send in bursts rather than
+            continuously: an active timeout of five minutes means five minutes
+            of silence between sends, and a longer one means longer gaps. The
+            device is exporting; this window happens to fall between two of its
+            sends.
+          </p>
+        </div>
+      </Card>
+    );
+  }
   return (
     <Card>
       <div className="mx-auto max-w-xl py-6 text-sm text-slate-600 dark:text-slate-300">

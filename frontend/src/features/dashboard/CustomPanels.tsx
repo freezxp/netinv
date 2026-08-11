@@ -165,11 +165,17 @@ export function MetricPanel({ panel }: { panel: Panel }) {
   );
 }
 
-// Exporters currently sending flow, for the panel editor's picker. Offering a
-// free-text box instead would invite a typo that renders an empty panel with
-// no hint that the address is simply wrong.
+// Exporters seen recently, for the panel editor's picker. Offering a free-text
+// box instead would invite a typo that renders an empty panel with no hint
+// that the address is simply wrong.
+//
+// Over a day rather than the instant lookback: exporters send in bursts, and a
+// picker built on the last few minutes would drop a perfectly healthy exporter
+// out of the list between sends — while the operator was choosing it.
 export function useFlowExporters() {
-  const q = useInstantQuery("count by (exporter) (netinv_flow_bytes)");
+  const q = useInstantQuery(
+    "count by (exporter) (max_over_time(netinv_flow_bytes[24h]))",
+  );
   return (q.data ?? [])
     .map((r) => r.metric.exporter)
     .filter(Boolean)
