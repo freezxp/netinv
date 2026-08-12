@@ -56,6 +56,25 @@ interval to top-N talkers, conversations and applications per interface, and
 writes only those. The cardinality is then `N × interfaces × 3`, which the
 existing stack handles without a new datastore.
 
+**N is `NETINV_FLOW_TOPN`, default 25.** It began at 10, chosen against a
+generated exporter, and real hardware showed that to be too tight: on a pilot
+gateway every interface sat at the cap in every single interval, so the tables
+were permanently clipped and the share column described the kept ten rather
+than the link.
+
+The right value depends on fleet size, which is why it is a setting rather than
+a constant. Cost is `N × 3 dimensions × 2 metrics` series per interface per
+exporter — 150 at the default. A thousand flow-exporting devices with ten
+interfaces each would come to 1.5M active series, past NFR-03's ~1M single-node
+target, so a fleet that size must lower it.
+
+The instantaneous count is not the whole cost, and the difference is large.
+Every distinct talker creates a series and top-N membership churns, so series
+*created* over time far exceeds series *active*: the pilot, three exporters at
+N=10, held 319 active series while creating 9,513 distinct ones in 24 hours.
+Raising N raises that churn roughly in proportion, and retention decides how
+long the index carries it.
+
 The cost is stated plainly because it is not recoverable: **a conversation
 outside the top N for an interval was never written.** It did not go unqueried —
 it does not exist. If you need "every flow from this host last Tuesday", that is
@@ -266,6 +285,7 @@ interval, and the two are independent on purpose.
 |---|---|---|
 | `NETINV_FLOW_ADDR` | `:2055,:4739` | Comma-separated UDP listen addresses |
 | `NETINV_FLOW_ALLOW` | *(empty)* | Comma-separated CIDRs or bare addresses |
+| `NETINV_FLOW_TOPN` | `25` | Buckets kept per interface per dimension per interval (§1) |
 | `NETINV_VM_URL` | — | VictoriaMetrics write endpoint |
 
 A bare address in `NETINV_FLOW_ALLOW` becomes a `/32` or `/128`, which is what

@@ -60,7 +60,27 @@ type Aggregator struct {
 }
 
 const (
-	DefaultTopN    = 10
+	// DefaultTopN is what one interface keeps per dimension per interval.
+	//
+	// It began at 10, chosen against a generated exporter. Real hardware
+	// showed that to be too tight: on a pilot gateway every interface sat at
+	// the cap in every single interval, so the tables were permanently
+	// clipped and the share column described the kept ten rather than the
+	// link. 25 gives useful depth while staying inside the cardinality budget
+	// for a large fleet — see the arithmetic below.
+	//
+	// Series cost is N x 3 dimensions x 2 metrics per interface per exporter:
+	// at 25 that is 150 series per interface. A thousand flow-exporting
+	// devices with ten interfaces each comes to 1.5M active series, which is
+	// past NFR-03's ~1M single-node target, so a fleet that size must lower
+	// it — hence NETINV_FLOW_TOPN rather than a constant.
+	//
+	// The instantaneous count is not the whole cost. Every distinct talker
+	// creates a series, and top-N membership churns, so the number of series
+	// *created* over time is far larger: the pilot, with three exporters at
+	// N=10, produced 319 active series and 9,513 distinct series in 24 hours.
+	// Raising N raises that churn roughly in proportion.
+	DefaultTopN    = 25
 	DefaultMaxKeys = 200_000
 	// OtherValue collects everything past MaxKeys, so the total stays honest
 	// even when the detail is gone.

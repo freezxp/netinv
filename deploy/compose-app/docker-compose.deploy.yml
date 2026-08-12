@@ -87,6 +87,10 @@ services:
     environment:
       NETINV_VM_URL: http://victoriametrics:8428
       NETINV_FLOW_ADDR: ":2055,:4739"
+      # Buckets kept per interface per dimension per interval. Unset uses the
+      # built-in default; raise it for more depth on a small fleet, lower it on
+      # a large one — the cost is series (doc 34 §1).
+      NETINV_FLOW_TOPN: "${NETINV_FLOW_TOPN:-}"
       NETINV_FLOW_ALLOW: ${NETINV_FLOW_ALLOW:-}
 
   ingester:

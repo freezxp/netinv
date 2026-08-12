@@ -6,7 +6,9 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
+	"strconv"
 
 	"github.com/freezxp/netinv/backend/internal/flow"
 	"github.com/freezxp/netinv/backend/internal/platform/service"
@@ -28,9 +30,23 @@ func main() {
 			// convention, and version is read from the datagram either way.
 			addr = ":2055,:4739"
 		}
+		agg := flow.NewAggregator()
+		// How many buckets each interface keeps per dimension per interval.
+		// Configurable because the right answer depends on fleet size: deeper
+		// tables cost series, and a large fleet reaches NFR-03's ceiling
+		// before a small one does (doc 34 §1).
+		if v := os.Getenv("NETINV_FLOW_TOPN"); v != "" {
+			n, err := strconv.Atoi(v)
+			if err != nil || n < 1 {
+				return fmt.Errorf("NETINV_FLOW_TOPN=%q: want a positive integer", v)
+			}
+			agg.TopN = n
+		}
+		rt.Log.Info("flow aggregation", "top_n", agg.TopN)
+
 		c := &flow.Collector{
 			Addr:  addr,
-			Agg:   flow.NewAggregator(),
+			Agg:   agg,
 			Write: flow.NewVMWriter(vmURL),
 			Log:   rt.Log,
 		}

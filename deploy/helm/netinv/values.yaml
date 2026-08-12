@@ -69,6 +69,11 @@ services:
     listen:
       - { name: netflow, port: 2055, protocol: UDP }
       - { name: ipfix, port: 4739, protocol: UDP }
+    env:
+      # Buckets kept per interface per dimension per interval. The default
+      # suits a small-to-medium fleet; a large one must lower it, because the
+      # cost is N x 3 x 2 series per interface (doc 34 §1, NFR-03).
+      NETINV_FLOW_TOPN: "25"
 
 resources:
   requests: { cpu: 100m, memory: 128Mi }

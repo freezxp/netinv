@@ -888,3 +888,43 @@ func TestFlowWithNoIfIndexIsReportedNotSilentlyDropped(t *testing.T) {
 		}
 	}
 }
+
+// The cap is what an interface keeps per dimension per interval. Real hardware
+// showed 10 to be too tight — every interface sat at it in every interval — so
+// it is configurable, and the default moved. This pins that a configured value
+// is honoured rather than silently replaced by the default.
+func TestTopNIsConfigurable(t *testing.T) {
+	for _, n := range []int{3, 25, 100} {
+		a := NewAggregator()
+		a.TopN = n
+		recs := make([]Record, 0, 200)
+		for i := 0; i < 200; i++ {
+			recs = append(recs, Record{
+				SrcAddr: netip.AddrFrom4([4]byte{10, 1, byte(i / 256), byte(i % 256)}),
+				DstAddr: addr("10.0.0.9"),
+				Bytes:   uint64(200 - i), Packets: 1, InputIf: 1,
+			})
+		}
+		a.Add(&Packet{ExporterIP: addr("192.0.2.1"), Records: recs})
+
+		var conversations int
+		for _, b := range a.Drain() {
+			if b.Key.Dimension == DimConversation {
+				conversations++
+			}
+		}
+		if conversations != n {
+			t.Errorf("TopN=%d kept %d conversations", n, conversations)
+		}
+	}
+}
+
+// The default is the value a deployment gets without configuring anything, so
+// a change to it is a deliberate act rather than a drift.
+func TestDefaultTopN(t *testing.T) {
+	if DefaultTopN != 25 {
+		t.Errorf("DefaultTopN = %d; changing it changes every deployment's "+
+			"cardinality, so update the arithmetic in aggregate.go and doc 34 too",
+			DefaultTopN)
+	}
+}
