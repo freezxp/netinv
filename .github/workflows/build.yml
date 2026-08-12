@@ -22,7 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        service: [api, scheduler, poller, ingester, alerter, notifier]
+        service: [api, scheduler, poller, ingester, alerter, notifier, flow]
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-qemu-action@v3

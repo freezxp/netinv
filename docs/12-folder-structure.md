@@ -18,7 +18,7 @@ netinv/
 │   ├── PULL_REQUEST_TEMPLATE.md   # includes "docs updated?" gate (NFR-70)
 │   └── CODEOWNERS
 ├── docs/                      # this design package, 01–30 + assets/
-├── backend/                   # single Go module — all six services (doc 13)
+├── backend/                   # single Go module — all seven services (doc 13)
 ├── connectors/                # vendor plugins + sdk + registry (doc 10)
 │   ├── sdk/                   #   interfaces & value types — the plugin contract
 │   ├── registry/              #   import-side registration

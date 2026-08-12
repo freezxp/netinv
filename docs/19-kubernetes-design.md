@@ -10,13 +10,14 @@ Any CNCF-conformant 1.28+ on-prem cluster; reference: **RKE2** (prod) / **k3s** 
 
 | Namespace | Contents | Notes |
 |---|---|---|
-| `netinv` | 6 app Deployments + frontend, HPA (api/ingester), PDBs, NetworkPolicies | app chart |
+| `netinv` | 7 app Deployments + frontend, HPA (api/ingester), PDBs, NetworkPolicies | app chart |
 | `netinv-data` | CloudNativePG cluster, VictoriaMetrics StatefulSet, Redis, RabbitMQ (operator or bitnami chart) | data chart deps |
 | `netinv-poller` (remote clusters) | poller Deployment + buffer PVC | standalone chart |
 
 Workload notes:
 - All app pods: non-root, read-only rootfs, no privilege escalation, seccomp RuntimeDefault (poller additionally needs `NET_RAW` for ICMP — isolated in its own ServiceAccount/PSA exception, or use unprivileged UDP ping mode).
 - Scheduler/alerter run 2 replicas with Redis lease leadership (doc 05 §9) — a Deployment, not StatefulSet.
+- **Flow runs exactly one replica and needs a Service reachable from the device network**, unlike every other component: exporters push to it. The chart renders a Service for any component declaring `listen` ports, defaulting to `ClusterIP`; a real deployment sets `services.flow.serviceType` to `LoadBalancer` or `NodePort`, because how devices reach the cluster is a property of the network rather than of the chart. UDP 2055 and 4739 are both bound (doc 34 §2), and the NetworkPolicy has to admit them from the device subnets.
 - Probes: `/healthz` liveness, `/readyz` readiness (checks PG/Redis/AMQP connectivity with degraded-mode rules per NFR-25).
 - Rolling updates: `maxUnavailable: 0` for api; consumers drain gracefully on SIGTERM (finish in-flight, requeue rest) within `terminationGracePeriodSeconds: 60`.
 

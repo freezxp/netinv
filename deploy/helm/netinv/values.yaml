@@ -55,6 +55,20 @@ services:
     replicas: 1
     port: 8085
     needs: [pg, amqp]
+  flow:
+    # Single replica on purpose. Flow arrives over UDP with no delivery
+    # guarantee and no way to replay, and NetFlow v9/IPFIX state is per
+    # exporter: a second replica would see half of one exporter's datagrams and
+    # none of its templates, and decode nothing. Scaling means partitioning
+    # exporters across collectors, which needs its own design.
+    replicas: 1
+    port: 8086
+    needs: [vm]
+    # Listening ports, as opposed to the ops port above. Both conventional
+    # numbers are bound because the exporter usually picks; see doc 34 §2.
+    listen:
+      - { name: netflow, port: 2055, protocol: UDP }
+      - { name: ipfix, port: 4739, protocol: UDP }
 
 resources:
   requests: { cpu: 100m, memory: 128Mi }

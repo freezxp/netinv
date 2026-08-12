@@ -20,7 +20,7 @@ Dependency rule: source arrows point inward only. DI is constructor injection wi
 
 **CQRS-lite:** commands and queries are separate application-layer types with separate handler pipelines (validation → authorize → audit for commands; cache-aware for queries). One PostgreSQL instance backs both; read models are Redis-cached projections, not a separate store. Rationale: full CQRS with separate read stores is unjustified at v1 scale but the handler split preserves the seam (NFR capacity trigger >50k devices splits deployments).
 
-## 2. The six services
+## 2. The seven services
 
 | Service | Binary | Role | State | Scaling |
 |---|---|---|---|---|
@@ -30,6 +30,16 @@ Dependency rule: source arrows point inward only. DI is constructor injection wi
 | **Ingester** | `netinv-ingester` | Consumes metric batches: validates, enriches with inventory labels, computes derived metrics, writes VM; emits state-transition events | stateless | horizontal |
 | **Alerter** | `netinv-alerter` | Evaluates alert rules against VM (MetricsQL), manages alert lifecycle in PG, emits `alert.*` events; leader-elected | leader lease | active/standby |
 | **Notifier** | `netinv-notifier` | Consumes `alert.*` + routing policies → Email/Webhook/Slack, retries, delivery log | stateless | horizontal |
+| **Flow** | `netinv-flow` | Receives NetFlow v5/v9 and IPFIX on UDP 2055/4739, aggregates each interval to top-N talkers/conversations/applications and writes them to VM (ADR-020, doc 34) | v9/IPFIX template cache, in memory | **single replica** |
+
+The flow collector is the one service that does not scale horizontally, and the
+reason is worth stating rather than discovering: flow arrives over UDP with no
+delivery guarantee and no way to replay, and v9/IPFIX state is per exporter. A
+second replica would receive half of one exporter's datagrams and none of its
+templates, and decode nothing. Scaling means partitioning exporters across
+collectors, which needs its own design. It is also the only service that accepts
+unsolicited input from the network rather than initiating its own connections
+(doc 34 §6).
 
 Sync logic (doc 11) lives as an application service inside the API's Inventory context v1 (results arrive via queue from pollers); the seam allows extracting `netinv-sync` later.
 

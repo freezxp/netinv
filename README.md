@@ -86,7 +86,7 @@ netinv/
 ├── CLAUDE.md          ← AI onboarding: read this first if you are an AI agent
 ├── DECISIONS.md       ← architecture decision log (ADR-lite); the "why" behind everything
 ├── docs/              ← the 33-document design package (numbered, see docs/README.md)
-├── backend/           ← Go services: api, scheduler, poller, ingester, alerter, notifier
+├── backend/           ← Go services: api, scheduler, poller, ingester, alerter, notifier, flow
 ├── connectors/        ← vendor connector packages (cisco, juniper, huawei, zte, ubiquiti, ruckus)
 ├── frontend/          ← React + TypeScript app
 ├── deploy/            ← Helm charts, k8s manifests, docker-compose, Proxmox LXC installer

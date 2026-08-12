@@ -1,3 +1,27 @@
+{{- /*
+   A Service for any component that listens for traffic rather than only
+   serving its ops endpoint. Flow is the first: exporters push to it, so unlike
+   every other service it needs to be reachable from the network the devices
+   are on — usually a LoadBalancer or a nodePort, which is a decision for the
+   deployment rather than the chart.
+*/ -}}
+{{- range $name, $svc := .Values.services }}
+{{- if $svc.listen }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: netinv-{{ $name }}
+  labels: { app.kubernetes.io/name: netinv, app.kubernetes.io/component: {{ $name }} }
+spec:
+  type: {{ $svc.serviceType | default "ClusterIP" }}
+  selector: { app.kubernetes.io/name: netinv, app.kubernetes.io/component: {{ $name }} }
+  ports:
+    {{- range $svc.listen }}
+    - { name: {{ .name }}, port: {{ .port }}, targetPort: {{ .port }}, protocol: {{ .protocol | default "TCP" }} }
+    {{- end }}
+---
+{{- end }}
+{{- end }}
 apiVersion: v1
 kind: Service
 metadata:

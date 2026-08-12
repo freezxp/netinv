@@ -19,7 +19,11 @@ spec:
         - name: {{ $name }}
           image: "{{ $.Values.image.repository }}-{{ $name }}:{{ $.Values.image.tag }}"
           imagePullPolicy: {{ $.Values.image.pullPolicy }}
-          ports: [{ containerPort: {{ $svc.port }}, name: ops }]
+          ports:
+            - { containerPort: {{ $svc.port }}, name: ops }
+            {{- range $svc.listen }}
+            - { containerPort: {{ .port }}, name: {{ .name }}, protocol: {{ .protocol | default "TCP" }} }
+            {{- end }}
           env:
             - { name: NETINV_LOG_LEVEL, value: {{ $.Values.logLevel | quote }} }
             - { name: NETINV_HTTP_ADDR, value: ":{{ $svc.port }}" }
