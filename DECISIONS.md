@@ -162,3 +162,16 @@ Decisions ADR-001 … ADR-017 were made with the product owner on **2026-08-07**
 - The cache key includes the protocol version, because v9 and IPFIX number templates independently: one exporter can use ID 256 for two different layouts, and a shared key would let each overwrite the other.
 - The collector listens on 2055 and 4739 and reads the version from the datagram, so any format works on either port. Every configured address must bind or the service fails to start — a partial bind would be silently deaf on one port while looking healthy.
 - sFlow still needs a decoder of its own.
+
+---
+
+## ADR-023: v1.0 ships with four release gates open, named rather than quietly dropped
+**Status:** accepted (2026-08-12)
+**Context:** `CLAUDE.md` has carried four conditions for v1.0 since the pilot began: real-hardware validation of the untested vendor connectors, a 72-hour soak plus chaos-lite on staging Kubernetes, the doc 20 §12 security checklist against TLS, and a backup/restore drill on pilot data. It also said, in the same line, "do not fake them." None of the four is met at the point of tagging v1.0.0. Three cannot be met by this project as it stands: the pilot has no Cisco, Juniper, Huawei, ZTE, FortiGate or PAN-OS hardware to validate against, no staging Kubernetes cluster to soak, and no TLS deployment to check. The fourth, the restore drill, is achievable and was simply not done first.
+**Decision:** Tag v1.0.0 anyway, and say plainly in the release notes and in the docs which gates are open and why. The gates are not deleted, weakened, or restated to make them look satisfied; they become the post-1.0 list.
+**Rationale:** The alternative was an indefinite release-candidate series, because three of the gates depend on hardware and infrastructure that a solo pilot is unlikely to acquire — the version number would have stayed at rc.N not because the software was unready but because a checklist written for a different situation could not be discharged. A version number is a communication device: what matters is that the person deploying it knows exactly what has and has not been exercised. That is achievable by writing it down, and is not achievable by withholding the tag.
+**Consequences:**
+- **Six of eight connectors have never seen the hardware they target.** doc 10 states this per connector, and the release notes lead with it. `ubiquiti`, `generic` and `ruckus` are validated; `cisco-ios`, `juniper-junos`, `huawei-vrp`, `zte-zxr`, `fortinet-fortios` and `paloalto-panos` are written from vendor MIBs. An operator on those platforms should expect to find and report faults.
+- **No soak, no chaos test, no TLS security review, no restore drill.** v1.0.0 is validated by a live single-site pilot and by its own test suite, not by a staging environment exercise. Behaviour under sustained load, component failure, or a real restore is unknown rather than proven.
+- This is a judgement about *this* project's circumstances, not a precedent for shipping past gates generally. The gates remain in `CLAUDE.md` as the post-1.0 list, and closing each one is a visible, dated event rather than something that quietly stops being mentioned.
+- The honest version of the claim is: NetInv v1.0.0 is production software running a real network, with a documented and unusually specific list of what has not been tested.
