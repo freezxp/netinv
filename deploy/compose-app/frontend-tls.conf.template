@@ -1,0 +1,106 @@
+# Single-host deployment with TLS: nginx terminates HTTPS, serves the SPA and
+# proxies /api to the api service (in k8s the ingress does this — doc 19).
+#
+# This is a template, not a config: the nginx image substitutes ${TLS_PORT_SUFFIX}
+# at start-up. Only environment variables are substituted, so nginx's own $host
+# and $request_uri survive untouched.
+#
+# The certificate is whatever is mounted at /etc/nginx/certs. quickstart.sh
+# generates a self-signed pair if none exists, because a monitoring system that
+# ships without TLS tends to stay without it — and a self-signed certificate an
+# operator replaces is strictly better than a plaintext login they never notice.
+# See doc 20 §12 for replacing it with a real one.
+
+# Plain HTTP exists only to send browsers to HTTPS. It is not a second way in.
+server {
+    listen 80;
+    server_name _;
+
+    # ACME http-01 stays reachable, so swapping the self-signed certificate for
+    # a Let's Encrypt one does not require editing this file first.
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+    location / {
+        # ${TLS_PORT_SUFFIX} is substituted at container start by the nginx
+        # image's envsubst step. It carries the *published* HTTPS port, which
+        # nginx cannot know: it listens on 443 inside the container while the
+        # host may map that to anything. Without it the redirect sends browsers
+        # to https://host/ — port 443, where nothing is listening — and the
+        # only symptom is a connection that hangs after a working login page.
+        return 308 https://$host${TLS_PORT_SUFFIX}$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name _;
+
+    ssl_certificate     /etc/nginx/certs/netinv.crt;
+    ssl_certificate_key /etc/nginx/certs/netinv.key;
+
+    # TLS 1.2 is kept because appliance browsers and older jump hosts are real
+    # on the networks this runs beside; 1.0 and 1.1 are not. The cipher list is
+    # the forward-secrecy-only subset — every suite here is ECDHE, so a stolen
+    # key cannot decrypt yesterday's captured traffic.
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305;
+    ssl_prefer_server_ciphers off;
+    ssl_session_timeout 1d;
+    ssl_session_cache shared:NetInvTLS:10m;
+    ssl_session_tickets off;
+
+    root /usr/share/nginx/html;
+    index index.html;
+
+    # HSTS without preload and without includeSubDomains: this commonly runs on
+    # an internal name that also serves other things, and poisoning a whole
+    # domain's browsers from a monitoring box is a bad trade. Turn both on once
+    # the deployment owns its name.
+    add_header Strict-Transport-Security "max-age=31536000" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    # frame-ancestors in the CSP is the modern control; X-Frame-Options is kept
+    # for browsers that predate it.
+    add_header X-Frame-Options "DENY" always;
+    add_header Cross-Origin-Opener-Policy "same-origin" always;
+    add_header Permissions-Policy "camera=(), microphone=(), geolocation=(), interest-cohort=()" always;
+
+    # The app is a self-contained SPA: no CDN, no third-party fonts, no
+    # analytics, and its only network destination is its own /api. The policy
+    # says exactly that, so anything injected has nowhere to send what it takes.
+    #
+    # style-src needs 'unsafe-inline' because the charting and flow-graph
+    # libraries set element styles directly; script-src does not, which is the
+    # half that matters for XSS.
+    add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'" always;
+
+    location /api/ {
+        proxy_pass http://api:8080;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        # The API reads this to decide whether the connection was secure, which
+        # is what lets it set Secure cookies from behind a terminating proxy.
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+    location /assets/ {
+        add_header Cache-Control "public, max-age=31536000, immutable";
+        # add_header inside a location replaces the inherited set rather than
+        # adding to it, so the security headers have to be repeated here or
+        # every asset response silently loses them.
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header Strict-Transport-Security "max-age=31536000" always;
+    }
+    location / {
+        try_files $uri /index.html;
+        add_header Cache-Control "no-cache";
+        add_header Strict-Transport-Security "max-age=31536000" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+        add_header X-Frame-Options "DENY" always;
+        add_header Cross-Origin-Opener-Policy "same-origin" always;
+        add_header Permissions-Policy "camera=(), microphone=(), geolocation=(), interest-cohort=()" always;
+        add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'" always;
+    }
+}

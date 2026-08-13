@@ -94,27 +94,49 @@ test("a brand-new map opens in the viewer and the editor", async ({
   await login(page);
   await page.getByRole("link", { name: "Weathermaps" }).click();
   const name = `e2e-empty-${Date.now()}`;
-  await page.getByPlaceholder("New map name").fill(name);
-  await page.getByRole("button", { name: "Create" }).click();
+  // Everything from here is wrapped so the map is removed even when an
+  // assertion fails. A leaked map is not just untidy: the next run sees two
+  // cards, and the failure it produces points at the wrong thing entirely.
+  let leaked = "";
+  try {
+    await page.getByPlaceholder("New map name").fill(name);
+    await page.getByRole("button", { name: "Create" }).click();
 
-  // Innermost div that holds both the map's name and its buttons.
-  const card = page
-    .locator("div")
-    .filter({ hasText: name })
-    .filter({ has: page.getByRole("button", { name: "View" }) })
-    .last();
-  await expect(card).toBeVisible();
-  await card.getByRole("button", { name: "View" }).click();
-  await expect(page.getByRole("heading", { name: "Weathermap" })).toBeVisible();
-  await expect(page.getByText("Unexpected Application Error")).toHaveCount(0);
+    // Innermost div that holds both the map's name and its buttons.
+    const card = page
+      .locator("div")
+      .filter({ hasText: name })
+      .filter({ has: page.getByRole("button", { name: "View" }) })
+      .last();
+    await expect(card).toBeVisible();
+    await card.getByRole("button", { name: "View" }).click();
+    // exact: the list page's own heading is "Weathermaps", and a substring match
+    // is satisfied by it — so without this the test passes without ever leaving
+    // the list, and fails later on something unrelated.
+    await expect(
+      page.getByRole("heading", { name: "Weathermap", exact: true }),
+    ).toBeVisible();
+    await expect(page.getByText("Unexpected Application Error")).toHaveCount(0);
 
-  await page.getByRole("button", { name: "Edit" }).click();
-  await expect(page.getByText("Add device node")).toBeVisible();
-  expect(crashes, `viewer/editor threw: ${crashes.join("; ")}`).toEqual([]);
+    await page.getByRole("button", { name: "Edit" }).click();
+    await expect(page.getByText("Add device node")).toBeVisible();
+    expect(crashes, `viewer/editor threw: ${crashes.join("; ")}`).toEqual([]);
 
-  // /maps/{id}/edit — the id is the only handle the UI ever exposed.
-  const id = page.url().match(/\/maps\/([^/]+)/)?.[1];
-  if (id) await deleteMap(request, id);
+    // /maps/{id}/edit — the id is the only handle the UI ever exposed.
+    leaked = page.url().match(/\/maps\/([^/]+)/)?.[1] ?? "";
+  } finally {
+    if (!leaked) {
+      const headers = await apiHeaders(request);
+      const list = await (
+        await request.get("/api/v1/maps", { headers })
+      ).json();
+      leaked =
+        (list.data ?? []).find(
+          (m: { name: string; id: string }) => m.name === name,
+        )?.id ?? "";
+    }
+    if (leaked) await deleteMap(request, leaked);
+  }
 });
 
 // Links rendered in the editor but vanished from the published map: nodes
@@ -738,42 +760,63 @@ test("the polling interval can be changed for the whole fleet", async ({
 // survive a reload — it lives on the account, not in the browser.
 test("the dashboard can be customised and the layout persists", async ({
   page,
+  request,
 }) => {
-  await login(page);
+  // The layout lives on the account, and this test ends by resetting it to
+  // default — which would wipe whatever layout the operator of the target
+  // deployment had built. Snapshot it first and put it back in a finally, so
+  // running the suite against a real instance is not a destructive act.
+  const headers = await apiHeaders(request);
+  const before = await (
+    await request.get("/api/v1/users/me/preferences", { headers })
+  ).json();
 
-  // Default layout: the panels the dashboard had before it was customisable.
-  await expect(page.getByText(/^Bandwidth in, by site/)).toBeVisible();
-  await expect(page.getByText("Devices up")).toBeVisible();
+  try {
+    await login(page);
 
-  await page.getByRole("button", { name: "Customise" }).click();
-  await expect(page.getByText("Customise dashboard")).toBeVisible();
+    // Default layout: the panels the dashboard had before it was customisable.
+    await expect(page.getByText(/^Bandwidth in, by site/)).toBeVisible();
+    await expect(page.getByText("Devices up")).toBeVisible();
 
-  // Add a weathermap panel and choose a map for it.
-  await page.getByLabel("Panel to add").selectOption("weathermap");
-  await page.getByRole("button", { name: "Add panel" }).click();
-  const mapPick = page.getByLabel("Weathermap to show");
-  await expect(mapPick).toBeVisible();
-  const opts = await mapPick.locator("option").count();
-  if (opts > 1) {
-    await mapPick.selectOption({ index: 1 });
+    await page.getByRole("button", { name: "Customise" }).click();
+    await expect(page.getByText("Customise dashboard")).toBeVisible();
+
+    // Add a weathermap panel and choose a map for it.
+    await page.getByLabel("Panel to add").selectOption("weathermap");
+    await page.getByRole("button", { name: "Add panel" }).click();
+    // .last(): a deployment whose layout already carries a weathermap panel has
+    // more than one of these selects, and an unscoped locator matches them all.
+    const mapPick = page.getByLabel("Weathermap to show").last();
+    await expect(mapPick).toBeVisible();
+    const opts = await mapPick.locator("option").count();
+    if (opts > 1) {
+      await mapPick.selectOption({ index: 1 });
+    }
+
+    // Removing a panel takes it off the dashboard.
+    await page
+      .getByRole("button", { name: "Remove Latency (ICMP RTT)" })
+      .click();
+    await page.getByRole("button", { name: "Done" }).first().click();
+    await expect(page.getByText(/^Latency — ICMP avg RTT/)).toHaveCount(0);
+
+    // Stored on the account, so a reload keeps it.
+    await page.reload();
+    await expect(page.getByText(/^Latency — ICMP avg RTT/)).toHaveCount(0);
+    await expect(page.getByText(/^Bandwidth in, by site/)).toBeVisible();
+
+    // Reset puts everything back, so a bad layout is never a trap.
+    await page.getByRole("button", { name: "Customise" }).click();
+    await page.getByRole("button", { name: "Reset to default" }).click();
+    await page.getByRole("button", { name: "Done" }).first().click();
+    await expect(page.getByText(/^Latency — ICMP avg RTT/)).toBeVisible();
+    await expect(page.getByText("Unexpected Application Error")).toHaveCount(0);
+  } finally {
+    await request.put("/api/v1/users/me/preferences", {
+      headers,
+      data: before,
+    });
   }
-
-  // Removing a panel takes it off the dashboard.
-  await page.getByRole("button", { name: "Remove Latency (ICMP RTT)" }).click();
-  await page.getByRole("button", { name: "Done" }).first().click();
-  await expect(page.getByText(/^Latency — ICMP avg RTT/)).toHaveCount(0);
-
-  // Stored on the account, so a reload keeps it.
-  await page.reload();
-  await expect(page.getByText(/^Latency — ICMP avg RTT/)).toHaveCount(0);
-  await expect(page.getByText(/^Bandwidth in, by site/)).toBeVisible();
-
-  // Reset puts everything back, so a bad layout is never a trap.
-  await page.getByRole("button", { name: "Customise" }).click();
-  await page.getByRole("button", { name: "Reset to default" }).click();
-  await page.getByRole("button", { name: "Done" }).first().click();
-  await expect(page.getByText(/^Latency — ICMP avg RTT/)).toBeVisible();
-  await expect(page.getByText("Unexpected Application Error")).toHaveCount(0);
 });
 
 // A link could only be removed by deleting one of the nodes it joined, which

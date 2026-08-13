@@ -72,4 +72,35 @@ The brief lists OAuth2: v1 implements the resource-server side (Bearer tokens, O
 
 ## 12. Release security checklist (gates v1.0, PRD §6)
 
+### 12.1 TLS
+
+The single-host deployment terminates TLS at nginx (`deploy/compose-app/frontend-tls.conf.template`). Port 80 exists only to issue a 308 to HTTPS and to serve an ACME challenge path; it is not a second way in.
+
+- **TLS 1.2 and 1.3 only**, forward-secrecy ciphers only — every offered suite is ECDHE, so a stolen key cannot decrypt captured traffic. Session tickets off.
+- **Headers:** HSTS, CSP, `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Cross-Origin-Opener-Policy`, `Permissions-Policy`. The CSP is `script-src 'self'` with no `unsafe-inline` — the app is self-contained, so `connect-src 'self'` leaves injected script nowhere to send anything. `style-src` needs `unsafe-inline` because the charting libraries set element styles directly.
+- **A trap worth knowing:** `add_header` in a `location` block *replaces* the inherited set rather than adding to it. The headers are therefore repeated in each location, or every static asset silently loses them.
+- **Certificates:** `deploy/compose-app/make-cert.sh` generates a self-signed pair with correct SANs if none exists, and never overwrites one. Replace `certs/netinv.{crt,key}` with a real pair and restart the frontend. The `certs/` directory is gitignored — this repository is public (ADR-019).
+- **`NETINV_INSECURE_COOKIES` now defaults to 0**, so session cookies carry `Secure`. Set it to 1 only for a deliberately plain-HTTP deployment: with Secure cookies over HTTP the browser accepts the login response and never sends the cookie back, which presents as a broken login rather than a configuration choice.
+
+### 12.2 Results, 2026-08-13
+
+Run against the pilot over TLS. This closes the *TLS config scan* line below; the soak, staging-Kubernetes and restore-drill items remain open (ADR-023).
+
+| Check | Tool | Result |
+|---|---|---|
+| Go dependencies | `govulncheck` | 0 called vulnerabilities, both modules. One advisory in a *required but never imported* module (`x/crypto/openpgp`, no fix published) — confirmed absent from the dependency graph |
+| Frontend dependencies | `npm audit` | **3 advisories fixed** — `react-router` open redirect → XSS (CVSS 6.9) and SSR constructor injection. Upgraded 6.30.4 → 7.18.2; there is no patched 6.x |
+| Container images | `trivy` HIGH+CRITICAL | **35 → 0.** The `nginx:1.27-alpine` base carried 2 CRITICAL OpenSSL CVEs, which matters directly because that container terminates TLS. Bumped to 1.29-alpine plus `apk upgrade` at build. Backend images were already 0 |
+| Secrets in repo | `gitleaks` | No leaks across 115 commits |
+| TLS configuration | `testssl.sh` | TLS 1.0/1.1/SSLv2/SSLv3 not offered; not vulnerable to Heartbleed, CCS, Ticketbleed, ROBOT, CRIME, BREACH, POODLE, SWEET32, FREAK, DROWN, LOGJAM, BEAST, LUCKY13, Winshock; no RC4. Certificate is self-signed, so chain-of-trust and OCSP are expected failures until a real one is installed |
+| Authentication | manual | Every protected endpoint 401s unauthenticated. Forged bearer and `alg=none` JWT both rejected |
+| Authorization | manual, `readonly` account | Reads 200; `users`, `credentials`, `audit-events` and all writes 403; privilege escalation (creating an admin) refused |
+| Secret leakage | manual | No secret-shaped field in any admin-readable response — credentials return id/name/kind/count only |
+| SQL injection | manual | Union, tautology, stacked-statement and `pg_sleep` time-based payloads: no delay, no row-count change, tables intact — parameterised throughout |
+| Brute force | manual | 5 failures lock the account for 15 minutes (423), including for the correct password. Deactivated accounts are refused |
+
+Two items in the table below remain unverified: **backup restore drill** and the **authz test suite covering every endpoint × every role** — the manual probe above covers `readonly` against the main surfaces, not the full matrix.
+
+
+
 Dependency + container scan clean (critical/high) · secrets-in-repo scan (gitleaks) clean · authz test suite: every endpoint × every role matches §5 · no-secret-leak invariant tests green · TLS config scan (testssl) on staging · seeded-admin flow forces password change · backup restore drill performed · threat-model review of any scope added since this doc.

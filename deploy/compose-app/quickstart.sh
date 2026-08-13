@@ -43,8 +43,13 @@ RABBIT_PASSWORD=$(openssl rand -hex 12)
 NETINV_MASTER_KEY=$(openssl rand -base64 32)
 NETINV_JWT_SIGNING_KEY=$(openssl rand -base64 32)
 NETINV_ADMIN_PASSWORD=$ADMIN_PW
-NETINV_UI_URL=http://localhost:8090
-NETINV_INSECURE_COOKIES=1
+NETINV_UI_URL=https://localhost:8443
+# Session cookies carry Secure, because the stack terminates TLS. Set to 1 only
+# if you have deliberately switched the frontend back to plain HTTP — with
+# Secure cookies over HTTP the browser accepts the login response and then
+# never sends the cookie back, so the session dies on the next request and
+# looks like a broken login rather than a configuration choice.
+NETINV_INSECURE_COOKIES=0
 EOF
   chmod 600 "$ENV_FILE"
 else
@@ -58,14 +63,20 @@ echo "==> Starting data tier (postgres, redis, rabbitmq, victoriametrics, snmpsi
 "${COMPOSE[@]}" up -d --wait \
   postgres redis rabbitmq victoriametrics snmpsim mailhog
 
-# 3. Application (six services + frontend), built from source.
+# 3. TLS material. Generated once per host and never overwritten, so a real
+# certificate dropped in here survives every later run of this script.
+echo "==> Ensuring a TLS certificate exists"
+"$(dirname "$0")/make-cert.sh"
+
+# 4. Application (seven services + frontend), built from source.
 echo "==> Building and starting NetInv services"
 "${COMPOSE[@]}" --profile app up -d --build
 
-# 4. Wait for the api to be ready through the frontend proxy.
+# 5. Wait for the api to be ready through the frontend proxy. -k because the
+# certificate is self-signed until someone replaces it.
 echo -n "==> Waiting for the UI to come up"
 for _ in $(seq 1 60); do
-  if curl -sf -o /dev/null "http://localhost:8090/"; then break; fi
+  if curl -skf -o /dev/null "https://localhost:8443/"; then break; fi
   echo -n "."; sleep 2
 done
 echo
@@ -74,7 +85,10 @@ cat <<EOF
 
   NetInv is up.
 
-    UI:        http://localhost:8090
+    UI:        https://localhost:8443   (http://localhost:8090 redirects here)
+               The certificate is self-signed, so the browser will warn once.
+               Replace deploy/compose-app/certs/netinv.{crt,key} with a real
+               pair and restart the frontend — see doc 20 §12.
     Username:  admin
     Password:  $ADMIN_PW
 

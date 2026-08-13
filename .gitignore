@@ -26,3 +26,10 @@ frontend/playwright-report/
 # ...but keep example env templates
 !*.env.example
 !.env.example
+
+# TLS material for the single-host deployment. Generated per host by
+# deploy/compose-app/make-cert.sh, or replaced with a real certificate. A
+# private key must never reach this repository — it is public (ADR-019).
+deploy/compose-app/certs/
+*.key
+*.pem

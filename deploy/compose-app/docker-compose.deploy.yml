@@ -27,8 +27,11 @@ services:
       NETINV_JWT_SIGNING_KEY: ${NETINV_JWT_SIGNING_KEY}
       NETINV_ADMIN_PASSWORD: ${NETINV_ADMIN_PASSWORD}
       NETINV_UI_URL: ${NETINV_UI_URL:-http://localhost:8090}
-      # TLS terminates at the frontend/ingress; cookies stay Secure there.
-      NETINV_INSECURE_COOKIES: ${NETINV_INSECURE_COOKIES:-1}
+      # TLS terminates at the frontend, so session cookies are Secure by
+      # default now. Set to 1 only for a plain-HTTP deployment, where Secure
+      # cookies would never be sent back and login would appear to succeed and
+      # then immediately fail.
+      NETINV_INSECURE_COOKIES: ${NETINV_INSECURE_COOKIES:-0}
 
   scheduler:
     restart: unless-stopped
@@ -124,9 +127,20 @@ services:
     profiles: [app]
     # Context is resolved against the compose project directory (repo root).
     build: { context: frontend }
-    ports: ["8090:80"]
+    # 8090 serves plain HTTP and does nothing but redirect to 8443. TLS is the
+    # way in; the HTTP listener exists so a bookmark or a typed hostname still
+    # arrives somewhere rather than failing to connect.
+    ports: ["8090:80", "8443:443"]
     depends_on: { api: { condition: service_started } }
-    # Route /api to the api service (the ingress does this in k8s).
     volumes:
-      - ./deploy/compose-app/frontend-proxy.conf:/etc/nginx/conf.d/default.conf:ro
+      # Route /api to the api service (the ingress does this in k8s), terminate
+      # TLS, and set the security headers. Swap for frontend-proxy.conf to run
+      # without TLS — see doc 20 §12 for why that is a bad idea on anything
+      # reachable by more than one person.
+      - ./deploy/compose-app/frontend-tls.conf.template:/etc/nginx/templates/default.conf.template:ro
+      - ./deploy/compose-app/certs:/etc/nginx/certs:ro
+    environment:
+      # The published HTTPS port, as a suffix for the HTTP->HTTPS redirect.
+      # Empty when serving on the standard 443.
+      TLS_PORT_SUFFIX: "${NETINV_TLS_PORT_SUFFIX-:8443}"
 
