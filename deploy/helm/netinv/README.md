@@ -3,12 +3,16 @@
 Installs NetInv's seven services, the frontend, and (by default) a single-replica
 data tier, per [doc 19](../../../docs/19-kubernetes-design.md).
 
-**Status: renders and validates; not yet installed on a cluster.** Every manifest
-here passes `helm lint` and `kubeconform --strict` against the Kubernetes 1.28
-schemas in CI, and the toggles are exercised. Nothing in it has been watched
-come up on a running cluster — that is one of the two open v1.0 release gates
-(ADR-023), and the chart version stays below 1.0.0 until it closes. Expect to
-find problems that only a real cluster shows; please report them.
+**Status: installed and verified on Kubernetes 1.35 (minikube), 2026-08-14.**
+All 17 pods reach ready in about 100 seconds from `helm install`; migrations
+run, login works end to end through the Ingress, and a `helm upgrade` preserves
+the database without rotating its password. Every manifest also passes
+`helm lint` and `kubeconform --strict` across six value sets in CI.
+
+What that install is *not*: a soak. It has not run for 72 hours, nothing has
+been killed underneath it, and it has never held a real fleet. The chart version
+stays below 1.0.0 until it has. Expect to find problems on cluster shapes other
+than this one; please report them.
 
 ## Install
 
@@ -49,6 +53,21 @@ device network.
 | data tier | 1 replica each | Postgres, VictoriaMetrics, RabbitMQ as StatefulSets with PVCs; Redis unpersisted (leases and cache only) |
 
 ## Things that will bite
+
+Each of these was found by installing the chart, not by reading it.
+
+- **A no-TLS Ingress breaks login, and looks like a broken app.** Session cookies
+  are `Secure` by default, so over plain HTTP the browser accepts the login
+  response and never sends the cookie back — login appears to succeed, and the
+  next request is a 401. Set `ingress.tlsSecret`. The chart prints this warning
+  on install when the combination is present.
+- **A second release in the same cluster fails to install.** PriorityClasses are
+  cluster-scoped with fixed names, so release two hits `invalid ownership
+  metadata`. Set `priorityClasses.create=false` on every release after the
+  first; the pods still resolve the names created by the first.
+- **The api crash-loops on a first install** until Postgres accepts connections
+  — it exits rather than waits. Three or four restarts before it settles is
+  normal, not a fault.
 
 - **`retention` is one setting read by two components.** VictoriaMetrics stores
   that long and the API refuses range queries beyond it — it rejects rather than

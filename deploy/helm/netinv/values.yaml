@@ -206,8 +206,17 @@ autoscaling:
 
 # Under node pressure, collection survives first — it is the product. Data tier
 # outranks the collection path, which outranks the UI, which outranks notify
-# (doc 19 §6). These are cluster-scoped objects with global names, so a cluster
-# that already defines them wants create=false.
+# (doc 19 §6).
+#
+# These are cluster-scoped objects with fixed global names, which means **a
+# second release of this chart in the same cluster fails to install**:
+#
+#   PriorityClass "netinv-data" ... exists and cannot be imported into the
+#   current release: invalid ownership metadata
+#
+# Set create=false for every release after the first (and for a cluster where
+# you are not permitted to create PriorityClasses). The pods still reference
+# the classes by name, so the first release's copies serve all of them.
 priorityClasses:
   create: true
 

@@ -143,6 +143,29 @@ jobs:
           refuses "redis off, no redisAddr"     --set data.redis.enabled=false
           refuses "vm off, no vmURL"            --set data.victoriametrics.enabled=false
           refuses "netpol on, no deviceCIDRs"   --set networkPolicy.enabled=true
+      # A generated password is used twice — once as the store's own credential
+      # and once inside the DSN handed to the app. `randAlphaNum` is
+      # re-evaluated per invocation, so without memoisation those are two
+      # different strings and every service fails auth against a database that
+      # initialised with the other one. It renders perfectly either way, which
+      # is why it survived to a cluster; assert the values match.
+      - name: generated passwords are internally consistent
+        run: |
+          helm template ci deploy/helm/netinv > /tmp/pw.yaml
+          python3 - <<'PY'
+          import re, sys, yaml
+          docs = [d for d in yaml.safe_load_all(open('/tmp/pw.yaml')) if d]
+          sec = [d for d in docs if d['kind'] == 'Secret'][0]['stringData']
+          bad = False
+          for pw_key, url_key in (('PG_PASSWORD', 'NETINV_PG_DSN'),
+                                  ('AMQP_PASSWORD', 'NETINV_AMQP_URL')):
+              in_url = re.search(r'://[^:]+:([^@]+)@', sec[url_key]).group(1)
+              if sec[pw_key] != in_url:
+                  print(f"FAIL: {pw_key} does not match the password inside {url_key}")
+                  bad = True
+          print("ok: store credentials match the connection strings" if not bad else "")
+          sys.exit(1 if bad else 0)
+          PY
 
   security:
     needs: changes

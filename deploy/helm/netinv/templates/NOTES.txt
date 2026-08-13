@@ -1,0 +1,56 @@
+NetInv {{ .Chart.AppVersion }} installed as release {{ .Release.Name }} in namespace {{ .Release.Namespace }}.
+
+Watch it come up:
+  kubectl -n {{ .Release.Namespace }} get pods -w
+
+The api restarts a few times on a first install. It exits rather than waits when
+Postgres is not accepting connections yet, so Kubernetes backs it off and
+retries; it settles once the data tier is ready.
+{{- if .Values.ingress.enabled }}
+
+Reach it at:
+  {{ if .Values.ingress.tlsSecret }}https{{ else }}http{{ end }}://{{ .Values.ingress.host }}
+
+Log in as `admin` with the password in your Secret:
+  kubectl -n {{ .Release.Namespace }} get secret {{ .Values.secrets.existingSecret }} \
+    -o jsonpath='{.data.NETINV_ADMIN_PASSWORD}' | base64 -d
+{{- end }}
+{{- if and .Values.ingress.enabled (not .Values.ingress.tlsSecret) (not .Values.insecureCookies) }}
+
+WARNING — logging in will not work over this Ingress.
+
+  ingress.tlsSecret is empty, so the Ingress serves plain HTTP, but session
+  cookies are marked Secure (insecureCookies=false). A browser accepts the
+  login response, stores nothing, and sends no cookie back: the login appears
+  to succeed and the next request is a 401. It reads as a broken application
+  rather than as a configuration choice.
+
+  Fix it by giving the Ingress a certificate:
+
+    ingress.tlsSecret: <a kubernetes.io/tls secret>
+
+  If TLS already terminates upstream of this Ingress, ignore this. Only set
+  insecureCookies=true for a deliberately plain-HTTP deployment.
+{{- end }}
+{{- if not .Values.data.postgres.enabled }}
+
+Postgres is external. Nothing in this release backs it up — see doc 20 §12.3,
+and rehearse the restore rather than assuming it.
+{{- end }}
+{{- if .Values.data.postgres.enabled }}
+
+The data tier in this release is one replica of each store with no operator.
+That is a lab shape: fine for evaluating, not something to be paged about.
+values-prod.example.yaml turns it off and points at managed stores.
+{{- end }}
+{{- if eq .Values.services.flow.serviceType "ClusterIP" }}
+
+Flow collection will receive nothing as configured: netinv-flow is a ClusterIP
+service, and exporters live on the device network. Set
+services.flow.serviceType to LoadBalancer or NodePort, and point exporters at
+UDP 2055/4739 there.
+{{- end }}
+
+Keep NETINV_MASTER_KEY somewhere durable and outside this cluster. It encrypts
+every stored device credential, it is deliberately not in any backup, and
+without it a restore gives you inventory and history but no usable credentials.

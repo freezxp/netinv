@@ -17,11 +17,21 @@ checked in _validate below.
 {{/*
 Password handling for the chart-installed stores.
 
-Generated once and then read back out of the Secret on every subsequent render,
-because `randAlphaNum` is re-evaluated on each `helm upgrade`: without the
-read-back, an upgrade would hand the application a brand new password for a
-database whose password had not changed, and every service would fail to
-connect immediately after a routine upgrade.
+Two separate hazards, and the first one shipped:
+
+ 1. `randAlphaNum` is re-evaluated on *every* invocation, including several
+    times within a single render. The first version of this helper generated
+    one password for the Secret's PG_PASSWORD key and a different one for the
+    DSN in the very same Secret, so Postgres initialised with one and every
+    client authenticated with the other:
+      FATAL: password authentication failed for user "netinv" (SQLSTATE 28P01)
+    `helm template` renders that without complaint — it only shows up on a
+    cluster, which is where it was found. Hence the memoisation below: resolve
+    once, cache on .Values, reuse for every later include in the same render.
+
+ 2. Across renders, a fresh `randAlphaNum` on `helm upgrade` would hand the
+    application a brand new password for a database whose password had not
+    changed. Hence the read-back from the existing Secret.
 
 `lookup` returns nothing when there is no cluster to query — `helm template`,
 `--dry-run`, and GitOps renderers all hit this path. There the password is
@@ -32,16 +42,22 @@ explicitly if you render manifests offline.
 {{- $ctx := .ctx -}}
 {{- $key := .key -}}
 {{- $explicit := .explicit -}}
+{{- $cache := printf "_resolved_%s" $key -}}
+{{- if not (index $ctx.Values $cache) -}}
+{{- $pw := "" -}}
 {{- if $explicit -}}
-{{- $explicit -}}
+{{- $pw = $explicit -}}
 {{- else -}}
 {{- $existing := (lookup "v1" "Secret" $ctx.Release.Namespace (include "netinv.pgSecretName" $ctx)) -}}
 {{- if and $existing (index $existing.data $key) -}}
-{{- index $existing.data $key | b64dec -}}
+{{- $pw = index $existing.data $key | b64dec -}}
 {{- else -}}
-{{- randAlphaNum 24 -}}
+{{- $pw = randAlphaNum 24 -}}
 {{- end -}}
 {{- end -}}
+{{- $_ := set $ctx.Values $cache $pw -}}
+{{- end -}}
+{{- index $ctx.Values $cache -}}
 {{- end -}}
 
 {{- define "netinv.pgPassword" -}}
