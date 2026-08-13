@@ -92,18 +92,57 @@ jobs:
         run: helm lint deploy/helm/netinv deploy/helm/netinv-poller
       # lint alone accepts a chart whose templates cannot produce valid
       # manifests; rendering is what catches a broken range or a missing value.
-      - name: helm template renders
+      #
+      # Rendering the *defaults* only is not enough either. Two template bugs
+      # that welded a `---` separator onto the next line lived exclusively in
+      # the networkPolicy and autoscaling paths, so a default-only render was
+      # green against a chart that could not install with the production
+      # overlay. Every toggle gets rendered and validated.
+      - name: helm template + kubeconform across the value matrix
         run: |
-          for chart in netinv netinv-poller; do
-            helm template ci "deploy/helm/$chart" > "/tmp/$chart.yaml"
-            echo "$chart: $(grep -c '^kind:' "/tmp/$chart.yaml") resources"
-          done
-      - name: kubeconform (validate against Kubernetes schemas)
-        run: |
+          set -euo pipefail
           curl -sSL https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz \
             | tar xz -C /tmp kubeconform
-          /tmp/kubeconform -strict -summary -ignore-missing-schemas \
-            /tmp/netinv.yaml /tmp/netinv-poller.yaml
+          validate() { # name, then helm args
+            name="$1"; shift
+            helm template ci "$@" > "/tmp/render-$name.yaml"
+            /tmp/kubeconform -strict -summary -ignore-missing-schemas "/tmp/render-$name.yaml" \
+              | sed "s/^/  $name: /"
+          }
+          cidrs='networkPolicy.deviceCIDRs={10.0.0.0/8}'
+          validate poller     deploy/helm/netinv-poller
+          validate default    deploy/helm/netinv
+          validate prod       deploy/helm/netinv -f deploy/helm/netinv/values-prod.example.yaml
+          validate everything deploy/helm/netinv \
+            --set autoscaling.api.enabled=true --set serviceMonitor.enabled=true \
+            --set networkPolicy.enabled=true --set "$cidrs"
+          validate minimal    deploy/helm/netinv \
+            --set priorityClasses.create=false --set ingress.enabled=false
+          validate external   deploy/helm/netinv \
+            --set data.postgres.enabled=false --set data.redis.enabled=false \
+            --set data.rabbitmq.enabled=false --set data.victoriametrics.enabled=false \
+            --set connections.pgDSN=postgres://u:p@h:5432/n --set connections.redisAddr=h:6379 \
+            --set connections.amqpURL=amqp://u:p@h:5672/ --set connections.vmURL=http://h:8428
+      # The chart refuses to render configurations that install cleanly and then
+      # fail: no master key, a disabled store with no connection string, a
+      # NetworkPolicy that would deny the poller every device. Assert the
+      # refusals, or they rot into no-ops without anything going red.
+      - name: guard rails refuse bad values
+        run: |
+          set -euo pipefail
+          refuses() {
+            desc="$1"; shift
+            if helm template ci deploy/helm/netinv "$@" > /dev/null 2>&1; then
+              echo "FAIL: chart rendered despite $desc"; exit 1
+            fi
+            echo "  refused: $desc"
+          }
+          refuses "no master-key secret"        --set secrets.existingSecret=""
+          refuses "postgres off, no pgDSN"      --set data.postgres.enabled=false
+          refuses "rabbitmq off, no amqpURL"    --set data.rabbitmq.enabled=false
+          refuses "redis off, no redisAddr"     --set data.redis.enabled=false
+          refuses "vm off, no vmURL"            --set data.victoriametrics.enabled=false
+          refuses "netpol on, no deviceCIDRs"   --set networkPolicy.enabled=true
 
   security:
     needs: changes

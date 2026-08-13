@@ -1,0 +1,50 @@
+{{- /*
+   Under node pressure, collection survives first — it is the product (doc 19
+   §6). A NetInv that cannot draw a graph for an hour is inconvenient; a NetInv
+   that stopped collecting for that hour has a permanent hole in its history,
+   because there is no way to go back and poll the past.
+
+   Ordering: data tier > collection path > UI/API > notify. Notify is last
+   because a queued notification is delivered late, not lost.
+
+   These are cluster-scoped objects with global names. A cluster that already
+   defines them — or one where you are not permitted to create them — wants
+   priorityClasses.create=false.
+*/ -}}
+{{- if .Values.priorityClasses.create }}
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: netinv-data
+  labels: {{- include "netinv.labels" . | nindent 4 }}
+value: 1000
+globalDefault: false
+description: "NetInv data tier — evicting these loses or corrupts state rather than deferring work."
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: netinv-collection
+  labels: {{- include "netinv.labels" . | nindent 4 }}
+value: 900
+globalDefault: false
+description: "NetInv collection path (scheduler, poller, ingester, flow) — a gap here is unrecoverable history."
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: netinv-app
+  labels: {{- include "netinv.labels" . | nindent 4 }}
+value: 500
+globalDefault: false
+description: "NetInv API and frontend — user-facing, but an outage here costs availability rather than data."
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: netinv-notify
+  labels: {{- include "netinv.labels" . | nindent 4 }}
+value: 300
+globalDefault: false
+description: "NetInv notifier — queued notifications are delivered late rather than lost."
+{{- end }}

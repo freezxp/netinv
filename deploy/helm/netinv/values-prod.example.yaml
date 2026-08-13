@@ -1,0 +1,89 @@
+# Production overlay example (doc 19 §3).
+#
+# The difference from the defaults is mostly one decision: the chart's built-in
+# data tier is a single replica of each store with no operator, which is right
+# for an evaluation and wrong for anything you would be paged about. Here every
+# store is external and managed by something that understands backups, failover
+# and version upgrades — CloudNativePG, the RabbitMQ cluster operator, a
+# VictoriaMetrics sized per doc 04.
+#
+#   helm upgrade --install netinv deploy/helm/netinv \
+#     -n netinv --create-namespace -f values-prod.example.yaml
+
+image:
+  # Pin a digest, not a tag. `latest` on a cluster that pulls IfNotPresent
+  # means two nodes can run two different builds and nothing reports it.
+  tag: "sha256:<digest>"
+  pullPolicy: IfNotPresent
+
+data:
+  postgres: { enabled: false }
+  victoriametrics: { enabled: false }
+  redis: { enabled: false }
+  rabbitmq: { enabled: false }
+
+connections:
+  # Point at whatever manages these. Credentials belong in the Secret named by
+  # secrets.existingSecret rather than here — values files end up in git.
+  pgDSN: "postgres://netinv@netinv-pg-rw.netinv-data:5432/netinv?sslmode=require"
+  redisAddr: "redis.netinv-data:6379"
+  amqpURL: "amqps://netinv@rabbitmq.netinv-data:5671/"
+  vmURL: "http://vmselect.netinv-data:8481/select/0/prometheus"
+
+# Two years of history is the default and the API enforces the same ceiling.
+# Check Platform → Capacity before raising it: the page measures what the disk
+# actually sustains rather than estimating it.
+retention: 2y
+
+secrets:
+  # Must contain NETINV_MASTER_KEY, NETINV_JWT_SIGNING_KEY and, on first
+  # install, NETINV_ADMIN_PASSWORD. The master key encrypts every stored device
+  # credential and is not in any backup by design (doc 20 §12.3) — losing it
+  # means re-entering every credential.
+  existingSecret: netinv-keys
+
+ingress:
+  enabled: true
+  className: nginx
+  host: netinv.example.com
+  tlsSecret: netinv-tls # cert-manager Certificate, or corporate PKI
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+
+services:
+  api:
+    replicas: 3
+  ingester:
+    replicas: 3
+  flow:
+    # Exporters are on the device network and have to reach this directly; the
+    # ingress terminates HTTP and is no help for UDP. LoadBalancer needs MetalLB
+    # or equivalent on-prem, otherwise use NodePort and point exporters at the
+    # node addresses.
+    serviceType: LoadBalancer
+    env:
+      # Restrict who may write flow series. Anything that can reach 2055/udp
+      # can otherwise create metrics (ADR-020).
+      NETINV_FLOW_ALLOW: "198.51.100.1,198.51.100.2"
+
+autoscaling:
+  api:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 8
+
+networkPolicy:
+  # Confirm your CNI enforces NetworkPolicy before trusting this. On a cluster
+  # that does not, these objects are accepted and do nothing, which looks
+  # exactly like a working policy.
+  enabled: true
+  deviceCIDRs:
+    - 10.0.0.0/8
+    - 192.168.0.0/16
+
+serviceMonitor:
+  enabled: true
+
+resources:
+  requests: { cpu: 200m, memory: 256Mi }
+  limits: { cpu: "2", memory: 1Gi }

@@ -1,0 +1,71 @@
+{{- /*
+   Disruption budgets for the multi-replica services, so a node drain cannot
+   take the last one.
+
+   Only services actually running more than one replica get a budget: a PDB
+   with minAvailable 1 over a single-replica Deployment blocks node drains
+   indefinitely, which turns a routine cluster upgrade into a stuck one. Flow,
+   poller and notifier are single-replica by design, so they are excluded —
+   flow deliberately so (UDP, per-exporter template state).
+*/ -}}
+{{- range $name, $svc := .Values.services }}
+{{- if gt (int $svc.replicas) 1 }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: netinv-{{ $name }}
+  labels:
+    {{- include "netinv.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $name }}
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: { app.kubernetes.io/name: netinv, app.kubernetes.io/component: {{ $name }} }
+---
+{{- end }}
+{{- end }}
+{{- if gt (int .Values.frontend.replicas) 1 }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: netinv-frontend
+  labels:
+    {{- include "netinv.labels" . | nindent 4 }}
+    app.kubernetes.io/component: frontend
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: { app.kubernetes.io/name: netinv, app.kubernetes.io/component: frontend }
+{{- end }}
+{{- if .Values.autoscaling.api.enabled }}
+---
+{{/*
+   API load tracks how many people are looking at it, which is the only part of
+   this system that varies independently of fleet size. Collection load is set
+   by device count and poll cadence, so scaling the collection path on CPU
+   would chase a number that does not move; ingester scaling is queue-depth
+   driven and needs KEDA (doc 19 §6).
+
+   The HPA owns the replica count once enabled, so services.api.replicas stops
+   having an effect beyond the initial create.
+
+   Comment opens without a dash: `{{- /*` would chomp the newline after the
+   `---` above and weld the separator onto the apiVersion line.
+*/}}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: netinv-api
+  labels:
+    {{- include "netinv.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: netinv-api }
+  minReplicas: {{ .Values.autoscaling.api.minReplicas }}
+  maxReplicas: {{ .Values.autoscaling.api.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target: { type: Utilization, averageUtilization: {{ .Values.autoscaling.api.targetCPUUtilizationPercentage }} }
+{{- end }}

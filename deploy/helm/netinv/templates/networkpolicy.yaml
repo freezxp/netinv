@@ -1,0 +1,130 @@
+{{- /*
+   Default-deny posture for the namespace (doc 19 §5).
+
+   Off by default, and that is deliberate rather than lazy: on a cluster whose
+   CNI does not enforce NetworkPolicy — flannel without a plugin, and several
+   managed offerings — these objects are accepted by the API server and do
+   absolutely nothing. The result looks identical to a working policy, so
+   enabling it by default would hand operators a security control they believe
+   they have. Turn it on knowing your CNI enforces it.
+
+   Enabling without networkPolicy.deviceCIDRs would deny the poller every
+   device and stop collection; the chart refuses to render that (_helpers.tpl).
+*/ -}}
+{{- if .Values.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: netinv-default-deny
+  labels: {{- include "netinv.labels" . | nindent 4 }}
+spec:
+  podSelector: { matchLabels: { app.kubernetes.io/name: netinv } }
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: netinv-intra
+  labels: {{- include "netinv.labels" . | nindent 4 }}
+spec:
+  podSelector: { matchLabels: { app.kubernetes.io/name: netinv } }
+  policyTypes: [Ingress, Egress]
+  ingress:
+    # Anything in the release may talk to anything else in it. A finer policy
+    # would enumerate service-to-service edges, but the blast radius inside one
+    # namespace of one application is small next to the chance of getting one
+    # edge wrong and silently stopping collection.
+    - from:
+        - podSelector: { matchLabels: { app.kubernetes.io/name: netinv } }
+  egress:
+    - to:
+        - podSelector: { matchLabels: { app.kubernetes.io/name: netinv } }
+    # DNS, or every hostname lookup in the namespace fails.
+    - to:
+        - namespaceSelector: {}
+          podSelector: { matchLabels: { k8s-app: kube-dns } }
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: netinv-ingress-controller
+  labels: {{- include "netinv.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchExpressions:
+      - { key: app.kubernetes.io/component, operator: In, values: [api, frontend] }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector: {}
+          podSelector: { matchLabels: { app.kubernetes.io/name: ingress-nginx } }
+      ports:
+        - { protocol: TCP, port: {{ .Values.services.api.port }} }
+        - { protocol: TCP, port: {{ .Values.frontend.port }} }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: netinv-poller-devices
+  labels: {{- include "netinv.labels" . | nindent 4 }}
+spec:
+  podSelector: { matchLabels: { app.kubernetes.io/component: poller } }
+  policyTypes: [Egress]
+  egress:
+    - to:
+        {{- range .Values.networkPolicy.deviceCIDRs }}
+        - ipBlock: { cidr: {{ . | quote }} }
+        {{- end }}
+      ports:
+        - { protocol: UDP, port: 161 }
+---
+{{/*
+   ICMP has no port, and NetworkPolicy has no way to express a protocol without
+   one — so availability polling is admitted by the CIDR rule above only on
+   CNIs that treat a portless rule as all-protocols. Calico and Cilium do;
+   others drop ICMP while SNMP keeps working, which presents as every device
+   reporting down over ping while its graphs keep filling. That failure has
+   already been seen once on this project from a different cause (doc 33 §4.2),
+   and it looks exactly the same from the UI.
+
+   Note the comment opens without a dash: `{{- /*` here would chomp the newline
+   after the `---` above and weld the separator onto the apiVersion line.
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: netinv-flow-exporters
+  labels: {{- include "netinv.labels" . | nindent 4 }}
+spec:
+  podSelector: { matchLabels: { app.kubernetes.io/component: flow } }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        {{- range .Values.networkPolicy.deviceCIDRs }}
+        - ipBlock: { cidr: {{ . | quote }} }
+        {{- end }}
+      ports:
+        {{- range .Values.services.flow.listen }}
+        - { protocol: {{ .protocol | default "TCP" }}, port: {{ .port }} }
+        {{- end }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: netinv-notifier-egress
+  labels: {{- include "netinv.labels" . | nindent 4 }}
+spec:
+  podSelector: { matchLabels: { app.kubernetes.io/component: notifier } }
+  policyTypes: [Egress]
+  egress:
+    # SMTP and webhooks leave the cluster by definition — an alert that cannot
+    # reach anyone is the one failure mode alerting cannot tolerate.
+    - ports:
+        - { protocol: TCP, port: 25 }
+        - { protocol: TCP, port: 587 }
+        - { protocol: TCP, port: 465 }
+        - { protocol: TCP, port: 443 }
+{{- end }}

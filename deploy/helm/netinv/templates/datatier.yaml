@@ -1,0 +1,279 @@
+{{- include "netinv.validate" . -}}
+{{- /*
+   The chart-installed data tier (doc 19 §3): one replica per store, one PVC,
+   no operator. This exists so that `helm install` produces a working NetInv
+   without first standing up CloudNativePG, a RabbitMQ operator and a
+   VictoriaMetrics deployment — that is the 30-minute quickstart NFR-50 asks
+   for, and it is honest about being a lab shape rather than an HA one.
+
+   Each store is separately toggleable, so migrating one at a time to managed
+   infrastructure is a supported path rather than an all-or-nothing switch.
+*/ -}}
+{{- if or .Values.data.postgres.enabled .Values.data.rabbitmq.enabled }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "netinv.pgSecretName" . }}
+  labels: {{- include "netinv.labels" . | nindent 4 }}
+type: Opaque
+stringData:
+  {{- if .Values.data.postgres.enabled }}
+  PG_PASSWORD: {{ include "netinv.pgPassword" . | quote }}
+  {{- end }}
+  {{- if .Values.data.rabbitmq.enabled }}
+  AMQP_PASSWORD: {{ include "netinv.amqpPassword" . | quote }}
+  {{- end }}
+  # The full connection strings live here too, so that no Deployment carries a
+  # password in a plainly readable env value.
+  NETINV_PG_DSN: {{ include "netinv.pgDSN" . | quote }}
+  NETINV_AMQP_URL: {{ include "netinv.amqpURL" . | quote }}
+---
+{{- end }}
+{{- if .Values.data.postgres.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: netinv-postgres
+  labels: {{- include "netinv.labels" . | nindent 4 }}
+spec:
+  selector: { app.kubernetes.io/name: netinv, app.kubernetes.io/component: postgres }
+  ports:
+    - { name: postgres, port: 5432, targetPort: 5432 }
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: netinv-postgres
+  labels: {{- include "netinv.labels" . | nindent 4 }}
+spec:
+  serviceName: netinv-postgres
+  replicas: 1
+  selector:
+    matchLabels: { app.kubernetes.io/name: netinv, app.kubernetes.io/component: postgres }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: netinv, app.kubernetes.io/component: postgres }
+    spec:
+      {{- if .Values.priorityClasses.create }}
+      priorityClassName: netinv-data
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 70 # postgres in the alpine image
+        fsGroup: 70
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: postgres
+          image: {{ .Values.data.postgres.image | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports: [{ containerPort: 5432, name: postgres }]
+          env:
+            - { name: POSTGRES_DB, value: {{ .Values.data.postgres.database | quote }} }
+            - { name: POSTGRES_USER, value: {{ .Values.data.postgres.username | quote }} }
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: {{ include "netinv.pgSecretName" . }}, key: PG_PASSWORD }
+            # The image refuses to initialise into a non-empty directory, and a
+            # PVC arrives with lost+found on many storage classes.
+            - { name: PGDATA, value: /var/lib/postgresql/data/pgdata }
+          volumeMounts:
+            - { name: data, mountPath: /var/lib/postgresql/data }
+          readinessProbe:
+            exec: { command: [pg_isready, -U, {{ .Values.data.postgres.username | quote }}] }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            exec: { command: [pg_isready, -U, {{ .Values.data.postgres.username | quote }}] }
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          resources: {{- toYaml .Values.data.postgres.resources | nindent 12 }}
+  volumeClaimTemplates:
+    - metadata: { name: data }
+      spec:
+        accessModes: [ReadWriteOnce]
+        {{- if .Values.data.postgres.storage.storageClass }}
+        storageClassName: {{ .Values.data.postgres.storage.storageClass | quote }}
+        {{- end }}
+        resources:
+          requests: { storage: {{ .Values.data.postgres.storage.size }} }
+---
+{{- end }}
+{{- if .Values.data.victoriametrics.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: netinv-victoriametrics
+  labels: {{- include "netinv.labels" . | nindent 4 }}
+spec:
+  selector: { app.kubernetes.io/name: netinv, app.kubernetes.io/component: victoriametrics }
+  ports:
+    - { name: http, port: 8428, targetPort: 8428 }
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: netinv-victoriametrics
+  labels: {{- include "netinv.labels" . | nindent 4 }}
+spec:
+  serviceName: netinv-victoriametrics
+  replicas: 1
+  selector:
+    matchLabels: { app.kubernetes.io/name: netinv, app.kubernetes.io/component: victoriametrics }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: netinv, app.kubernetes.io/component: victoriametrics }
+    spec:
+      {{- if .Values.priorityClasses.create }}
+      priorityClassName: netinv-data
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        fsGroup: 65534
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: victoriametrics
+          image: {{ .Values.data.victoriametrics.image | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - -storageDataPath=/storage
+            # Same value the API enforces as its query ceiling (see retention
+            # in values.yaml) — they are one setting in two places.
+            - -retentionPeriod={{ .Values.retention }}
+            - -httpListenAddr=:8428
+          ports: [{ containerPort: 8428, name: http }]
+          volumeMounts:
+            - { name: storage, mountPath: /storage }
+          readinessProbe:
+            httpGet: { path: /health, port: http }
+            initialDelaySeconds: 5
+          livenessProbe:
+            httpGet: { path: /health, port: http }
+            initialDelaySeconds: 30
+          resources: {{- toYaml .Values.data.victoriametrics.resources | nindent 12 }}
+  volumeClaimTemplates:
+    - metadata: { name: storage }
+      spec:
+        accessModes: [ReadWriteOnce]
+        {{- if .Values.data.victoriametrics.storage.storageClass }}
+        storageClassName: {{ .Values.data.victoriametrics.storage.storageClass | quote }}
+        {{- end }}
+        resources:
+          requests: { storage: {{ .Values.data.victoriametrics.storage.size }} }
+---
+{{- end }}
+{{- if .Values.data.redis.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: netinv-redis
+  labels: {{- include "netinv.labels" . | nindent 4 }}
+spec:
+  selector: { app.kubernetes.io/name: netinv, app.kubernetes.io/component: redis }
+  ports:
+    - { name: redis, port: 6379, targetPort: 6379 }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: netinv-redis
+  labels: {{- include "netinv.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app.kubernetes.io/name: netinv, app.kubernetes.io/component: redis }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: netinv, app.kubernetes.io/component: redis }
+    spec:
+      {{- if .Values.priorityClasses.create }}
+      priorityClassName: netinv-data
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: redis
+          image: {{ .Values.data.redis.image | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports: [{ containerPort: 6379, name: redis }]
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities: { drop: [ALL] }
+          readinessProbe:
+            exec: { command: [redis-cli, ping] }
+            initialDelaySeconds: 3
+          resources: {{- toYaml .Values.data.redis.resources | nindent 12 }}
+---
+{{- end }}
+{{- if .Values.data.rabbitmq.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: netinv-rabbitmq
+  labels: {{- include "netinv.labels" . | nindent 4 }}
+spec:
+  selector: { app.kubernetes.io/name: netinv, app.kubernetes.io/component: rabbitmq }
+  ports:
+    - { name: amqp, port: 5672, targetPort: 5672 }
+    - { name: management, port: 15672, targetPort: 15672 }
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: netinv-rabbitmq
+  labels: {{- include "netinv.labels" . | nindent 4 }}
+spec:
+  serviceName: netinv-rabbitmq
+  replicas: 1
+  selector:
+    matchLabels: { app.kubernetes.io/name: netinv, app.kubernetes.io/component: rabbitmq }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: netinv, app.kubernetes.io/component: rabbitmq }
+    spec:
+      {{- if .Values.priorityClasses.create }}
+      priorityClassName: netinv-data
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        fsGroup: 999
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: rabbitmq
+          image: {{ .Values.data.rabbitmq.image | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - { containerPort: 5672, name: amqp }
+            - { containerPort: 15672, name: management }
+          env:
+            - { name: RABBITMQ_DEFAULT_USER, value: {{ .Values.data.rabbitmq.username | quote }} }
+            - name: RABBITMQ_DEFAULT_PASS
+              valueFrom:
+                secretKeyRef: { name: {{ include "netinv.pgSecretName" . }}, key: AMQP_PASSWORD }
+          volumeMounts:
+            - { name: data, mountPath: /var/lib/rabbitmq }
+          readinessProbe:
+            exec: { command: [rabbitmq-diagnostics, -q, ping] }
+            initialDelaySeconds: 20
+            periodSeconds: 15
+            timeoutSeconds: 10
+          livenessProbe:
+            exec: { command: [rabbitmq-diagnostics, -q, ping] }
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 10
+          resources: {{- toYaml .Values.data.rabbitmq.resources | nindent 12 }}
+  volumeClaimTemplates:
+    - metadata: { name: data }
+      spec:
+        accessModes: [ReadWriteOnce]
+        {{- if .Values.data.rabbitmq.storage.storageClass }}
+        storageClassName: {{ .Values.data.rabbitmq.storage.storageClass | quote }}
+        {{- end }}
+        resources:
+          requests: { storage: {{ .Values.data.rabbitmq.storage.size }} }
+{{- end }}

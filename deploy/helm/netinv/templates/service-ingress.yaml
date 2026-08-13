@@ -11,7 +11,9 @@ apiVersion: v1
 kind: Service
 metadata:
   name: netinv-{{ $name }}
-  labels: { app.kubernetes.io/name: netinv, app.kubernetes.io/component: {{ $name }} }
+  labels:
+    {{- include "netinv.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $name }}
 spec:
   type: {{ $svc.serviceType | default "ClusterIP" }}
   selector: { app.kubernetes.io/name: netinv, app.kubernetes.io/component: {{ $name }} }
@@ -26,17 +28,35 @@ apiVersion: v1
 kind: Service
 metadata:
   name: netinv-api
-  labels: { app.kubernetes.io/name: netinv, app.kubernetes.io/component: api }
+  labels:
+    {{- include "netinv.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
 spec:
   selector: { app.kubernetes.io/name: netinv, app.kubernetes.io/component: api }
   ports:
     - { name: http, port: 80, targetPort: {{ .Values.services.api.port }} }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: netinv-frontend
+  labels:
+    {{- include "netinv.labels" . | nindent 4 }}
+    app.kubernetes.io/component: frontend
+spec:
+  selector: { app.kubernetes.io/name: netinv, app.kubernetes.io/component: frontend }
+  ports:
+    - { name: http, port: 80, targetPort: {{ .Values.frontend.port }} }
 {{- if .Values.ingress.enabled }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: netinv
+  labels: {{- include "netinv.labels" . | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations: {{- toYaml . | nindent 4 }}
+  {{- end }}
 spec:
   ingressClassName: {{ .Values.ingress.className }}
   {{- if .Values.ingress.tlsSecret }}
@@ -48,7 +68,15 @@ spec:
     - host: {{ .Values.ingress.host | quote }}
       http:
         paths:
+          # /api first: the frontend image deliberately does not proxy the API
+          # (its nginx.conf serves static assets only), because in a cluster
+          # this split is the ingress's job. Without this rule the SPA loads and
+          # every request it makes returns the SPA again — a UI that renders
+          # perfectly and cannot fetch anything.
           - path: /api
             pathType: Prefix
             backend: { service: { name: netinv-api, port: { name: http } } }
+          - path: /
+            pathType: Prefix
+            backend: { service: { name: netinv-frontend, port: { name: http } } }
 {{- end }}

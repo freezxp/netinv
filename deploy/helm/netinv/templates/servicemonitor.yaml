@@ -1,0 +1,47 @@
+{{- /*
+   Prometheus Operator ServiceMonitor for the services' own /metrics endpoints
+   (doc 22). Off by default because the CRD does not exist on a cluster without
+   the operator, and a chart that installs an object of an unknown Kind fails
+   the whole release rather than skipping it.
+
+   This scrapes NetInv's self-monitoring, which is separate from the network
+   metrics NetInv collects — those go to VictoriaMetrics through the ingester.
+   Monitoring the monitoring from inside itself has an obvious flaw, which is
+   why doc 22 §5 wants these scraped by something external.
+*/ -}}
+{{- if .Values.serviceMonitor.enabled }}
+{{- range $name, $svc := .Values.services }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: netinv-{{ $name }}-ops
+  labels:
+    {{- include "netinv.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $name }}
+    netinv.io/ops: "true"
+spec:
+  clusterIP: None
+  selector: { app.kubernetes.io/name: netinv, app.kubernetes.io/component: {{ $name }} }
+  ports:
+    - { name: ops, port: {{ $svc.port }}, targetPort: ops }
+---
+{{- end }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: netinv
+  labels:
+    {{- include "netinv.labels" . | nindent 4 }}
+    {{- with .Values.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  namespaceSelector:
+    matchNames: [{{ .Release.Namespace }}]
+  selector:
+    matchLabels: { netinv.io/ops: "true" }
+  endpoints:
+    - port: ops
+      path: /metrics
+      interval: {{ .Values.serviceMonitor.interval }}
+{{- end }}

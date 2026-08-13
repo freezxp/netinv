@@ -10,12 +10,12 @@ Any CNCF-conformant 1.28+ on-prem cluster; reference: **RKE2** (prod) / **k3s** 
 
 | Namespace | Contents | Notes |
 |---|---|---|
-| `netinv` | 7 app Deployments + frontend, HPA (api/ingester), PDBs, NetworkPolicies | app chart |
-| `netinv-data` | CloudNativePG cluster, VictoriaMetrics StatefulSet, Redis, RabbitMQ (operator or bitnami chart) | data chart deps |
+| `netinv` | 7 app Deployments + frontend, HPA (api), PDBs, PriorityClasses, NetworkPolicies, and by default the data tier | app chart |
+| `netinv-data` | Externally managed stores when `data.<store>.enabled=false`: CloudNativePG, VictoriaMetrics, Redis, RabbitMQ operator. Not created by the chart | operator-managed |
 | `netinv-poller` (remote clusters) | poller Deployment + buffer PVC | standalone chart |
 
 Workload notes:
-- All app pods: non-root, read-only rootfs, no privilege escalation, seccomp RuntimeDefault (poller additionally needs `NET_RAW` for ICMP — isolated in its own ServiceAccount/PSA exception, or use unprivileged UDP ping mode).
+- All app pods: non-root (uid 65532), read-only rootfs with an emptyDir at `/tmp`, all capabilities dropped, no privilege escalation, seccomp RuntimeDefault. The core-site poller uses unprivileged UDP ping rather than `NET_RAW`; the frontend additionally needs writable `/var/cache/nginx` and `/var/run`, or nginx fails to start rather than degrading.
 - Scheduler/alerter run 2 replicas with Redis lease leadership (doc 05 §9) — a Deployment, not StatefulSet.
 - **Flow runs exactly one replica and needs a Service reachable from the device network**, unlike every other component: exporters push to it. The chart renders a Service for any component declaring `listen` ports, defaulting to `ClusterIP`; a real deployment sets `services.flow.serviceType` to `LoadBalancer` or `NodePort`, because how devices reach the cluster is a property of the network rather than of the chart. UDP 2055 and 4739 are both bound (doc 34 §2), and the NetworkPolicy has to admit them from the device subnets.
 - Probes: `/healthz` liveness, `/readyz` readiness (checks PG/Redis/AMQP connectivity with degraded-mode rules per NFR-25).
@@ -24,31 +24,42 @@ Workload notes:
 ## 3. Helm charts
 
 ```
-deploy/helm/netinv/            # umbrella: app + optional data-tier subcharts
+deploy/helm/netinv/
+  Chart.yaml                   # chart version trails appVersion until installed on a cluster
   values.yaml                  # every option documented (NFR-54)
-  values-prod.example.yaml
-  templates/ (deployments, services, ingress, hpa, pdb, networkpolicy,
-              servicemonitor, secrets-ref, migrations-job)
+  values-prod.example.yaml     # external data tier, pinned digest, real cert
+  README.md                    # install + upgrade/rollback runbook (§7)
+  templates/ (_helpers, deployments, datatier, service-ingress,
+              priorityclasses, pdb-hpa, networkpolicy, servicemonitor)
 deploy/helm/netinv-poller/     # site_id, enroll token ref, core AMQPS endpoint, buffer size
 ```
 
-Key values (excerpt): `image.tag` (pinned digest in prod), `api.replicas`, `ingress.host/tls`, `data.postgres.enabled` (bring-your-own toggle per store), `poller.siteId`, `retention.*` (doc 04 tiers), `masterKey.existingSecret`, `smtp.*`. Data-tier subcharts default **enabled** for the 30-minute quickstart (NFR-50), disable-able for externally managed DBs.
+Key values (excerpt): `image.tag` (pinned digest in prod), `services.<name>.replicas`, `ingress.host/tlsSecret`, `data.<store>.enabled` (bring-your-own toggle per store), `services.poller.env.NETINV_SITE_ID`, `retention`, `secrets.existingSecret`. The data tier defaults **enabled** for the 30-minute quickstart (NFR-50), disable-able per store for externally managed ones.
+
+Two things here differ from the original plan, and the plan was wrong rather than the code:
+
+- **The data tier is rendered by this chart, not pulled in as subcharts.** Subcharts meant CloudNativePG and a RabbitMQ operator, both of which have to be installed cluster-wide *before* the quickstart can run — which is not a quickstart. `templates/datatier.yaml` renders one replica of each store with a PVC, explicitly a lab shape; production disables them and points `connections.*` at managed stores. That keeps NFR-50 achievable without pretending a single-replica StatefulSet is an HA database.
+- **There is no migrations Job.** `backend/cmd/api` already runs goose at startup under a Postgres advisory lock (`internal/platform/pgx/migrate.go`), so replicas serialise and a chart upgrade is a schema upgrade with no extra moving part. A pre-upgrade Job would be a second path to the same migrations, and two migration paths is how you get a schema applied twice in different orders.
+
+There is also no `smtp.*`: notification channels are configured in the application and stored in Postgres, not passed as deployment config.
 
 ## 4. Configuration & secrets
 
 - Config via ConfigMap → env; secrets via Kubernetes Secrets referenced as `existingSecret` (never templated values in prod): `netinv-master-key`, `netinv-jwt-key`, `netinv-pg`, `netinv-amqp`, per-site `netinv-poller-enroll`.
 - Optional SealedSecrets/SOPS pattern documented for GitOps users; External Secrets Operator seam for the future Vault ADR (doc 20 §7).
-- Migrations run as a Helm pre-upgrade Job (goose up, leader-locked) — chart upgrade = schema upgrade, one knob (NFR-51).
+- Migrations run inside the api container at startup (goose, serialised by a Postgres advisory lock) — chart upgrade = schema upgrade, one knob (NFR-51). This was planned as a Helm pre-upgrade Job; the api already did it, and a second migration path is how a schema gets applied twice in different orders.
 
 ## 5. Network policies (default-deny posture)
 
-- `netinv` namespace: deny all ingress except ingress-controller→api/frontend; deny egress except: api/alerter→VM+PG+Redis+AMQP, ingester→VM+AMQP, notifier→AMQP+PG+external 587/443, poller→AMQP+UDP161/ICMP to device CIDRs (values-provided list).
+- `netinv` namespace: deny all ingress except ingress-controller→api/frontend; deny egress except: intra-namespace, DNS, notifier→external 25/465/587/443, poller→UDP161/ICMP to device CIDRs (values-provided list), and flow←device CIDRs on UDP 2055/4739.
+- **Off by default (`networkPolicy.enabled=false`), deliberately.** On a cluster whose CNI does not enforce NetworkPolicy the API server accepts these objects and nothing enforces them, which is indistinguishable from a working policy — a security control the operator believes they have. Enabling it with an empty `deviceCIDRs` would deny the poller every device, so the chart refuses to render that combination rather than silently stopping collection.
+- **ICMP cannot be expressed.** NetworkPolicy has no way to allow a protocol without a port, so availability polling rides on the portless CIDR rule. Calico and Cilium treat that as all-protocols; on CNIs that do not, ICMP is dropped while SNMP keeps working — every device reports down over ping while its graphs keep filling. That exact symptom has already cost this project time from an unrelated cause (doc 33 §4.2).
 - `netinv-data`: only `netinv` pods on the specific ports; RabbitMQ additionally from the LB for remote pollers.
 
 ## 6. Autoscaling & priorities
 
 - HPA: api (CPU 70%, 2–6), ingester (queue-depth via KEDA on `metrics.raw` — v1 optional, documented). Pollers scale manually per site (device count driven).
-- PriorityClasses: data tier > collection path (scheduler/poller/ingester/rabbitmq) > api/frontend > notifier — under node pressure, collection survives first (it's the product).
+- PriorityClasses: `netinv-data` (1000) > `netinv-collection` (900: scheduler, poller, ingester, flow) > `netinv-app` (500: api, alerter, frontend) > `netinv-notify` (300) — under node pressure, collection survives first, because a gap in collection is a permanent hole in history while a gap in the UI is an outage you recover from. Alerter sits with the app rather than with collection: a missed evaluation re-runs against stored data. Cluster-scoped objects with global names, so `priorityClasses.create=false` for a cluster that already defines them.
 
 ## 7. Upgrade & rollback runbook (summary; full runbook ships with chart README)
 
