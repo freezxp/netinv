@@ -20,9 +20,11 @@ git clone https://github.com/freezxp/netinv.git && cd netinv
 ./deploy/compose-app/quickstart.sh
 ```
 
-It generates secrets, builds the images, starts the whole platform (six
-services + UI + a bundled data tier and SNMP simulator), and prints your login.
-Open **http://localhost:8090**. Full guide: [docs/32-quickstart.md](docs/32-quickstart.md).
+It generates secrets, builds the images, starts the whole platform (seven
+services + UI + a bundled data tier and SNMP simulator), generates a TLS
+certificate, and prints your login. Open **https://localhost:8443** — the
+certificate is self-signed, so the browser will warn once; `http://localhost:8090`
+redirects there. Full guide: [docs/32-quickstart.md](docs/32-quickstart.md).
 
 Running **Proxmox**? `deploy/proxmox/netinv-lxc.sh create` does all of the above
 inside a new LXC container, in about ten minutes, and `destroy` removes it —
@@ -85,9 +87,10 @@ netinv/
 ├── SECURITY.md        ← reporting vulnerabilities; what NetInv holds worth attacking
 ├── CLAUDE.md          ← AI onboarding: read this first if you are an AI agent
 ├── DECISIONS.md       ← architecture decision log (ADR-lite); the "why" behind everything
-├── docs/              ← the 33-document design package (numbered, see docs/README.md)
+├── docs/              ← the 34-document design package (numbered, see docs/README.md)
 ├── backend/           ← Go services: api, scheduler, poller, ingester, alerter, notifier, flow
-├── connectors/        ← vendor connector packages (cisco, juniper, huawei, zte, ubiquiti, ruckus)
+├── connectors/        ← vendor connectors (cisco, juniper, huawei, zte, ubiquiti,
+│                     ruckus, fortinet, paloalto)
 ├── frontend/          ← React + TypeScript app
 ├── deploy/            ← Helm charts, k8s manifests, docker-compose, Proxmox LXC installer
 └── scripts/           ← dev and CI helpers (seed-demo, licences, connector contract)
@@ -103,7 +106,7 @@ netinv/
 ## Contributing
 
 Outside eyes are worth more than outside code right now — especially if you own
-hardware NetInv has never been tested against. Four of the seven connectors
+hardware NetInv has never been tested against. Six of the eight connectors
 have only ever met MIB specifications, and every connector that *has* met real
 hardware needed corrections that reading the spec would never have found.
 
