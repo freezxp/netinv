@@ -105,6 +105,14 @@ export interface CactiEdgeData extends Record<string, unknown> {
   /** Node names, so the tooltip can say which way each figure runs. */
   sourceLabel?: string;
   targetLabel?: string;
+  /**
+   * Position within a bundle of links sharing the same endpoints and handles,
+   * and how many there are. Coincident links are shifted perpendicular to the
+   * line so each is visible and separately clickable; a lone link keeps the
+   * exact centre line it always had.
+   */
+  lane?: number;
+  lanes?: number;
 }
 
 // shortName trims a node label to something that fits beside a rate. "YY
@@ -141,6 +149,10 @@ function shortName(label: string | undefined, fallback: string): string {
 const BUSY_AT = 0.34;
 const QUIET_AT = 0.7;
 
+// Gap between parallel links. Wide enough that two 5px bands plus their labels
+// read as separate lines rather than a thick one.
+const LANE_SPACING = 16;
+
 export function CactiEdge({
   id,
   sourceX,
@@ -157,6 +169,21 @@ export function CactiEdge({
   data?: CactiEdgeData;
 }) {
   const d = data;
+  // Shift coincident links off the shared centre line. The offset is
+  // perpendicular to the line, so it works at any angle, and lanes are laid
+  // out symmetrically about the centre: one link is unmoved, two straddle it,
+  // three put the middle one back on the original line.
+  const lanes = d?.lanes ?? 1;
+  const lane = d?.lane ?? 0;
+  const spread = lanes > 1 ? (lane - (lanes - 1) / 2) * LANE_SPACING : 0;
+  const len = Math.hypot(targetX - sourceX, targetY - sourceY) || 1;
+  const nx = (-(targetY - sourceY) / len) * spread;
+  const ny = ((targetX - sourceX) / len) * spread;
+  sourceX += nx;
+  sourceY += ny;
+  targetX += nx;
+  targetY += ny;
+
   const mx = (sourceX + targetX) / 2;
   const my = (sourceY + targetY) / 2;
 
@@ -394,8 +421,32 @@ export function toFlow(
   const nodeLabels = new Map(
     (def.nodes ?? []).map((n) => [n.id, n.label || n.text || n.id]),
   );
+  // Parallel links between one pair of nodes would draw the same path and be
+  // indistinguishable — a second WAN circuit, a LAG member or a second tunnel
+  // is a real thing to map, and until it is separated it looks like one link
+  // and only the topmost can be clicked. Each coincident link gets a lane, and
+  // the edge offsets itself perpendicular to the line by it.
+  //
+  // The bundle key includes the handles, because two links attached to
+  // different sides of a node already diverge geometrically and should be left
+  // alone. It is direction-agnostic: A→B and B→A drawn between the same sides
+  // land on the same path and belong in the same bundle.
+  const bundleKey = (l: MapLink) => {
+    const a = `${l.from}:${l.from_handle ?? ""}`;
+    const b = `${l.to}:${l.to_handle ?? ""}`;
+    return a <= b ? `${a}|${b}` : `${b}|${a}`;
+  };
+  const bundleSize = new Map<string, number>();
+  for (const l of def.links ?? []) {
+    bundleSize.set(bundleKey(l), (bundleSize.get(bundleKey(l)) ?? 0) + 1);
+  }
+  const laneTaken = new Map<string, number>();
+
   const edges = (def.links ?? []).map((l) => {
     const lv = liveLinks.get(l.id);
+    const key = bundleKey(l);
+    const lane = laneTaken.get(key) ?? 0;
+    laneTaken.set(key, lane + 1);
     return {
       id: l.id,
       source: l.from,
@@ -423,6 +474,8 @@ export function toFlow(
             : "unbound",
         sourceLabel: nodeLabels.get(l.from),
         targetLabel: nodeLabels.get(l.to),
+        lane,
+        lanes: bundleSize.get(key) ?? 1,
       } satisfies CactiEdgeData,
     } satisfies Edge;
   });

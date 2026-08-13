@@ -50,6 +50,8 @@ Recent events stream (P1) docks as row 6 when enabled. All panels read cached ag
 
 ## 3. Weathermaps `/maps`, `/maps/:id`, `/maps/:id/edit` (flagship)
 
+**Parallel links.** More than one link between the same pair of nodes is a real thing to draw — a second WAN circuit, a LAG member, a second tunnel — and the definition always allowed it, since links carry their own ids and nothing dedupes them. What it did not allow was *seeing* it: coincident links drew the same path, so three rendered as one line and only the topmost could be clicked. Links sharing both endpoints **and** both handles are now laid out in lanes, offset perpendicular to the line and spread symmetrically about it, so a lone link keeps exactly the centre line it always had. The bundle is direction-agnostic — A→B and B→A between the same sides are the same geometry — and handles are part of the key, because links attached to different sides of a node already diverge and should be left alone.
+
 **Editing links.** A selected link's panel offers **Remove link**, and the Delete key removes it too. Previously neither existed: the only way to drop a link was to delete one of the nodes it joined, which took every other link on that node with it — rebuilding a node to remove one link is not a workflow. The keyboard path needed edge selection to be driven by the editor's own state, because `toFlow` rebuilds every edge object from the definition on each render and wiped React Flow's internal selection flag, leaving the key with nothing to act on.
 
 - **List:** card grid with live mini-thumbnails, name, node/link counts, worst-state ring, updated-by/when; New Map / Import JSON.

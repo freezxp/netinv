@@ -836,3 +836,78 @@ test("a weathermap link can be removed on its own", async ({
 
   await deleteMap(request, created.id);
 });
+
+// Two links between the same pair of nodes drew the same path: a second WAN
+// circuit, a LAG member or a second tunnel rendered as one line, and only the
+// topmost could be clicked. The definition always allowed it — links carry
+// their own ids and nothing dedupes them — so this is about geometry, and the
+// assertion is that the paths land at distinct positions and select
+// independently.
+test("parallel links between the same nodes are drawn apart", async ({
+  page,
+  request,
+}) => {
+  test.skip(!seeded, "needs devices to put on the map");
+
+  const headers = await apiHeaders(request);
+  const devs = await (
+    await request.get("/api/v1/devices?limit=2", { headers })
+  ).json();
+  expect(devs.data.length).toBeGreaterThanOrEqual(2);
+
+  const name = `e2e-parallel-${Date.now()}`;
+  const created = await (
+    await request.post("/api/v1/maps", { headers, data: { name } })
+  ).json();
+  const link = (id: string) => ({
+    id,
+    from: "a",
+    to: "b",
+    from_handle: "r",
+    to_handle: "l",
+  });
+  const saved = await request.put(`/api/v1/maps/${created.id}/draft`, {
+    headers,
+    data: {
+      schema: "netinv.map/1",
+      nodes: [
+        {
+          id: "a",
+          kind: "device",
+          device_id: devs.data[0].id,
+          label: "A",
+          x: 60,
+          y: 200,
+        },
+        {
+          id: "b",
+          kind: "device",
+          device_id: devs.data[1].id,
+          label: "B",
+          x: 460,
+          y: 200,
+        },
+      ],
+      links: [link("l1"), link("l2"), link("l3")],
+    },
+  });
+  expect(saved.status()).toBe(204);
+  await request.post(`/api/v1/maps/${created.id}/publish`, { headers });
+
+  await login(page);
+  await page.goto(`/maps/${created.id}`);
+  await expect(page.getByRole("heading", { name: "Weathermap" })).toBeVisible();
+  await page.waitForTimeout(1500);
+
+  // Three edges, at three distinct vertical positions. Before the lane offset
+  // these were one line: the count passed and the geometry did not.
+  const ys = await page.$$eval(".react-flow__edge", (els) =>
+    els.map((el) => Math.round(el.getBoundingClientRect().y)),
+  );
+  expect(ys).toHaveLength(3);
+  expect(new Set(ys).size, `parallel links overlap at y=${ys.join(",")}`).toBe(
+    3,
+  );
+
+  await deleteMap(request, created.id);
+});
