@@ -84,7 +84,7 @@ The single-host deployment terminates TLS at nginx (`deploy/compose-app/frontend
 
 ### 12.2 Results, 2026-08-13
 
-Run against the pilot over TLS. This closes the *TLS config scan* line below; the soak, staging-Kubernetes and restore-drill items remain open (ADR-023).
+Run against the pilot over TLS. This closes the *TLS config scan* line below; §12.3 closes the restore drill. The soak and staging-Kubernetes items remain open (ADR-023).
 
 | Check | Tool | Result |
 |---|---|---|
@@ -99,7 +99,34 @@ Run against the pilot over TLS. This closes the *TLS config scan* line below; th
 | SQL injection | manual | Union, tautology, stacked-statement and `pg_sleep` time-based payloads: no delay, no row-count change, tables intact — parameterised throughout |
 | Brute force | manual | 5 failures lock the account for 15 minutes (423), including for the correct password. Deactivated accounts are refused |
 
-Two items in the table below remain unverified: **backup restore drill** and the **authz test suite covering every endpoint × every role** — the manual probe above covers `readonly` against the main surfaces, not the full matrix.
+One item in the table below remains unverified: the **authz test suite covering every endpoint × every role** — the manual probe above covers `readonly` against the main surfaces, not the full matrix.
+
+### 12.3 Backup/restore drill, 2026-08-13
+
+Performed on real pilot data — 13 devices, 232 interfaces, 22k active metric series, 2,377 audit events, the published SD-WAN weathermap — restored into throwaway containers. The live stack was never a target: `scripts/restore.sh` now refuses the production containers without `--force`, which was verified (exit 2) before and after the drill.
+
+**The drill found that the restore did not work**, which is the entire reason for running one. Three defects, in the order they surfaced:
+
+1. **The VictoriaMetrics half restored nothing, and said it had.** A VM snapshot is a *complete storage tree* — `metadata/`, `indexdb/` and `data/` side by side — not the contents of `data/`. The script unpacked it into `/storage/data`, one level too deep. VM then started, found no store it recognised, silently built an empty one, and reported healthy. The script exited 0. Every graph would have been blank, on the day you most need them.
+2. **The unpack could miss the volume entirely.** The snapshot is extracted by a helper container using `--volumes-from`, which inherits *nothing* when the target container has no volume at that path — and the script's `mkdir -p` then created the directory inside the helper, so the data was written to a container that was immediately discarded. Two independent ways to lose the metrics store, both silent.
+3. **The script had no verification at all.** It announced success rather than checking for it. Both defects above are invisible without a post-restore query, and neither would have been caught by reading the script.
+
+Fixed: the layout is asserted before extraction, `mkdir -p` is gone so a missing volume fails loudly, and the run ends with a query that exits non-zero if the store comes back empty.
+
+**Verification, live versus restored.** Compared at a timestamp *inside* the backup window, not at "now":
+
+| Check | Result |
+|---|---|
+| Table row counts | Identical across devices, interfaces, users, credentials, maps, map revisions. `audit_events` differed by 1 — the live system logged an event after the backup was taken, which is correct behaviour |
+| Metric name set | 29 names, identical |
+| Series counts per metric | Identical at the aligned timestamp (e.g. 226 interface counters, 646 flow series) |
+| Sample values | Byte-identical over a 50-minute range query |
+| Weathermap | All 22 revisions byte-identical by checksum; published rev 21 restores with its 9 nodes and 13 links |
+| Encrypted credentials | Ciphertext identical. They still require `NETINV_MASTER_KEY` to decrypt — **a backup without that key restores an inventory you cannot poll**, and the key is not in the backup by design |
+
+**A trap that makes a good restore look like a failure.** The restored store's newest sample is the instant the snapshot was taken. An instant query at *now* therefore counts only the series still inside the lookback window — during this drill that read 78 series against the live 226, which looks exactly like a partial restore and is not. Verify at a timestamp within the backup window. Total time from backup to verified restore: under five minutes, dominated by waiting for VM to open the restored store.
+
+**What this does not cover.** A single-host Compose deployment restored into containers on the same host. It does not exercise the Kubernetes path, off-host or offsite backup transport, a restore onto different hardware, or point-in-time recovery — the RPO is still one nightly backup (doc 31 §7).
 
 
 

@@ -3,13 +3,13 @@
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Go](https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&logoColor=white)](backend/go.mod)
 [![React](https://img.shields.io/badge/React-18_%2B_TypeScript-61DAFB?logo=react&logoColor=white)](frontend/package.json)
-[![Status: pilot](https://img.shields.io/badge/status-pilot-orange.svg)](#)
+[![Status: v1.0.0](https://img.shields.io/badge/status-v1.0.0-brightgreen.svg)](https://github.com/freezxp/netinv/releases)
 
 Centralized, vendor-neutral network monitoring: SNMP (v2c/v3) collection from Cisco, Juniper, Huawei, ZTE, Ubiquiti and Ruckus devices into a modern time-series stack, with a live topology **weathermap** as the flagship view. The spiritual successor to Cacti + Weathermap, rebuilt on VictoriaMetrics instead of MRTG/RRD.
 
-> **Status: pilot — all 20 sprints complete, running live.** Milestones M1 (collection pipeline), M2 (alerting), M3 (usable product) and M4 (weathermap flagship) are achieved, and the platform now monitors a real network: four UniFi gateways in an SD-WAN mesh plus a Ruckus Unleashed estate, with a live weathermap over the WireGuard tunnels between them.
+> **Status: v1.0.0, released 2026-08-12 and running live.** Milestones M1 (collection pipeline), M2 (alerting), M3 (usable product) and M4 (weathermap flagship) are achieved, and the platform monitors a real network: four UniFi gateways in an SD-WAN mesh plus a Ruckus Unleashed estate, with a live weathermap over the WireGuard tunnels between them and NetFlow arriving from the gateways.
 >
-> The `generic`, `ubiquiti` and `ruckus` connectors are validated against real hardware and documented in [doc 10](docs/10-connector-architecture.md) with what each device actually exposes — including what it does not. **`cisco-ios`, `juniper-junos`, `huawei-vrp` and `zte-zxr` are written against MIB specifications and recorded fixtures but have not yet met real units.** Also outstanding before v1.0: a 72 h soak and chaos run on staging, the security checklist against TLS, and a backup/restore drill. Sprint log: `git log --oneline`.
+> **v1.0.0 shipped with four release gates open, named rather than dropped ([ADR-023](DECISIONS.md)).** Two have since been closed and dated: the security checklist against TLS, and the backup/restore drill ([doc 20 §12](docs/20-security-design.md)). **Two remain open.** *Real-hardware validation:* `generic`, `ubiquiti` and `ruckus` are validated against real units and documented in [doc 10](docs/10-connector-architecture.md) with what each device actually exposes — including what it does not; `cisco-ios`, `juniper-junos`, `huawei-vrp`, `zte-zxr`, `fortinet-fortios` and `paloalto-panos` are written from vendor MIBs and have never received a packet from the platform they describe, so expect to find faults and please report them. *No soak or chaos run:* there is no staging Kubernetes cluster behind this release, so behaviour under sustained load or component failure is untested rather than proven. Sprint log: `git log --oneline`.
 
 ## Try it in one command
 

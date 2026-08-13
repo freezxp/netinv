@@ -97,10 +97,32 @@ core site's id after creating the site (step 4).
 ## 7. Backup schedule
 
 Wire `scripts/backup.sh` (or its k8s equivalent) into a nightly CronJob to
-off-cluster storage, and run `scripts/restore.sh` against a scratch namespace
-monthly (the drill in doc 24 §4 is the template — it has been executed
-successfully against dev data). RPO target: 24 h for rc.1, tightening to WAL
-archiving per the roadmap.
+off-cluster storage. RPO target: 24 h, tightening to WAL archiving per the
+roadmap.
+
+**Rehearse the restore, and rehearse it by checking the data, not the exit
+code.** This section previously said the drill "has been executed successfully
+against dev data". That was wrong. When it was finally run against pilot data on
+2026-08-13 the metrics half of the restore turned out to restore nothing at all
+while exiting 0 and leaving VictoriaMetrics reporting healthy — see doc 20 §12.3
+for the three defects and the fixes. A restore that has only been observed to
+exit 0 is an untested restore.
+
+`scripts/restore.sh` refuses the production containers unless given `--force`,
+and prints the scratch-container recipe when it does. Run it monthly:
+
+```
+PG=drill-pg VM=drill-vm VM_PORT=18428 ./scripts/restore.sh <backup-dir>
+```
+
+Two things to know before you read the output as a failure or a success:
+
+- **Compare at a timestamp inside the backup window.** The restored store's
+  newest sample is the moment the snapshot was taken, so an instant query at
+  *now* legitimately returns fewer series than live.
+- **`NETINV_MASTER_KEY` is not in the backup**, deliberately. Without it a
+  restore gives you the inventory and the history but no usable credentials, so
+  the key belongs in your password manager, not only in the deployment.
 
 ## 8. Widen the rollout
 

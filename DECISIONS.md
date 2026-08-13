@@ -175,3 +175,9 @@ Decisions ADR-001 … ADR-017 were made with the product owner on **2026-08-07**
 - **No soak, no chaos test, no TLS security review, no restore drill.** v1.0.0 is validated by a live single-site pilot and by its own test suite, not by a staging environment exercise. Behaviour under sustained load, component failure, or a real restore is unknown rather than proven.
 - This is a judgement about *this* project's circumstances, not a precedent for shipping past gates generally. The gates remain in `CLAUDE.md` as the post-1.0 list, and closing each one is a visible, dated event rather than something that quietly stops being mentioned.
 - The honest version of the claim is: NetInv v1.0.0 is production software running a real network, with a documented and unusually specific list of what has not been tested.
+
+**Gate closures** (this list is the dated record the decision promised; the text above is left as written at tagging):
+
+- **2026-08-13 — security checklist against TLS: closed** (doc 20 §12.1–12.2). The stack now terminates TLS; govulncheck, npm audit, trivy, gitleaks and testssl all pass, along with manual auth, RBAC, injection and brute-force probes. Three real vulnerabilities were fixed to get there, including two CRITICAL OpenSSL CVEs in the container that terminates TLS. The full endpoint × role authz matrix is still outstanding.
+- **2026-08-13 — backup/restore drill: closed** (doc 20 §12.3). Run against real pilot data into throwaway containers. It found the metrics half of the restore recovering nothing while exiting 0 — vindicating the "do not fake them" instruction the gate was written with, since this gate was the one that could have been waved through most easily.
+- Still open: real-hardware validation of the six untested connectors, and the 72 h soak plus chaos-lite on staging Kubernetes.

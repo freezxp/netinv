@@ -68,6 +68,7 @@ tests writing into a live database.
 - **Soak:** 72 h staging run before each release — memory/goroutine/PG-connection/series-churn flatness.
 - **Chaos-lite (release candidates):** kill each singleton (leader failover <30 s), sever poller AMQP (buffer/drain per doc 07 §6), stop VM (degradation ladder per doc 23 §4), restart PG (recovery, no data loss for confirmed writes).
 - **Security:** gitleaks, govulncheck/npm audit, trivy image scan (per-PR); testssl vs staging + authz-matrix suite (release); annual external pentest once commercial (doc 29).
+- **Restore drill (monthly, and before each release):** `scripts/restore.sh` into scratch containers, verified by comparing row counts, metric series and sample values against the source at a timestamp inside the backup window — not by the script's exit code. The first real run (doc 20 §12.3) found a restore that silently recovered no metrics at all while exiting 0, so the assertion is on the data.
 
 ## 5. Test data & environments
 
