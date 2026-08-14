@@ -1,6 +1,6 @@
 # NetInv Design Package — Document Index
 
-34 documents. Numbers are canonical references ("doc 09" = API spec). Read top-to-bottom for the full picture, or follow the role guides below.
+35 documents. Numbers are canonical references ("doc 09" = API spec). Read top-to-bottom for the full picture, or follow the role guides below.
 
 | # | Document | One-liner | Status |
 |---|---|---|---|
@@ -38,6 +38,7 @@
 | 32 | [Quick Start (Docker Compose)](32-quickstart.md) | One-command single-host test deployment | draft |
 | 33 | [Proxmox LXC deployment](33-proxmox-lxc.md) | Running the Compose stack in an LXC container: nesting/keyctl, storage driver, unprivileged ICMP | draft |
 | 34 | [Flow collection](34-flow-collection.md) | The `netinv-flow` collector: NetFlow decode, ingest-time top-N aggregation, the exposure of listening on a socket, and the Flow tab | draft |
+| 35 | [Kubernetes deployment](35-kubernetes-deployment.md) | Installing the Helm chart on a real cluster: procedure, the data-tier toggles, and the five things that bite — verified on Kubernetes 1.35 | draft |
 
 ## Role guides
 
@@ -45,7 +46,7 @@
 - **New AI agent taking over:** `/CLAUDE.md` → `/DECISIONS.md` → 01 → 05 → 26.
 - **Backend work:** 05, 08, 09, 10, 11, 13, 16, 17, 23.
 - **Frontend work:** 30, 09, 14, 02.
-- **Ops/deploy:** 18, 19, 21, 22, 25, 04; single-host installs 32 (Docker Compose) and 33 (Proxmox LXC).
+- **Ops/deploy:** 18, 19, 21, 22, 25, 04; single-host installs 32 (Docker Compose) and 33 (Proxmox LXC); Kubernetes 35 (procedure) on top of 19 (design).
 - **Product/management:** 01, 02, 26, 27, 28, 29.
 - **Flow (NetFlow/sFlow):** 34, then ADR-020 in `/DECISIONS.md` for why it aggregates rather than stores.
 

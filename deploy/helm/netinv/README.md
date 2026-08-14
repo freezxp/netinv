@@ -1,7 +1,8 @@
 # netinv — core-site Helm chart
 
 Installs NetInv's seven services, the frontend, and (by default) a single-replica
-data tier, per [doc 19](../../../docs/19-kubernetes-design.md).
+data tier, per [doc 19](../../../docs/19-kubernetes-design.md). The full
+deployment guide is [doc 35](../../../docs/35-kubernetes-deployment.md).
 
 **Status: installed and verified on Kubernetes 1.35 (minikube), 2026-08-14.**
 All 17 pods reach ready in about 100 seconds from `helm install`; migrations
@@ -68,7 +69,6 @@ Each of these was found by installing the chart, not by reading it.
 - **The api crash-loops on a first install** until Postgres accepts connections
   — it exits rather than waits. Three or four restarts before it settles is
   normal, not a fault.
-
 - **`retention` is one setting read by two components.** VictoriaMetrics stores
   that long and the API refuses range queries beyond it — it rejects rather than
   clamps. Set it below the store's real retention and the UI hides history you

@@ -2,6 +2,10 @@
 
 **Status:** draft · **Depends on:** 18, ADR-006 · pipeline: 25
 
+> This is the *design*: what the workloads are and why. For the *procedure* —
+> installing the chart, the data-tier toggles, and the failures the first real
+> install produced — see [doc 35](35-kubernetes-deployment.md).
+
 ## 1. Cluster assumptions
 
 Any CNCF-conformant 1.28+ on-prem cluster; reference: **RKE2** (prod) / **k3s** (lab). Required cluster services: an ingress controller (nginx), a default StorageClass (Longhorn/local-path/SAN CSI), cert management (cert-manager or corporate PKI), a LoadBalancer implementation for AMQPS (MetalLB or equivalent — else NodePort 5671).

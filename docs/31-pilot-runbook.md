@@ -2,8 +2,10 @@
 
 **Status:** draft · **Depends on:** 18, 19, 20 · Owner action required (Sprint 20)
 
-This is the operator's checklist to take NetInv from `v1.0.0-rc.1` to a running
-pilot across the core site + remote datacenters. It is deliberately concrete;
+This is the operator's checklist to take NetInv from a fresh install to a
+running pilot across the core site + remote datacenters. The mechanics of the
+Helm install itself live in [doc 35](35-kubernetes-deployment.md); this is what
+to do once it is up. It is deliberately concrete;
 everything not requiring your real infrastructure has already been executed and
 verified (see the sprint commit log and doc 24 §4 drills).
 
@@ -11,10 +13,12 @@ verified (see the sprint commit log and doc 24 §4 drills).
 
 - On-prem Kubernetes 1.28+ (RKE2 reference), a default StorageClass, an ingress
   controller, and a LoadBalancer or NodePort path for AMQPS 5671.
-- Data tier reachable from the cluster: PostgreSQL 16, VictoriaMetrics, Redis,
-  RabbitMQ (bring-your-own for rc.1; the CNPG/VM/RabbitMQ subcharts are the
-  doc-19 §3 follow-up).
-- `helm`, `kubectl`, and pull access to `ghcr.io/freezxp/netinv-*`.
+- A data tier. The chart installs a single-replica one by default, which is a
+  lab shape; production disables it per store and points at managed PostgreSQL
+  16, VictoriaMetrics, Redis and RabbitMQ (doc 35 §3).
+- `helm`, `kubectl`, and pull access to `ghcr.io/freezxp/netinv-*` — note the
+  packages are **private**, so a cluster without a pull secret must build the
+  images from source.
 
 ## 1. Secrets (never commit these)
 
@@ -22,7 +26,8 @@ verified (see the sprint commit log and doc 24 §4 drills).
 # 32-byte credential-vault master key (ADR-011) and JWT signing seed.
 kubectl create secret generic netinv-keys -n netinv \
   --from-literal=NETINV_MASTER_KEY="$(openssl rand -base64 32)" \
-  --from-literal=NETINV_JWT_SIGNING_KEY="$(openssl rand -base64 32)"
+  --from-literal=NETINV_JWT_SIGNING_KEY="$(openssl rand -base64 32)" \
+  --from-literal=NETINV_ADMIN_PASSWORD="$(openssl rand -base64 18)"
 ```
 Record the master key in the team password manager. **Losing it means
 re-entering every SNMP credential** (devices are unaffected — doc 28 R-10).
@@ -30,18 +35,26 @@ re-entering every SNMP credential** (devices are unaffected — doc 28 R-10).
 ## 2. Install the core site
 
 ```bash
-helm install netinv deploy/helm/netinv -n netinv --create-namespace \
-  --set data.pgDSN="postgres://netinv:PASS@postgres:5432/netinv" \
-  --set data.amqpURL="amqp://netinv:PASS@rabbitmq:5672/" \
-  --set data.vmURL="http://victoriametrics:8428" \
+helm upgrade --install netinv deploy/helm/netinv -n netinv --create-namespace \
   --set ingress.host="netinv.your.domain" \
-  --set ingress.tlsSecret="netinv-tls" \
-  --set uiURL="https://netinv.your.domain"
+  --set ingress.tlsSecret="netinv-tls"
 ```
-The api runs migrations on boot and prints the **bootstrap admin password
-once** — grab it from `kubectl logs deploy/netinv-api -n netinv | grep bootstrap`
-and change it at first login. Set `services.poller.env.NETINV_SITE_ID` to the
-core site's id after creating the site (step 4).
+
+That installs the chart's own data tier. To use managed stores, disable them and
+set `connections.*` instead — see doc 35 §3 and `values-prod.example.yaml`.
+
+The api runs migrations on boot. It also **restarts three or four times on a
+first install**, because it exits rather than waits while Postgres is still
+starting; that is expected, not a fault. The initial admin password is the
+`NETINV_ADMIN_PASSWORD` you put in the Secret in step 1:
+
+```bash
+kubectl -n netinv get secret netinv-keys \
+  -o jsonpath='{.data.NETINV_ADMIN_PASSWORD}' | base64 -d
+```
+
+Set `services.poller.env.NETINV_SITE_ID` to the core site's id after creating
+the site (step 4).
 
 ## 3. First login & hardening (doc 20 §12 checklist)
 

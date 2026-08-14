@@ -9,7 +9,7 @@ Centralized, vendor-neutral network monitoring: SNMP (v2c/v3) collection from Ci
 
 > **Status: v1.0.0, released 2026-08-12 and running live.** Milestones M1 (collection pipeline), M2 (alerting), M3 (usable product) and M4 (weathermap flagship) are achieved, and the platform monitors a real network: four UniFi gateways in an SD-WAN mesh plus a Ruckus Unleashed estate, with a live weathermap over the WireGuard tunnels between them and NetFlow arriving from the gateways.
 >
-> **v1.0.0 shipped with four release gates open, named rather than dropped ([ADR-023](DECISIONS.md)).** Two have since been closed and dated: the security checklist against TLS, and the backup/restore drill ([doc 20 §12](docs/20-security-design.md)). **Two remain open.** *Real-hardware validation:* `generic`, `ubiquiti` and `ruckus` are validated against real units and documented in [doc 10](docs/10-connector-architecture.md) with what each device actually exposes — including what it does not; `cisco-ios`, `juniper-junos`, `huawei-vrp`, `zte-zxr`, `fortinet-fortios` and `paloalto-panos` are written from vendor MIBs and have never received a packet from the platform they describe, so expect to find faults and please report them. *No soak or chaos run:* there is no staging Kubernetes cluster behind this release, so behaviour under sustained load or component failure is untested rather than proven. Sprint log: `git log --oneline`.
+> **v1.0.0 shipped with four release gates open, named rather than dropped ([ADR-023](DECISIONS.md)).** Two have since been closed and dated: the security checklist against TLS, and the backup/restore drill ([doc 20 §12](docs/20-security-design.md)). **Two remain open.** *Real-hardware validation:* `generic`, `ubiquiti` and `ruckus` are validated against real units and documented in [doc 10](docs/10-connector-architecture.md) with what each device actually exposes — including what it does not; `cisco-ios`, `juniper-junos`, `huawei-vrp`, `zte-zxr`, `fortinet-fortios` and `paloalto-panos` are written from vendor MIBs and have never received a packet from the platform they describe, so expect to find faults and please report them. *No soak or chaos run:* the Helm chart now installs and runs on a real cluster — verified on Kubernetes 1.35, [doc 35](docs/35-kubernetes-deployment.md) — but it has not been run for 72 hours under load with components killed underneath it, so behaviour under sustained load or failure is untested rather than proven. Sprint log: `git log --oneline`.
 
 ## Try it in one command
 
@@ -30,6 +30,10 @@ Running **Proxmox**? `deploy/proxmox/netinv-lxc.sh create` does all of the above
 inside a new LXC container, in about ten minutes, and `destroy` removes it —
 which also makes it a cheap way to test a branch against real hardware
 ([docs/33-proxmox-lxc.md](docs/33-proxmox-lxc.md)).
+
+Running **Kubernetes**? Helm charts for the platform and for remote-site
+pollers, with the installation procedure and the things that bite in
+[docs/35-kubernetes-deployment.md](docs/35-kubernetes-deployment.md).
 
 ## What it looks like
 
@@ -87,7 +91,7 @@ netinv/
 ├── SECURITY.md        ← reporting vulnerabilities; what NetInv holds worth attacking
 ├── CLAUDE.md          ← AI onboarding: read this first if you are an AI agent
 ├── DECISIONS.md       ← architecture decision log (ADR-lite); the "why" behind everything
-├── docs/              ← the 34-document design package (numbered, see docs/README.md)
+├── docs/              ← the 35-document design package (numbered, see docs/README.md)
 ├── backend/           ← Go services: api, scheduler, poller, ingester, alerter, notifier, flow
 ├── connectors/        ← vendor connectors (cisco, juniper, huawei, zte, ubiquiti,
 │                     ruckus, fortinet, paloalto)
