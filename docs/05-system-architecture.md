@@ -98,6 +98,7 @@ netinv_sensor_temperature_celsius{sensor="..."} · netinv_sensor_fan_rpm · neti
 netinv_optic_rx_power_dbm / _tx_power_dbm{if_index, lane}
 netinv_icmp_rtt_seconds{stat="min|avg|max"} · netinv_icmp_jitter_seconds · netinv_icmp_loss_ratio
 netinv_poll_success{family="traffic|health|icmp"} · netinv_poll_duration_seconds
+netinv_if_counters_repaired          # varbinds recovered by GET after a partial walk; 0 on a healthy agent (doc 10 §7)
 netinv_device_uptime_seconds
 netinv_firewall_session_count · netinv_firewall_session_max · netinv_firewall_session_setup_rate
 ```

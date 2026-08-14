@@ -5,6 +5,7 @@ package generic
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -127,6 +128,21 @@ func (b *Base) CollectInterfaces(ctx context.Context, s sdk.Session) ([]sdk.Samp
 			})
 		}
 	}
+	// Repair a partial walk before moving on. See fillCounterGaps: some agents
+	// enumerate every interface in the config columns and then skip almost all
+	// of them in the counter columns, even though a GET for the very same OID
+	// answers correctly.
+	repaired := fillCounterGaps(ctx, s, ifT, pick, hcSeen, now, &samples)
+	// Publish the repair count even when it is zero, so the series exists on
+	// every device and an alert can be written against it. A device needing
+	// repair is a device with a broken SNMP agent: the graphs are correct, but
+	// somebody should know, or this silently becomes load nobody accounts for.
+	samples = append(samples, sdk.Sample{
+		Name:  "netinv_if_counters_repaired",
+		Value: float64(repaired),
+		At:    now,
+	})
+
 	// Interface speed, the denominator every utilisation figure divides by.
 	//
 	// ifHighSpeed (Mbit/s) is preferred because ifSpeed is a 32-bit gauge that
@@ -325,6 +341,140 @@ func splitCol(oid, table string) (col, idx int, ok bool) {
 		return 0, 0, false
 	}
 	return c, i, true
+}
+
+// Bounds on one poll's repair work. A batch of 24 varbinds fits comfortably in
+// a default 1472-byte UDP payload, and the total cap stops a pathological agent
+// on a 500-interface chassis from turning every poll into a probe storm — a
+// device that broken is better reported than exhaustively worked around.
+const (
+	probeBatch       = 24
+	maxProbeVarbinds = 600
+)
+
+// fillCounterGaps repairs a partial walk with targeted GETs, appending to
+// *samples and returning how many varbinds it recovered.
+//
+// Some SNMP agents enumerate every interface in the early ifTable columns and
+// then return almost nothing for the counter columns, while a GET for those
+// exact OIDs answers correctly — the traversal is broken, not the data. A pilot
+// UniFi gateway entered this state and stayed there: ifIndex, ifDescr,
+// ifAdminStatus and ifOperStatus walked all 47 interfaces, every counter column
+// walked 6, and a GET returned real values for 45 of them (doc 10 §7).
+//
+// Without this the device looks perfectly healthy — it answers, it is up, its
+// inventory is complete, its poll succeeds — and simply has no traffic graphs.
+//
+// The repair is deliberately narrow. A column that returns *nothing* is treated
+// as absent rather than broken and is never probed, because that is what a
+// 32-bit-only agent's missing ifXTable looks like and probing it every poll
+// would buy a PDU of noSuchInstance forever. A column the walk already covered
+// in full costs nothing, so healthy devices issue no extra packets at all.
+func fillCounterGaps(ctx context.Context, s sdk.Session, ifT map[string]sdk.Var,
+	pick func(string) map[string]sdk.Var, hcSeen map[string]bool,
+	now time.Time, samples *[]sdk.Sample) int {
+
+	// Every interface the agent named anywhere in ifTable. Taking the union
+	// rather than ifIndex alone matters twice over: a broken traversal is
+	// exactly the case where one particular column may be short, and not every
+	// agent even returns the ifIndex column, since its value duplicates the
+	// instance identifier it is keyed by.
+	seen := map[string]bool{}
+	var idxs []string
+	for oid := range ifT {
+		_, idx, ok := splitCol(oid, oidIfTable)
+		if !ok {
+			continue
+		}
+		key := strconv.Itoa(idx)
+		if !seen[key] {
+			seen[key] = true
+			idxs = append(idxs, key)
+		}
+	}
+	if len(idxs) == 0 {
+		return 0
+	}
+	// Probe in index order so a truncated budget takes a stable prefix rather
+	// than a different arbitrary subset each poll, which would make the graphs
+	// flicker between interfaces.
+	sort.Slice(idxs, func(i, j int) bool {
+		a, aerr := strconv.Atoi(idxs[i])
+		b, berr := strconv.Atoi(idxs[j])
+		if aerr == nil && berr == nil {
+			return a < b
+		}
+		return idxs[i] < idxs[j]
+	})
+
+	repaired, budget := 0, maxProbeVarbinds
+	// Same order as the main loop, so an HC column still claims an interface
+	// before its 32-bit fallback is considered for it.
+	for _, cm := range trafficCols {
+		if budget <= 0 {
+			break
+		}
+		have := pick(cm.table)
+		prefix := cm.table + "." + strconv.Itoa(cm.column) + "."
+		present := 0
+		for oid := range have {
+			if strings.HasPrefix(oid, prefix) {
+				present++
+			}
+		}
+		if present == 0 || present >= len(idxs) {
+			continue // absent column, or one the walk already covered
+		}
+		var missing []string
+		for _, idx := range idxs {
+			if _, ok := have[prefix+idx]; ok {
+				continue
+			}
+			if hcSeen[cm.metric+"/"+idx] && !cm.hc {
+				continue
+			}
+			missing = append(missing, prefix+idx)
+		}
+		for start := 0; start < len(missing) && budget > 0; start += probeBatch {
+			end := min(start+probeBatch, len(missing))
+			chunk := missing[start:end]
+			if len(chunk) > budget {
+				chunk = chunk[:budget]
+			}
+			budget -= len(chunk)
+			vars, err := s.Get(ctx, chunk)
+			if err != nil {
+				// The agent dislikes the probe; leave the gap rather than
+				// hammering it. The walk's results are already collected.
+				break
+			}
+			for _, v := range vars {
+				if !strings.HasPrefix(v.OID, prefix) {
+					continue // never label a sample with an unexpected OID
+				}
+				val, ok := toFloat(v.Value)
+				if !ok {
+					continue // noSuchInstance / noSuchObject arrive unconvertible
+				}
+				idx := strings.TrimPrefix(v.OID, prefix)
+				key := cm.metric + "/" + idx
+				if hcSeen[key] && !cm.hc {
+					continue
+				}
+				if cm.hc {
+					hcSeen[key] = true
+				}
+				repaired++
+				*samples = append(*samples, sdk.Sample{
+					Name:   cm.metric,
+					Labels: map[string]string{"if_index": idx},
+					Value:  val,
+					At:     now,
+				})
+			}
+		}
+	}
+	return repaired
 }
 
 func toFloat(v any) (float64, bool) {

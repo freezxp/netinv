@@ -2,6 +2,7 @@ package generic
 
 import (
 	"context"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -162,5 +163,155 @@ func TestSpeedPrefersIfHighSpeedOverSaturatedIfSpeed(t *testing.T) {
 	}
 	if v, ok := find(samples, "netinv_if_speed_bps", "7"); !ok || v != 1e10 {
 		t.Errorf("speed = %v (ok=%v), want 1e10 from ifHighSpeed", v, ok)
+	}
+}
+
+// brokenWalkSession models the SNMP agent seen on a pilot UniFi gateway
+// (doc 10 §7): the config columns walk every interface, the counter columns
+// walk almost none, and a GET for those very OIDs answers correctly. The bug is
+// in the agent's GETNEXT traversal, not in its data.
+type brokenWalkSession struct {
+	data       map[string]any
+	walkableK  func(oid string) bool
+	gets       int // GET calls issued, to hold the repair to a packet budget
+	maxVarbind int
+}
+
+func (f *brokenWalkSession) Get(_ context.Context, oids []string) ([]sdk.Var, error) {
+	f.gets++
+	if len(oids) > f.maxVarbind {
+		f.maxVarbind = len(oids)
+	}
+	var out []sdk.Var
+	for _, oid := range oids {
+		if v, ok := f.data[oid]; ok {
+			out = append(out, sdk.Var{OID: oid, Value: v})
+			continue
+		}
+		// A real agent answers the whole PDU, using a null value for the
+		// instances it does not have. Returning them keeps the test honest
+		// about the repair having to filter.
+		out = append(out, sdk.Var{OID: oid, Value: nil})
+	}
+	return out, nil
+}
+
+func (f *brokenWalkSession) Walk(_ context.Context, root string) ([]sdk.Var, error) {
+	var out []sdk.Var
+	for oid, v := range f.data {
+		if strings.HasPrefix(oid, root+".") && f.walkableK(oid) {
+			out = append(out, sdk.Var{OID: oid, Value: v})
+		}
+	}
+	return out, nil
+}
+
+func (f *brokenWalkSession) Target() sdk.TargetMeta {
+	return sdk.TargetMeta{Address: "test", Port: 161}
+}
+
+// gatewayWithBrokenCounterWalk builds 20 interfaces whose status columns walk
+// but whose counters are reachable only by GET — except if_index 9, which walks
+// like the handful of stub tunnels the real device still enumerated.
+func gatewayWithBrokenCounterWalk() *brokenWalkSession {
+	data := map[string]any{}
+	for i := 1; i <= 20; i++ {
+		idx := strconv.Itoa(i)
+		data[".1.3.6.1.2.1.2.2.1.1."+idx] = i
+		data[".1.3.6.1.2.1.2.2.1.2."+idx] = "eth" + idx
+		data[".1.3.6.1.2.1.2.2.1.7."+idx] = 1
+		data[".1.3.6.1.2.1.2.2.1.8."+idx] = 1
+		data[".1.3.6.1.2.1.2.2.1.10."+idx] = uint64(1000 + i)
+		data[".1.3.6.1.2.1.2.2.1.14."+idx] = uint64(i)
+		data[".1.3.6.1.2.1.31.1.1.1.6."+idx] = uint64(5_000_000_000 + i)
+	}
+	return &brokenWalkSession{
+		data: data,
+		walkableK: func(oid string) bool {
+			// Counter columns walk only for if_index 9.
+			for _, col := range []string{
+				".1.3.6.1.2.1.2.2.1.10.", ".1.3.6.1.2.1.2.2.1.14.",
+				".1.3.6.1.2.1.31.1.1.1.6.",
+			} {
+				if strings.HasPrefix(oid, col) {
+					return strings.TrimPrefix(oid, col) == "9"
+				}
+			}
+			return true
+		},
+	}
+}
+
+func TestPartialCounterWalkIsRepairedByGet(t *testing.T) {
+	sess := gatewayWithBrokenCounterWalk()
+	samples, err := New().CollectInterfaces(context.Background(), sess)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Every interface must carry traffic, not just the one the walk returned.
+	for i := 1; i <= 20; i++ {
+		idx := strconv.Itoa(i)
+		v, ok := find(samples, "netinv_if_in_octets_total", idx)
+		if !ok {
+			t.Fatalf("if %s has no in-octets: the partial walk was not repaired", idx)
+		}
+		// And the repair must keep HC precedence — a GET-recovered 64-bit
+		// counter still outranks a 32-bit one for the same interface.
+		if want := float64(5_000_000_000 + i); v != want {
+			t.Errorf("if %s in-octets = %v, want HC %v", idx, v, want)
+		}
+	}
+	if v, ok := find(samples, "netinv_if_in_errors_total", "20"); !ok || v != 20 {
+		t.Errorf("if 20 in-errors = %v (found=%v), want 20", v, ok)
+	}
+	// The repair is reported, so a broken agent is visible rather than merely
+	// worked around.
+	var repaired float64
+	for _, s := range samples {
+		if s.Name == "netinv_if_counters_repaired" {
+			repaired = s.Value
+		}
+	}
+	if repaired == 0 {
+		t.Error("netinv_if_counters_repaired = 0, want the repaired varbind count")
+	}
+	if sess.maxVarbind > probeBatch {
+		t.Errorf("GET carried %d varbinds, want <= %d", sess.maxVarbind, probeBatch)
+	}
+}
+
+func TestHealthyWalkIssuesNoProbes(t *testing.T) {
+	// The demo device's counter columns are complete for the interfaces that
+	// have them, so repair must not add packets to a healthy poll.
+	sess := &brokenWalkSession{
+		data:      demoDevice().data,
+		walkableK: func(string) bool { return true },
+	}
+	samples, err := New().CollectInterfaces(context.Background(), sess)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range samples {
+		if s.Name == "netinv_if_counters_repaired" && s.Value != 0 {
+			t.Errorf("repaired = %v on a healthy device, want 0", s.Value)
+		}
+	}
+}
+
+func TestAbsentColumnIsNotProbedEveryPoll(t *testing.T) {
+	// A pure 32-bit agent has no ifXTable at all. That is an absent column, not
+	// a broken walk, and probing it would buy a PDU of nulls on every poll.
+	data := map[string]any{}
+	for i := 1; i <= 8; i++ {
+		idx := strconv.Itoa(i)
+		data[".1.3.6.1.2.1.2.2.1.1."+idx] = i
+		data[".1.3.6.1.2.1.2.2.1.10."+idx] = uint64(100 + i)
+	}
+	sess := &brokenWalkSession{data: data, walkableK: func(string) bool { return true }}
+	if _, err := New().CollectInterfaces(context.Background(), sess); err != nil {
+		t.Fatal(err)
+	}
+	if sess.gets != 0 {
+		t.Errorf("issued %d GETs against an agent with no ifXTable, want 0", sess.gets)
 	}
 }

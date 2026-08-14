@@ -128,3 +128,45 @@ The recorded walks earn their place by pinning claims no MIB document supports: 
 5. PR must show zero diffs outside `connectors/` (+registry line). CI enforces via path check.
 
 **Test coverage as of 2026-08-09:** every connector has tests. `huawei`, `juniper` and `zte` had none until they were written for the open-source release, and writing them immediately found a live defect: the Juniper connector labelled CPU samples with a raw `names[idx]` lookup instead of the index fallback used for temperature, so every FRU whose `jnxOperatingDescr` walk came back empty emitted `cpu=""` — collapsing all unnamed FRUs into one series that reads as a single CPU swinging between cores. Fixed, with a regression test.
+
+## 7. Agents whose walk is broken but whose data is not
+
+**A partial walk is repaired with targeted GETs.** After walking `ifTable` and
+`ifXTable`, the generic connector compares the interfaces the agent enumerated
+against the ones each counter column actually returned, and fetches the missing
+counters directly with batched multi-varbind GETs (24 per PDU, 600 varbinds per
+poll). The count of recovered varbinds is published as
+`netinv_if_counters_repaired`, which is **zero on a healthy agent** and is the
+signal that a device needs attention.
+
+The repair is narrow on purpose:
+
+- a column returning *nothing* is treated as absent, not broken, and is never
+  probed — that is exactly what a 32-bit-only agent's missing `ifXTable` looks
+  like, and probing it would buy a PDU of `noSuchInstance` on every poll;
+- a column the walk already covered in full costs no packets at all, so healthy
+  devices are untouched;
+- HC precedence survives the repair: a GET-recovered 64-bit counter still
+  outranks a 32-bit one for the same interface;
+- the budget is capped, because a device broken past 600 missing varbinds per
+  poll is better reported than exhaustively worked around.
+
+**Observed on a pilot UniFi gateway, 2026-08-14 15:35 UTC.** The agent kept
+answering — ICMP never dropped, memory and CPU stayed continuous, the poll
+reported success — while `ifTable` columns 1–9 walked all 47 interfaces and
+every counter column walked **6**, all of them dead tunnel stubs
+(`erspan0`, `ip_vti0`, `sit0`). A GET for the very same OIDs answered correctly
+for 45 of 51 interfaces: `ifHCInOctets.76` returned 342 GB on an interface the
+walk claimed did not exist. Nothing was wrong with the data; the agent's GETNEXT
+traversal was. The device churns ifIndexes as its teleport interfaces are
+recreated (218/219 → 220/221 within one probe session), which is the kind of
+moving target that upsets a net-snmp interface cache.
+
+Without the repair the device presents as perfectly healthy and simply has no
+traffic graphs — the same silent-partial-failure shape as doc 07 §6.1. With it,
+the gateway went from 6 interfaces to 46 with 328 varbinds repaired per poll,
+while every other device in the fleet reported 0.
+
+The device-side fix — restarting `snmpd`, force-provisioning or rebooting the
+gateway — is still worth doing, and `netinv_if_counters_repaired` is how you
+know it is needed. The connector's job is to keep the graphs honest until then.
