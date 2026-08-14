@@ -47,6 +47,27 @@ jobs:
         with:
           go-version-file: backend/go.mod
           cache-dependency-path: backend/go.sum
+      # The Dockerfile's base image must ship a toolchain at least as new as
+      # go.work asks for. The alpine images set GOTOOLCHAIN=local, so they
+      # cannot download a newer one, and the image build dies with
+      #   go: ../go.work requires go >= X (running Y; GOTOOLCHAIN=local)
+      # while `go build` on a runner with setup-go succeeds. That split kept CI
+      # green against a Dockerfile that could not build on any machine whose
+      # base-image cache predated the Go release.
+      - name: Dockerfile Go pin covers go.work
+        run: |
+          set -euo pipefail
+          want=$(grep -oP '^go \K[0-9.]+' go.work)
+          have=$(grep -oP '^FROM golang:\K[0-9.]+' backend/Dockerfile)
+          echo "go.work wants $want; backend/Dockerfile pins $have"
+          if [ "$(printf '%s\n%s\n' "$want" "$have" | sort -V | head -1)" != "$want" ]; then
+            echo "::error::backend/Dockerfile pins golang:$have but go.work requires >= $want"
+            exit 1
+          fi
+          case "$have" in
+            *.*.*) ;;
+            *) echo "::error::pin the exact patch (golang:X.Y.Z-alpine); a floating tag makes the build depend on when the base image was last pulled"; exit 1;;
+          esac
       - name: Build
         working-directory: backend
         run: go build ./...

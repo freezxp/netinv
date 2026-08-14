@@ -182,3 +182,33 @@ sequenceDiagram
     Note over MQ: stale queued jobs expired via message TTL —<br/>no thundering herd of outdated polls
     P->>MQ: heartbeat resumes → poller.heartbeat.recovered event
 ```
+
+### 6.1 Reconnect must cancel the old consumer
+
+Every consumer in this system runs inside a reconnect loop, and each iteration
+has to cancel the consumer it replaces. It does that by giving each consumer its
+own AMQP channel and closing it — `amqpx.Consume` returns a `stop` function for
+exactly this.
+
+On a shared channel a second `Consume` for the same queue registers an
+*additional* consumer rather than replacing one: the channel never closes, so
+the broker never cancels the original. RabbitMQ then round-robins deliveries
+between a live consumer and one nobody reads, and the abandoned share sits
+**unacked forever**.
+
+The failure is quiet and partial, which is what makes it dangerous:
+
+- the queue grows without bound, but nothing errors and nothing logs;
+- the service keeps working on the fraction of messages that reach the live
+  consumer, so metrics keep arriving and health stays green;
+- only the messages routed to the dead consumer are lost.
+
+Observed on the pilot on 2026-08-14, after a redeploy raced RabbitMQ's startup:
+one site's job stream retried twice and ended with three consumers on one queue.
+That site's gateway was losing roughly two polls in three — while still
+reporting `poll_success` and still drawing graphs — behind a queue of 19 unacked
+messages growing by about two a minute. Fixing it took fleet ingest from 32 to
+50 rows/second, which is the measure of what had been vanishing.
+
+Any new consumer belongs in the same shape: consume, read until the delivery
+channel closes, `stop()`, then retry.

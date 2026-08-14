@@ -227,8 +227,12 @@ func main() {
 			go func() { // consume with reconnect across broker restarts
 				for ctx.Err() == nil {
 					if err := mq.EnsureSyncResultsQueue(); err == nil {
-						if deliveries, err := mq.Consume(amqpx.SyncResultsQueue, 8); err == nil {
+						if deliveries, stop, err := mq.Consume(amqpx.SyncResultsQueue, 8); err == nil {
 							consumeSyncResults(ctx, deliveries, syncSvc, rt)
+							// Cancel before reconnecting: the retry would
+							// otherwise leave a consumer the broker keeps
+							// feeding and nobody acks.
+							stop()
 							rt.Log.Warn("sync stream closed — reconnecting")
 						}
 					}
@@ -277,7 +281,7 @@ func main() {
 			go func() { // discovery results consumer, with reconnect
 				for ctx.Err() == nil {
 					if err := mq.EnsureDiscoveryResultsQueue(); err == nil {
-						if deliveries, err := mq.Consume(amqpx.DiscoveryResultsQueue, 4); err == nil {
+						if deliveries, stop, err := mq.Consume(amqpx.DiscoveryResultsQueue, 4); err == nil {
 							for d := range deliveries {
 								var res wire.DiscoveryResult
 								if err := json.Unmarshal(d.Body, &res); err != nil {
@@ -292,6 +296,7 @@ func main() {
 								}
 								_ = d.Ack(false)
 							}
+							stop() // see the sync consumer above
 							rt.Log.Warn("discovery stream closed — reconnecting")
 						}
 					}

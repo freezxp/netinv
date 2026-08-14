@@ -64,13 +64,15 @@ func main() {
 			}
 			if err == nil {
 				var deliveries <-chan amqp091.Delivery
-				deliveries, err = mq.Consume(alertsQueue, 8)
+				var stop func()
+				deliveries, stop, err = mq.Consume(alertsQueue, 8)
 				if err == nil {
 					rt.Log.Info("notifier consuming", "queue", alertsQueue)
 				stream:
 					for {
 						select {
 						case <-ctx.Done():
+							stop()
 							return nil
 						case d, ok := <-deliveries:
 							if !ok {
@@ -87,6 +89,9 @@ func main() {
 							_ = d.Ack(false)
 						}
 					}
+					// Cancel before looping round to consume again: a leaked
+					// consumer keeps receiving alerts nobody delivers or acks.
+					stop()
 				}
 			}
 			if err != nil {

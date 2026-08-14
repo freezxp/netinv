@@ -100,18 +100,27 @@ func (r *Runtime) Run(ctx context.Context) error {
 					return r.Client.EnsureMetricsQueue()
 				}()
 				if err == nil {
-					var deliveries <-chan amqp.Delivery
-					deliveries, err = r.Client.Consume(queue, r.Workers*2)
+					var (
+						deliveries <-chan amqp.Delivery
+						stop       func()
+					)
+					deliveries, stop, err = r.Client.Consume(queue, r.Workers*2)
 					if err == nil {
 						r.Log.Info("job stream established",
 							"queue", queue, "workers", r.Workers)
 						for d := range deliveries {
 							select {
 							case <-ctx.Done():
+								stop()
 								return
 							case jobs <- d:
 							}
 						}
+						// Cancel before looping round to consume again. Without
+						// this the retry registered an extra consumer each time
+						// and the broker kept feeding the abandoned ones, which
+						// held their deliveries unacked forever.
+						stop()
 						r.Log.Warn("job stream closed — reconnecting", "queue", queue)
 					}
 				}

@@ -177,16 +177,59 @@ func (c *Client) EnsureTopicQueue(queue, pattern string) error {
 	return ch.QueueBind(queue, pattern, EventsExchange, false, nil)
 }
 
-// Consume starts delivering from a queue with manual acks.
-func (c *Client) Consume(queue string, prefetch int) (<-chan amqp.Delivery, error) {
-	ch, err := c.channel()
+// Consume starts delivering from a queue with manual acks. The returned stop
+// function cancels the consumer and requeues anything it holds unacked; every
+// caller must call it when it stops reading, and callers that reconnect in a
+// loop must call it before consuming again.
+//
+// The consumer gets its own channel rather than the shared one, which is the
+// whole point. Every caller of this consumes inside a reconnect loop, and on
+// the shared channel a second Consume for the same queue registered a *second*
+// consumer while the first stayed alive — the channel never closed, so the
+// broker never cancelled it. RabbitMQ then round-robined deliveries to a
+// consumer nobody was reading, where they sat unacked forever: the queue grew
+// without bound while the service looked healthy and kept processing the
+// fraction of jobs that happened to land on the live consumer.
+//
+// Seen on the pilot after a restart raced RabbitMQ: one site's queue held 19
+// unacked messages across 3 consumers, and that site was quietly losing two
+// polls out of three (doc 07 §6).
+func (c *Client) Consume(queue string, prefetch int) (<-chan amqp.Delivery, func(), error) {
+	conn, err := c.connection()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
+	ch, err := conn.Channel()
+	if err != nil {
+		return nil, nil, errx.Wrap(errx.KindTransient, err, "amqpx: consume channel")
+	}
+	stop := func() { _ = ch.Close() }
 	if err := ch.Qos(prefetch, 0, false); err != nil {
-		return nil, errx.Wrap(errx.KindTransient, err, "amqpx: qos")
+		stop()
+		return nil, nil, errx.Wrap(errx.KindTransient, err, "amqpx: qos")
 	}
-	return ch.Consume(queue, "", false, false, false, false, nil)
+	deliveries, err := ch.Consume(queue, "", false, false, false, false, nil)
+	if err != nil {
+		stop()
+		return nil, nil, err
+	}
+	return deliveries, stop, nil
+}
+
+// connection returns a live connection, redialing if the previous one died.
+// Shared-channel state is dropped on redial: a channel belongs to exactly one
+// connection.
+func (c *Client) connection() (*amqp.Connection, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.conn == nil || c.conn.IsClosed() {
+		conn, err := amqp.Dial(c.url)
+		if err != nil {
+			return nil, errx.Wrap(errx.KindTransient, err, "amqpx: redial")
+		}
+		c.conn, c.ch = conn, nil
+	}
+	return c.conn, nil
 }
 
 // PublishJSON publishes with a confirm; returns once the broker accepts it.

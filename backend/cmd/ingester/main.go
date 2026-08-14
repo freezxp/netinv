@@ -45,9 +45,13 @@ func main() {
 		// restarts; amqpx redials underneath (doc 23 §7).
 		for ctx.Err() == nil {
 			if err := mq.EnsureMetricsQueue(); err == nil {
-				if deliveries, err := mq.Consume(amqpx.MetricsQueue, 32); err == nil {
+				if deliveries, stop, err := mq.Consume(amqpx.MetricsQueue, 32); err == nil {
 					rt.Log.Info("ingester consuming", "queue", amqpx.MetricsQueue, "vm", vmURL)
-					if err := ing.Run(ctx, deliveries); err != nil {
+					err := ing.Run(ctx, deliveries)
+					// Cancel before reconnecting, or the retry leaves a consumer
+					// behind that the broker keeps feeding and nobody acks.
+					stop()
+					if err != nil {
 						return err
 					}
 					rt.Log.Warn("metric stream closed — reconnecting")
