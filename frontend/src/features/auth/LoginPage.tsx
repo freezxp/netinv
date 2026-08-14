@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useLogin } from "../../api/hooks";
 import { useAuthStore } from "./store";
 import { Button, Card, Input } from "../../components/ui";
+import { Footer } from "../../app/Footer";
 import { ApiError } from "../../api/client";
 
 export function LoginPage() {
@@ -32,7 +33,10 @@ export function LoginPage() {
         : null;
 
   return (
-    <div className="flex h-full items-center justify-center">
+    // The version is worth having on the sign-in screen too: it is the one
+    // page reachable without credentials, which makes it where you look when
+    // asking what a deployment is actually running.
+    <div className="flex h-full flex-col items-center justify-center gap-6">
       <Card className="w-80">
         <div className="mb-4 text-center">
           <div className="text-2xl font-bold text-sky-500">NetInv</div>
@@ -59,6 +63,7 @@ export function LoginPage() {
           </Button>
         </form>
       </Card>
+      <Footer />
     </div>
   );
 }

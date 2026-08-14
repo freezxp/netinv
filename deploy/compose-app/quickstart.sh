@@ -69,7 +69,13 @@ echo "==> Ensuring a TLS certificate exists"
 "$(dirname "$0")/make-cert.sh"
 
 # 4. Application (seven services + frontend), built from source.
-echo "==> Building and starting NetInv services"
+# Stamp the footer with what is actually being built. `git describe` names the
+# tag plus any commits since it, so a deployment running ahead of a release
+# says so instead of claiming to be the release. Outside a git checkout (a
+# source tarball) this is empty and the build falls back to package.json.
+NETINV_VERSION="$(git -C "$ROOT" describe --tags --always --dirty 2>/dev/null || true)"
+export NETINV_VERSION
+echo "==> Building and starting NetInv services${NETINV_VERSION:+ ($NETINV_VERSION)}"
 "${COMPOSE[@]}" --profile app up -d --build
 
 # 5. Wait for the api to be ready through the frontend proxy. -k because the

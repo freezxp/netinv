@@ -3,6 +3,11 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --no-audit --no-fund
 COPY . .
+# Stamped into the footer so a running deployment can say what it is. Defaults
+# to package.json's version when the build does not pass one; release builds
+# pass the tag (see docker-compose.yml).
+ARG NETINV_VERSION=""
+ENV NETINV_VERSION=$NETINV_VERSION
 RUN npm run build
 
 # Pinned to a minor line rather than :alpine, so a rebuild is reproducible, and

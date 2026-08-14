@@ -7,6 +7,7 @@ import { useSessionRestore } from "../features/auth/useSessionRestore";
 import { useLogout } from "../api/hooks";
 import { Button, cx } from "../components/ui";
 import { NavIcon } from "./NavIcon";
+import { Footer } from "./Footer";
 
 const nav = [
   { to: "/", label: "Dashboard", icon: "dashboard", exact: true },
@@ -212,8 +213,15 @@ export function AppShell() {
           </div>
         </div>
       </aside>
-      <main className="min-w-0 flex-1 overflow-auto p-4 md:p-6">
-        <Outlet />
+      {/* A column so the footer sits under the content on a short page and
+          after it on a long one, rather than pinned over the scroll area.
+          min-w-0 on the content wrapper as well as the column, or a wide table
+          inside stretches the flex item instead of scrolling. */}
+      <main className="flex min-w-0 flex-1 flex-col overflow-auto p-4 md:p-6">
+        <div className="min-w-0 flex-1">
+          <Outlet />
+        </div>
+        <Footer className="mt-6 border-t border-slate-200 pt-3 dark:border-slate-800" />
       </main>
     </div>
   );

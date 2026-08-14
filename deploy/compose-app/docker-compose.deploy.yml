@@ -126,7 +126,13 @@ services:
     restart: unless-stopped
     profiles: [app]
     # Context is resolved against the compose project directory (repo root).
-    build: { context: frontend }
+    # NETINV_VERSION stamps the footer; unset it and the build falls back to
+    # package.json, so an unstamped deployment still names a version rather
+    # than showing a blank.
+    build:
+      context: frontend
+      args:
+        NETINV_VERSION: ${NETINV_VERSION:-}
     # 8090 serves plain HTTP and does nothing but redirect to 8443. TLS is the
     # way in; the HTTP listener exists so a bookmark or a typed hostname still
     # arrives somewhere rather than failing to connect.

@@ -52,6 +52,24 @@ test("bad password shows a generic failure (no enumeration)", async ({
   await expect(page.getByText(/Sign-in failed/)).toBeVisible();
 });
 
+// The footer is the only place a running deployment states which build it is,
+// so an empty or missing version string is a real regression — it is what an
+// operator reads back when reporting a bug.
+test("footer names the version and links to the source", async ({ page }) => {
+  await page.goto("/login");
+  const footer = page.locator("footer");
+  // Signed out too: the login screen is the one page reachable without
+  // credentials, which is where you look to identify a deployment.
+  await expect(footer.getByText(/^NetInv v\d+\.\d+\.\d+/)).toBeVisible();
+  const repo = footer.getByRole("link", { name: /github\.com\/freezxp\/netinv/ });
+  await expect(repo).toHaveAttribute("href", "https://github.com/freezxp/netinv");
+  // An authenticated page carries the deployment's hostname in the referrer.
+  await expect(repo).toHaveAttribute("rel", /noreferrer/);
+
+  await login(page);
+  await expect(page.locator("footer").getByText(/^NetInv v/)).toBeVisible();
+});
+
 test("inventory lists devices and filters by search", async ({ page }) => {
   test.skip(!seeded, "needs seeded fleet");
   await login(page);
