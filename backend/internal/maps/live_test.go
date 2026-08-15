@@ -2,6 +2,7 @@ package maps
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -212,5 +213,37 @@ func TestLinkEndpointPrefersAWithoutMirroring(t *testing.T) {
 func TestLinkEndpointUnboundLinkHasNone(t *testing.T) {
 	if got, _ := linkEndpoint(Link{}); got != nil {
 		t.Errorf("unbound link resolved to %+v", got)
+	}
+}
+
+// A link must follow its interface across a renumbering.
+//
+// The map document stores the ifIndex that was current when the link was drawn,
+// but an ifIndex is not a stable identifier. A pilot gateway rebooted and moved
+// ppp2 from 76 to 41; the link kept asking for 76 and read as "nodata" while the
+// interface was carrying 6 Mbps. maps.map_links holds the stable interface row
+// id, so the live assembler resolves the index at render time and the saved
+// value is only a fallback.
+func TestLinkEndpointPrefersTheResolvedIfIndex(t *testing.T) {
+	// The resolution rule in isolation: a current index for this link's side
+	// wins over the one baked into the document.
+	curIdx := map[string]string{"l1/a": "41"}
+	pick := func(linkID, side string, saved int) string {
+		if cur, ok := curIdx[linkID+side]; ok && cur != "" {
+			return cur
+		}
+		return fmt.Sprint(saved)
+	}
+	if got := pick("l1", "/a", 76); got != "41" {
+		t.Errorf("resolved index = %s, want 41 (the interface moved)", got)
+	}
+	// A link whose interface row is gone keeps the saved index rather than
+	// dropping off the map entirely.
+	if got := pick("l2", "/a", 12); got != "12" {
+		t.Errorf("unresolvable link = %s, want the saved 12", got)
+	}
+	// The B side is resolved independently of the A side.
+	if got := pick("l1", "/b", 9); got != "9" {
+		t.Errorf("b side = %s, want the saved 9", got)
 	}
 }

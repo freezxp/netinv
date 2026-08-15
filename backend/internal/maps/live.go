@@ -96,6 +96,39 @@ func (a *LiveAssembler) Live(ctx context.Context, mapID string) (*LiveData, erro
 			q.dst[key{s.Labels["device_id"], s.Labels["if_index"]}] = s.Value
 		}
 	}
+	// An ifIndex is not a stable identifier, so the one saved into the map
+	// document when the link was drawn is only a snapshot. Agents renumber:
+	// a pilot gateway rebooted and moved ppp2 from ifIndex 76 to 41, and every
+	// link still pointing at 76 went flat while the interface itself was busy.
+	//
+	// maps.map_links already carries the stable interface row id alongside each
+	// link, so the current index can be resolved at render time. The document's
+	// value stays as the fallback: a link drawn against a device that has since
+	// been deleted still renders as nodata rather than failing the whole map.
+	curIdx := map[string]string{} // link id + "/a"|"/b" → current ifIndex
+	if rows, err := a.Store.Pool.Query(ctx, `
+		SELECT l.link_key,
+		       ia.if_index::text, ib.if_index::text
+		FROM maps.map_links l
+		LEFT JOIN inventory.interfaces ia ON ia.id = l.a_if_id
+		LEFT JOIN inventory.interfaces ib ON ib.id = l.b_if_id
+		WHERE l.map_id = $1`, mapID); err == nil {
+		for rows.Next() {
+			var linkKey string
+			var aIdx, bIdx *string
+			if rows.Scan(&linkKey, &aIdx, &bIdx) != nil {
+				continue
+			}
+			if aIdx != nil {
+				curIdx[linkKey+"/a"] = *aIdx
+			}
+			if bIdx != nil {
+				curIdx[linkKey+"/b"] = *bIdx
+			}
+		}
+		rows.Close()
+	}
+
 	// Node states: device reachability + worst active alert (one query each).
 	icmpUp := map[string]float64{}
 	if series, err := a.VM.Query(ctx, `netinv_icmp_up`); err == nil {
@@ -144,7 +177,15 @@ func (a *LiveAssembler) Live(ctx context.Context, mapID string) (*LiveData, erro
 		ll := LinkLive{ID: l.ID, State: "nodata"}
 		ep, mirrored := linkEndpoint(l)
 		if ep != nil {
-			k := key{ep.DeviceID, fmt.Sprint(ep.IfIndex)}
+			side := "/a"
+			if mirrored {
+				side = "/b"
+			}
+			ifi := fmt.Sprint(ep.IfIndex)
+			if cur, ok := curIdx[l.ID+side]; ok && cur != "" {
+				ifi = cur
+			}
+			k := key{ep.DeviceID, ifi}
 			in, eg := rateIn[k], rateOut[k]
 			if mirrored {
 				// in/out stay relative to the link's own A side, so reading

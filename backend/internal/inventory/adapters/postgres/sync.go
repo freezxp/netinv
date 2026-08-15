@@ -82,6 +82,53 @@ func (r *SyncRepo) Apply(ctx context.Context, deviceID string, res app.DiffResul
 		}
 
 		newIDs := map[int]string{} // ifIndex → interface id (for adjacency binding)
+		// Interface reconciliation runs in three steps, and the order is load
+		// bearing: agents renumber interfaces, so an ifIndex an interface is
+		// moving *to* may still be held by another row of the same device.
+		//
+		// 1. Retire what vanished, which releases the ifIndexes of rows that are
+		//    no longer present (uniqueness applies to present rows only —
+		//    migration 0011).
+		lifecycle := []struct {
+			ids []string
+			sql string
+		}{
+			{res.MissingIDs, `UPDATE inventory.interfaces SET state='missing',
+				miss_streak=1, missing_since=now(), updated_at=now() WHERE id = any($1)`},
+			{res.StreakIDs, `UPDATE inventory.interfaces SET miss_streak=miss_streak+1,
+				updated_at=now() WHERE id = any($1)`},
+			{res.RemovedIDs, `UPDATE inventory.interfaces SET state='removed',
+				updated_at=now() WHERE id = any($1)`},
+		}
+		for _, l := range lifecycle {
+			if len(l.ids) == 0 {
+				continue
+			}
+			if _, err := tx.Exec(ctx, l.sql, l.ids); err != nil {
+				return errx.Wrap(errx.KindTransient, err, "interface lifecycle")
+			}
+		}
+
+		// 2. Park every row whose ifIndex is being reassigned at the negative of
+		//    its current value. Two live interfaces can *swap* ifIndexes across a
+		//    reboot, and retiring rows does nothing for that: updating either one
+		//    first collides with the other. Negatives are unreachable for a real
+		//    ifIndex and never escape the transaction.
+		var reassigned []string
+		for _, u := range res.Upserts {
+			if u.ExistingID != "" {
+				reassigned = append(reassigned, u.ExistingID)
+			}
+		}
+		if len(reassigned) > 0 {
+			if _, err := tx.Exec(ctx, `UPDATE inventory.interfaces
+				SET if_index = -if_index
+				WHERE id = any($1) AND if_index > 0`, reassigned); err != nil {
+				return errx.Wrap(errx.KindTransient, err, "park interface indexes")
+			}
+		}
+		// 3. Write the interfaces the device reported, claiming the now-free
+		//    ifIndexes.
 		for _, u := range res.Upserts {
 			if u.ExistingID == "" {
 				ifID := id.New("if")
@@ -92,7 +139,8 @@ func (r *SyncRepo) Apply(ctx context.Context, deviceID string, res app.DiffResul
 						 speed_bps, phys_address, admin_status, oper_status, ever_up)
 					VALUES ($1,$2,$3,nullif($4,''),nullif($5,''),nullif($6,''),$7,$8,$9,
 					        nullif($10,'')::macaddr,$11,$12,$12 = 1)
-					ON CONFLICT (device_id, if_index) DO UPDATE SET
+					ON CONFLICT (device_id, if_index) WHERE state = 'present'
+					DO UPDATE SET
 						name = excluded.name, alias = excluded.alias,
 						ever_up = inventory.interfaces.ever_up OR excluded.ever_up,
 						state = 'present', miss_streak = 0, updated_at = now()`,
@@ -119,26 +167,6 @@ func (r *SyncRepo) Apply(ctx context.Context, deviceID string, res app.DiffResul
 				return errx.Wrap(errx.KindTransient, err, "update interface")
 			}
 		}
-		lifecycle := []struct {
-			ids []string
-			sql string
-		}{
-			{res.MissingIDs, `UPDATE inventory.interfaces SET state='missing',
-				miss_streak=1, missing_since=now(), updated_at=now() WHERE id = any($1)`},
-			{res.StreakIDs, `UPDATE inventory.interfaces SET miss_streak=miss_streak+1,
-				updated_at=now() WHERE id = any($1)`},
-			{res.RemovedIDs, `UPDATE inventory.interfaces SET state='removed',
-				updated_at=now() WHERE id = any($1)`},
-		}
-		for _, l := range lifecycle {
-			if len(l.ids) == 0 {
-				continue
-			}
-			if _, err := tx.Exec(ctx, l.sql, l.ids); err != nil {
-				return errx.Wrap(errx.KindTransient, err, "interface lifecycle")
-			}
-		}
-
 		// Topology adjacencies (LLDP/CDP) — refresh last_seen, insert new.
 		for _, a := range adjacencies {
 			ifID := newIDs[a.LocalIfIndex]
