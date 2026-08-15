@@ -45,6 +45,30 @@ frontend/
 
 Rules: features may import `components/`, `lib/`, `api/` — never each other (eslint boundary rule; cross-feature needs promote to shared). All server data through `api/hooks` (no raw fetch in features). All permission-gated UI through `<Can permission="alerts:ack">` helper so RBAC is greppable.
 
+## Bundle & code splitting
+
+Login and the dashboard are eager; every other route is `React.lazy`, and the
+weathermap canvas is lazy *within* the dashboard as well, because the dashboard
+is the landing route and would otherwise pull the graph library in front of
+first paint for an operator whose layout has no map panel.
+
+`@xyflow/react` is the heaviest dependency by a wide margin — 189 kB of the
+bundle on its own. Splitting it out took the initial chunk from **670 kB to 380
+kB** (216 kB → 128 kB gzipped) and the login page now fetches exactly two
+assets, neither containing the graph library.
+
+**A library's stylesheet is imported by the module that renders it**, not by a
+page. `@xyflow/react/dist/style.css` used to be imported by the two map pages
+only, which was invisibly wrong while the app was a single bundle: the
+dashboard's weathermap panel rendered correctly on a stylesheet pulled in by a
+page it never loads. Code splitting turned that into a blank panel — nodes
+present in the DOM at `position: static`, stacked in document order, with no
+console error. The import now lives in `features/maps/canvas.tsx`, which every
+consumer of the canvas already imports, so it travels with any chunk that
+renders a flow. An e2e test asserts a dashboard node computes to
+`position: absolute`, which is the cheapest way to catch a missing stylesheet;
+asserting the nodes merely *exist* would have passed throughout.
+
 ## Key implementation notes
 
 - **Live data:** TanStack Query `refetchInterval`: dashboard panels 30 s, map live 15–30 s, alert list 15 s — all hitting cached aggregate endpoints (doc 05 §7), so polling is cheap. SSE upgrade is a v1.x seam (`api/client.ts` isolates it).

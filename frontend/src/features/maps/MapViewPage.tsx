@@ -3,7 +3,6 @@
 import { useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { ReactFlow, Background, ConnectionMode, Controls } from "@xyflow/react";
-import "@xyflow/react/dist/style.css";
 import { useMapDef, useMapLive, utilLegend } from "./api";
 import { edgeTypes, nodeTypes, toFlow } from "./canvas";
 import { LinkGraph } from "./LinkGraph";

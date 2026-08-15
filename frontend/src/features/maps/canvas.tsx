@@ -1,4 +1,12 @@
 // Shared React Flow canvas pieces: device node, definition<->flow mapping.
+//
+// The library's stylesheet is imported here, with the code that needs it, so
+// that any chunk rendering a flow carries it. It used to be imported by the map
+// pages only, which worked by accident while the app was a single bundle: the
+// dashboard's weathermap panel was relying on a stylesheet pulled in by a page
+// it never loads. Splitting the bundle turned that into a blank panel — nodes
+// present in the DOM, `position: static`, stacked in document order.
+import "@xyflow/react/dist/style.css";
 import {
   Handle,
   Position,

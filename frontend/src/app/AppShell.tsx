@@ -1,6 +1,6 @@
 // Application shell (doc 30 §0): sidebar collapsible to icons, theme toggle,
 // auth guard with silent session restore.
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { useAuthStore } from "../features/auth/store";
 import { useSessionRestore } from "../features/auth/useSessionRestore";
@@ -219,7 +219,12 @@ export function AppShell() {
           inside stretches the flex item instead of scrolling. */}
       <main className="flex min-w-0 flex-1 flex-col overflow-auto p-4 md:p-6">
         <div className="min-w-0 flex-1">
-          <Outlet />
+          {/* Routes are code-split, so the first visit to a page waits on its
+              chunk. The fallback is deliberately plain: a spinner that appears
+              for 50ms on a fast connection reads as a flicker. */}
+          <Suspense fallback={<div className="text-sm text-slate-500">Loading…</div>}>
+            <Outlet />
+          </Suspense>
         </div>
         <Footer className="mt-6 border-t border-slate-200 pt-3 dark:border-slate-800" />
       </main>

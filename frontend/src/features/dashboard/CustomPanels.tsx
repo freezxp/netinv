@@ -1,8 +1,8 @@
 // The two panel kinds that carry their own configuration: an embedded
 // weathermap, and a chart of any metric the deployment publishes.
+import { Suspense, lazy } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { ReactFlow, Background, ConnectionMode } from "@xyflow/react";
 import { api } from "../../api/client";
 import {
   flowSelector,
@@ -16,9 +16,12 @@ import { rateWindow, useTimeRange } from "../../api/timerange";
 import { Card, EmptyState } from "../../components/ui";
 import { TimeSeries } from "../../components/TimeSeries";
 import { DIMENSION_NOUN, FlowTable } from "../../components/FlowTable";
-import { edgeTypes, nodeTypes, toFlow } from "../maps/canvas";
 import { useMapDef, useMapLive } from "../maps/api";
 import type { Panel } from "./layout";
+
+// Loaded on demand: see WeathermapCanvas for why the graph library must not be
+// part of the initial bundle.
+const WeathermapCanvas = lazy(() => import("./WeathermapCanvas"));
 
 export interface MapSummary {
   id: string;
@@ -62,31 +65,14 @@ export function WeathermapPanel({ panel }: { panel: Panel }) {
     );
   }
 
-  const flow = toFlow(def.data.definition, live.data);
   return (
     <Card title={panel.title || name}>
+      {/* The fallback holds the panel's exact height so the dashboard does not
+          reflow when the chunk arrives. */}
       <div className="h-[320px] w-full">
-        <ReactFlow
-          nodes={flow.nodes}
-          edges={flow.edges}
-          nodeTypes={nodeTypes}
-          edgeTypes={edgeTypes}
-          // Must match the editor and viewer: nodes declare every handle as a
-          // source, and Strict mode cannot resolve a target handle, so links
-          // silently vanish.
-          connectionMode={ConnectionMode.Loose}
-          fitView
-          nodesDraggable={false}
-          nodesConnectable={false}
-          elementsSelectable={false}
-          panOnDrag={false}
-          zoomOnScroll={false}
-          zoomOnPinch={false}
-          preventScrolling={false}
-          proOptions={{ hideAttribution: true }}
-        >
-          <Background gap={16} />
-        </ReactFlow>
+        <Suspense fallback={<div className="h-full w-full" />}>
+          <WeathermapCanvas definition={def.data.definition} live={live.data} />
+        </Suspense>
       </div>
       <div className="mt-1 text-right">
         <Link

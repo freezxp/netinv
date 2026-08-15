@@ -11,7 +11,6 @@ import {
   type Connection,
   type NodeChange,
 } from "@xyflow/react";
-import "@xyflow/react/dist/style.css";
 import {
   useMapDef,
   usePublish,

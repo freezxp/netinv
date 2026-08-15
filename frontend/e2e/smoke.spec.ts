@@ -70,6 +70,24 @@ test("footer names the version and links to the source", async ({ page }) => {
   await expect(page.locator("footer").getByText(/^NetInv v/)).toBeVisible();
 });
 
+// The dashboard's weathermap must carry its own stylesheet.
+//
+// React Flow positions nodes absolutely from `@xyflow/react/dist/style.css`.
+// That import lived only in the map *pages*, so while the app was a single
+// bundle the dashboard panel rendered correctly by accident — on a stylesheet
+// pulled in by a page it never loads. Code-splitting turned that into a blank
+// panel with the nodes present in the DOM at `position: static`, which is
+// invisible to any assertion that only checks for elements.
+test("the dashboard weathermap carries its own stylesheet", async ({ page }) => {
+  test.skip(!seeded, "needs a dashboard with a weathermap panel");
+  await login(page);
+  const node = page.locator(".react-flow__node").first();
+  await node.waitFor();
+  await expect(
+    node.evaluate((el) => getComputedStyle(el).position),
+  ).resolves.toBe("absolute");
+});
+
 test("inventory lists devices and filters by search", async ({ page }) => {
   test.skip(!seeded, "needs seeded fleet");
   await login(page);
