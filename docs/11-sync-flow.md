@@ -65,7 +65,7 @@ symptom was a weathermap link that had gone flat.
 **Consumers must resolve ifIndex, not store it.** A weathermap link records the
 ifIndex current when it was drawn, so the live assembler resolves the index from
 `maps.map_links`' stable interface row id at render time and treats the saved
-value as a fallback (doc 12 §4). Anything else that pins an ifIndex will go
+value as a fallback (doc 30 §3). Anything else that pins an ifIndex will go
 quietly wrong the next time a device renumbers.
 
 ## 4. Deleted-asset detection (FR-SYNC-03)

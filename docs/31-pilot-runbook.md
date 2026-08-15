@@ -144,6 +144,65 @@ fleet site by site. Watch the capacity triggers (doc 04 §1): at ~5k devices
 move VictoriaMetrics to `vmcluster` and add PgBouncer; the app itself does not
 change (ADR-004).
 
+## 9. When it looks healthy and the data is wrong
+
+Every fault below was found on the pilot, and each one presented as a *healthy*
+system: devices up, polls succeeding, no errors logged, graphs drawing. The
+green tick is not the check. Work from the data.
+
+**First: is collection actually advancing?** Judge it by the counter, never by
+query freshness — `timestamp(last_over_time(m[10m]))` in an instant query does
+not advance reliably under VictoriaMetrics' `-search.latencyOffset` and result
+caching, and reads as a dead stall on a perfectly healthy stack.
+
+```bash
+curl -s localhost:8428/metrics | grep '^vm_rows_inserted_total'   # twice, 60s apart
+```
+
+A fleet of 232 interfaces on a 60 s cadence is roughly 32 rows/s.
+
+**A device graphs some interfaces and not others.** The agent's walk is broken
+while its data is fine — compare a walk against a GET for the same OID:
+
+```bash
+snmpwalk -v2c -c <community> <host> 1.3.6.1.2.1.2.2.1.10 | wc -l
+snmpget  -v2c -c <community> <host> 1.3.6.1.2.1.2.2.1.10.<if_index>
+```
+
+Far fewer walk rows than `ifOperStatus` is this fault. The connector repairs it
+with targeted GETs and reports `netinv_if_counters_repaired` — zero on a healthy
+agent (doc 10 §7). Restart `snmpd` on the device; the repair keeps the graphs
+honest until you do, and the metric returning to 0 is how you confirm the fix
+took rather than the connector still compensating.
+
+**A whole site is losing polls while reporting success.** A leaked AMQP consumer
+takes a share of the jobs and acks none:
+
+```bash
+rabbitmqctl list_queues name messages messages_unacknowledged consumers
+```
+
+More than one consumer on a site queue, or unacked messages with nothing ready,
+is this fault (doc 07 §6.1).
+
+**A device's inventory is frozen at an old topology.** A sync that cannot apply
+is requeued every second forever:
+
+```bash
+docker logs netinv-api-1 | grep "sync result requeued"
+```
+
+A repeating `duplicate key ... interfaces_device_id_if_index` is the reindex
+case (doc 11 §3.1). Symptoms are indirect: interface names and states stop
+matching the device, and any weathermap link on a renumbered interface goes
+flat.
+
+**A weathermap link reads `nodata` while the interface is busy.** Check the
+device's Interfaces tab first: if the interface is passing traffic, the link is
+resolving to an ifIndex the device no longer has. Confirm inventory is current
+(the check above), then re-open the map — links resolve their index at render
+time (doc 30 §3), so a healthy sync fixes the link with no edit.
+
 ## Rollback
 
 `helm rollback netinv` is safe one version back — migrations are

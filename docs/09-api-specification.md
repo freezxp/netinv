@@ -209,6 +209,8 @@ Built-in rules (`is_builtin`, the FR-ALR-07 pack) are **fully editable** — thr
 ```
 `from_handle`/`to_handle` (`t|r|b|l`) record which side of each node the operator drew the line from, so a map redraws as it was arranged; both are cosmetic and optional. Node `kind` is one of `device|site|cloud|label`; only `device` carries a live state, the rest stand for things NetInv does not poll (FR-MAP-02). Saved definitions are validated server-side — known kinds, unique ids, device nodes carrying a device, links joining nodes that exist — because the renderer silently skips anything malformed.
 
+**`if_index` in a saved endpoint is a snapshot, not a binding.** The server stores each link's interface by its stable row id as well, and `GET /maps/{id}/live` resolves the current index from that at render time, falling back to the value in the document only when it no longer resolves. A map saved before a device renumbered therefore keeps working, and a client that reads `if_index` out of a map document to query metrics with will not (doc 30 §3).
+
 **One bound endpoint is enough.** Rates come from `a_endpoint` when it is bound and from `b_endpoint` otherwise, mirrored so both stay relative to the link's A side. A link to something unpollable has only one real interface, and which slot it lands in depends only on the direction it was drawn (FR-MAP-03).
 **GET /maps/{id}/live** → `{"as_of":"…","nodes":[{"id":"n1","state":"up","worst_alert":"warning"}],"links":[{"id":"l1","in_bps":8.1e9,"out_bps":2.3e9,"util_in":81.0,"util_out":23.0,"capacity_bps":1.0e10,"state":"up"}]}`
 

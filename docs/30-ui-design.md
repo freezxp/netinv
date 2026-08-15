@@ -52,6 +52,19 @@ Recent events stream (P1) docks as row 6 when enabled. All panels read cached ag
 
 ## 3. Weathermaps `/maps`, `/maps/:id`, `/maps/:id/edit` (flagship)
 
+**A link binds to an interface, not to its ifIndex.** The saved map document
+records the `if_index` that was current when the link was drawn, but an ifIndex
+is not a stable identifier — agents renumber across reboots (doc 11 §3.1). The
+live assembler therefore resolves each endpoint's index from the stable
+interface row id in `maps.map_links` at render time, and falls back to the
+document's value only when that no longer resolves, so a link drawn against a
+since-deleted device renders as `nodata` instead of failing the whole map.
+
+Before that, a pilot gateway rebooted, `ppp2` moved from ifIndex 76 to 41, and
+the link read `nodata` while the interface itself carried 6 Mbps — the map
+silently disagreed with the device tab of the very interface it pointed at.
+Anything else that pins an ifIndex will go the same way.
+
 **Parallel links.** More than one link between the same pair of nodes is a real thing to draw — a second WAN circuit, a LAG member, a second tunnel — and the definition always allowed it, since links carry their own ids and nothing dedupes them. What it did not allow was *seeing* it: coincident links drew the same path, so three rendered as one line and only the topmost could be clicked. Links sharing both endpoints **and** both handles are now laid out in lanes, offset perpendicular to the line and spread symmetrically about it, so a lone link keeps exactly the centre line it always had. The bundle is direction-agnostic — A→B and B→A between the same sides are the same geometry — and handles are part of the key, because links attached to different sides of a node already diverge and should be left alone.
 
 **Editing links.** A selected link's panel offers **Remove link**, and the Delete key removes it too. Previously neither existed: the only way to drop a link was to delete one of the nodes it joined, which took every other link on that node with it — rebuilding a node to remove one link is not a workflow. The keyboard path needed edge selection to be driven by the editor's own state, because `toFlow` rebuilds every edge object from the definition on each render and wiped React Flow's internal selection flag, leaving the key with nothing to act on.

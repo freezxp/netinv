@@ -12,14 +12,16 @@
 ```
 Overall backend ≥70% lines; `domain/` + SyncDiffer + RuleEvaluator + DerivationService ≥90%; connectors ≥90% of mapping code. Coverage is a CI gate but reviewed for meaning, not gamed.
 
-### 1.1 Where coverage actually stands (2026-08-10)
+### 1.1 Where coverage actually stands
 
 Those are targets, and the distance to them is large enough that stating it plainly is more useful than restating the goal:
 
+The two module-level rows were measured on **2026-08-15** by `scripts/coverage.sh`, which is what CI gates on. The per-component rows below them date from **2026-08-10** and were scoped by hand; they are left as they were rather than overwritten with a differently-scoped number, because a coverage figure is only comparable to one measured the same way.
+
 | Scope | Target | Measured |
 |---|---|---|
-| Backend overall | ≥70% | **18.4%** |
-| `connectors/` module | ≥90% of mapping code | 71.6% |
+| Backend overall | ≥70% | **26.8%** |
+| `connectors/` module | ≥90% of mapping code | 70.0% |
 | `domain/` packages | ≥90% | 82.1% |
 | SyncDiffer (`inventory/app/sync`) | ≥90% | 62.3% |
 | RuleEvaluator (`alerting/app/evaluator`) | ≥90% | 51.8% |
@@ -28,7 +30,7 @@ Those are targets, and the distance to them is large enough that stating it plai
 
 The shape is what one would expect from a codebase built outside-in against a live pilot: domain logic and connector mapping are reasonably covered, while adapters — HTTP handlers, Postgres stores, AMQP publishers, the six `cmd/` entrypoints — sit near zero and dominate the total.
 
-The CI gate is therefore a **ratchet, not the 70% bar**: `scripts/coverage.sh` fails when coverage falls below `scripts/coverage-floor.txt`, currently 18.0% — raised four times as tests landed alongside features, each time as a deliberate commit. Gating at 70% today would produce a permanently red build, which teaches everyone to ignore CI and is worse than no gate. Raising the floor is a deliberate commit, so progress shows up in history instead of being asserted here. The 70% target stands; this records the honest starting point for closing it.
+The CI gate is therefore a **ratchet, not the 70% bar**: `scripts/coverage.sh` fails when coverage falls below `scripts/coverage-floor.txt`, currently 26.0% — raised seven times as tests landed alongside features, each time as a deliberate commit. Gating at 70% today would produce a permanently red build, which teaches everyone to ignore CI and is worse than no gate. Raising the floor is a deliberate commit, so progress shows up in history instead of being asserted here. The 70% target stands; this records the honest starting point for closing it.
 
 ## 2. The SNMP problem — simulate, then verify on real iron
 

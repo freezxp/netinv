@@ -32,7 +32,7 @@ Error budgets gate feature-vs-hardening choices in sprint planning (doc 27).
 ## 3. Self-alert rules (shipped enabled)
 
 Critical: any service target down >2 min · schedule lag p95 > poll interval · `metrics.raw` or any DLQ growing >5 min · poller heartbeat missed (per site) · VM/PG/Redis/RabbitMQ down or disk >85% · ingest freshness SLO burn >14×.
-Warning: poller buffer non-empty >5 min · validation rejects >1% · notifier retries elevated · PG replication lag (once replica exists) · certificate expiry <21 d · backup job missed/failed · enrichment snapshot stale >10 min.
+Warning: `netinv_if_counters_repaired > 0` sustained (an agent whose walk is broken; NetInv is compensating with GETs and the device wants restarting — doc 10 §7) · a site job queue with more than one consumer, or unacked messages with nothing ready (a leaked AMQP consumer — doc 07 §6.1) · repeating `sync result requeued` for one device (a sync that cannot apply, freezing that device's inventory — doc 11 §3.1) · poller buffer non-empty >5 min · validation rejects >1% · notifier retries elevated · PG replication lag (once replica exists) · certificate expiry <21 d · backup job missed/failed · enrichment snapshot stale >10 min.
 
 ## 4. The dead-man's switch (who watches the watcher)
 
