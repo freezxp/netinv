@@ -215,15 +215,17 @@ func (f *brokenWalkSession) Target() sdk.TargetMeta {
 // like the handful of stub tunnels the real device still enumerated.
 func gatewayWithBrokenCounterWalk() *brokenWalkSession {
 	data := map[string]any{}
-	for i := 1; i <= 20; i++ {
-		idx := strconv.Itoa(i)
+	// Counters are built in uint64 throughout: an SNMP Counter64 arrives as one,
+	// and converting from int here trips gosec's overflow check for no gain.
+	for i := uint64(1); i <= 20; i++ {
+		idx := strconv.FormatUint(i, 10)
 		data[".1.3.6.1.2.1.2.2.1.1."+idx] = i
 		data[".1.3.6.1.2.1.2.2.1.2."+idx] = "eth" + idx
 		data[".1.3.6.1.2.1.2.2.1.7."+idx] = 1
 		data[".1.3.6.1.2.1.2.2.1.8."+idx] = 1
-		data[".1.3.6.1.2.1.2.2.1.10."+idx] = uint64(1000 + i)
-		data[".1.3.6.1.2.1.2.2.1.14."+idx] = uint64(i)
-		data[".1.3.6.1.2.1.31.1.1.1.6."+idx] = uint64(5_000_000_000 + i)
+		data[".1.3.6.1.2.1.2.2.1.10."+idx] = 1000 + i
+		data[".1.3.6.1.2.1.2.2.1.14."+idx] = i
+		data[".1.3.6.1.2.1.31.1.1.1.6."+idx] = 5_000_000_000 + i
 	}
 	return &brokenWalkSession{
 		data: data,
@@ -249,8 +251,8 @@ func TestPartialCounterWalkIsRepairedByGet(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Every interface must carry traffic, not just the one the walk returned.
-	for i := 1; i <= 20; i++ {
-		idx := strconv.Itoa(i)
+	for i := uint64(1); i <= 20; i++ {
+		idx := strconv.FormatUint(i, 10)
 		v, ok := find(samples, "netinv_if_in_octets_total", idx)
 		if !ok {
 			t.Fatalf("if %s has no in-octets: the partial walk was not repaired", idx)
@@ -302,10 +304,10 @@ func TestAbsentColumnIsNotProbedEveryPoll(t *testing.T) {
 	// A pure 32-bit agent has no ifXTable at all. That is an absent column, not
 	// a broken walk, and probing it would buy a PDU of nulls on every poll.
 	data := map[string]any{}
-	for i := 1; i <= 8; i++ {
-		idx := strconv.Itoa(i)
+	for i := uint64(1); i <= 8; i++ {
+		idx := strconv.FormatUint(i, 10)
 		data[".1.3.6.1.2.1.2.2.1.1."+idx] = i
-		data[".1.3.6.1.2.1.2.2.1.10."+idx] = uint64(100 + i)
+		data[".1.3.6.1.2.1.2.2.1.10."+idx] = 100 + i
 	}
 	sess := &brokenWalkSession{data: data, walkableK: func(string) bool { return true }}
 	if _, err := New().CollectInterfaces(context.Background(), sess); err != nil {
