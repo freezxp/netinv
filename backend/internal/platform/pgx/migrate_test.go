@@ -75,6 +75,7 @@ func TestMigrateUpDownUp(t *testing.T) {
 	}
 	assertFlowStalenessRules(ctx, t, pool)
 	assertProbeErrorRule(ctx, t, pool)
+	assertDeviceDownRequiresBothSignals(ctx, t, pool)
 
 	// Roll all the way down and back up — every Down must work, and the
 	// schema must be fully reconstructable (NFR-51).
@@ -267,5 +268,57 @@ func TestBuiltinRuleSeedingToleratesANameCollision(t *testing.T) {
 	}
 	if n != 1 {
 		t.Fatalf("%d rules with that name, want the operator's one left alone", n)
+	}
+}
+
+// assertDeviceDownRequiresBothSignals guards migration 0016.
+//
+// "Device down" used to mean "ping failed", which raised a critical alert for
+// a device that was answering SNMP perfectly — a management ACL permitting
+// udp/161 but not ICMP is enough to do it. It now requires both signals, with
+// the ping-only case split off as a warning.
+//
+// The `unless` is the part worth a test. Written as `and` against
+// SNMP-is-failing, a device with no SNMP agent at all — an ICMP-only polling
+// profile, which is exactly what a mesh-joined AP runs on — would have an
+// empty right-hand side and could never raise a device-down alert again. The
+// one device whose only signal is ping would be the one that cannot alert on
+// losing it.
+func assertDeviceDownRequiresBothSignals(ctx context.Context, t *testing.T, pool *pgxpool.Pool) {
+	t.Helper()
+	var downExpr, icmpExpr string
+	if err := pool.QueryRow(ctx,
+		`SELECT expr FROM alerting.alert_rules WHERE id = 'ar_device_down'`).
+		Scan(&downExpr); err != nil {
+		t.Fatalf("ar_device_down missing: %v", err)
+	}
+	if err := pool.QueryRow(ctx,
+		`SELECT expr FROM alerting.alert_rules WHERE id = 'ar_icmp_down'`).
+		Scan(&icmpExpr); err != nil {
+		t.Fatalf("ar_icmp_down missing: %v", err)
+	}
+	if !strings.Contains(downExpr, "netinv_poll_success") {
+		t.Errorf("ar_device_down ignores SNMP: %q", downExpr)
+	}
+	if !strings.Contains(downExpr, "unless") {
+		t.Errorf("ar_device_down uses %q — an `and` here silently excludes "+
+			"devices with no SNMP agent from ever alerting", downExpr)
+	}
+	if !strings.Contains(icmpExpr, " and on (device_id) ") {
+		t.Errorf("ar_icmp_down must require SNMP to be working, got %q", icmpExpr)
+	}
+	// The two must be mutually exclusive, or one fault pages twice.
+	if strings.Contains(icmpExpr, "unless") {
+		t.Errorf("ar_icmp_down overlaps ar_device_down: %q", icmpExpr)
+	}
+	var severity string
+	if err := pool.QueryRow(ctx,
+		`SELECT severity::text FROM alerting.alert_rules WHERE id = 'ar_icmp_down'`).
+		Scan(&severity); err != nil {
+		t.Fatal(err)
+	}
+	if severity != "warning" {
+		t.Errorf("ar_icmp_down severity is %q — a device that answers SNMP is "+
+			"not a critical", severity)
 	}
 }
