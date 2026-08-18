@@ -71,7 +71,11 @@ func main() {
 			pollerID, siteID = agent.Identity.PollerID, agent.Identity.SiteID
 			siteIDs = []string{siteID} // an enrolled poller serves its own site
 		}
-		if siteID == "" {
+		// Idle means "nothing to serve", which is not the same as "no single
+		// site": a poller set to "*" has no site of its own and every site to
+		// serve. Keying this on siteID alone sent the wildcard straight to
+		// idle — configured, connected, and consuming nothing.
+		if len(siteIDs) == 0 {
 			rt.Log.Warn("no site identity (set NETINV_API_URL+NETINV_ENROLL_TOKEN or NETINV_SITE_ID) — idle")
 			rt.Health.SetReady(true)
 			<-ctx.Done()
