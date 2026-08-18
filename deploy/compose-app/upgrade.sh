@@ -208,12 +208,23 @@ if [ -n "$pg_container" ]; then
 		sleep 2
 	done
 	echo "  schema version: ${db_version:-unknown} (highest migration on disk: ${disk_version:-unknown})"
-	if [ -n "$db_version" ] && [ -n "$disk_version" ] && [ "$db_version" != "$disk_version" ]; then
+	# The two directions are different faults and only one of them is about a
+	# stale image, so do not report them with one message.
+	if [ -n "$db_version" ] && [ -n "$disk_version" ] && [ "$db_version" -lt "$disk_version" ]; then
 		echo >&2
-		echo "  Schema is behind the migrations in this checkout. The api image is" >&2
+		echo "  Schema is BEHIND the migrations in this checkout. The api image is" >&2
 		echo "  probably stale — migrations ship inside the binary, so a new .sql" >&2
 		echo "  file does nothing until the image is rebuilt. Check:" >&2
 		echo "    ${COMPOSE[*]} logs --tail 30 api" >&2
+	elif [ -n "$db_version" ] && [ -n "$disk_version" ] && [ "$db_version" -gt "$disk_version" ]; then
+		echo >&2
+		echo "  Schema is AHEAD of this checkout: the database has migration" >&2
+		echo "  $db_version applied and the tree only goes to $disk_version. You have just" >&2
+		echo "  deployed code older than the data it runs against. goose does not" >&2
+		echo "  roll anything back on its own, so the schema is intact — but the" >&2
+		echo "  build is a downgrade, and whatever shipped with the later" >&2
+		echo "  migrations is gone. Check out the branch the stack was built from" >&2
+		echo "  (or merge it in) and re-run." >&2
 	fi
 fi
 
