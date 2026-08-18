@@ -94,15 +94,18 @@ docker logs -f netinv-api-1           # follow a service
 ### Upgrading an existing deployment
 
 ```bash
-./deploy/compose-app/upgrade.sh                 # rebuild from the working tree
-./deploy/compose-app/upgrade.sh --latest        # fast-forward to origin, then deploy
+./deploy/compose-app/upgrade.sh                 # pull the latest, then deploy
+./deploy/compose-app/upgrade.sh --no-pull       # deploy the working tree as it is
+./deploy/compose-app/upgrade.sh --latest        # pull, and fail if it cannot
 ./deploy/compose-app/upgrade.sh --ref v1.1.0    # deploy a tag, branch or commit
 ./deploy/compose-app/upgrade.sh --dry-run       # print the plan, change nothing
 ./deploy/compose-app/upgrade.sh --recover       # stack is down: bring it back up
 ./deploy/compose-app/upgrade.sh --no-rollback   # leave a failure in place to inspect
 ```
 
-**To deploy the newest code, use `--latest`.** A plain run rebuilds the checkout exactly as it stands, which is not the same thing — so every run fetches and reports where the checkout sits against its upstream (`tracking origin/main: 2 behind, 0 ahead`), and says outright when newer commits exist that this run is not deploying.
+**A plain run pulls first.** A deployment host's checkout should track the remote, and "deploy" almost always means "deploy what was pushed", so the script fetches, reports where the checkout sits against its upstream (`tracking origin/main: 2 behind, 0 ahead`), and fast-forwards before building.
+
+The pull degrades rather than blocks. A stray edited file on the host, a detached checkout, or a branch holding local commits all stop the fast-forward — and none of them should stop an upgrade someone is running to fix something — so it says `NOT PULLING: <reason>`, states that it is deploying the tree as it stands, and carries on. `--latest` asks for the pull *explicitly* and therefore makes every one of those fatal instead: it is the form to use in automation, where deploying older code while reporting success is the failure worth preventing. `--no-pull` skips the pull entirely and rebuilds exactly what is checked out.
 
 `--ref` takes a tag, a commit or a **branch**, and a branch name resolves to the *remote's* branch. That correction matters more than it looks: `git checkout main` after a fetch lands on the local `main`, which the fetch never moves, so asking for a branch by name used to deploy whatever it was when someone last pulled — and report success. Reproduced on a checkout two commits behind: it stayed two commits behind. Both `--latest` and a branch `--ref` are fast-forward only, so local commits the remote does not have stop the deploy loudly rather than being merged into an unreviewed build or reset away.
 
