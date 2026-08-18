@@ -13,12 +13,15 @@ import (
 	"github.com/freezxp/netinv/backend/internal/platform/wire"
 )
 
-type stubRepo struct{ due []domain.DueSchedule }
+type stubRepo struct {
+	due   []domain.DueSchedule
+	sites []string
+}
 
 func (r *stubRepo) Due(context.Context, time.Time, int) ([]domain.DueSchedule, error) {
 	return r.due, nil
 }
-func (r *stubRepo) ActiveSites(context.Context) ([]string, error) { return nil, nil }
+func (r *stubRepo) ActiveSites(context.Context) ([]string, error) { return r.sites, nil }
 
 type stubPublisher struct {
 	mu        sync.Mutex
@@ -51,6 +54,24 @@ func (p *stubPublisher) counts() (declares, published int) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.declares, p.published
+}
+
+type stubSites struct {
+	mu        sync.Mutex
+	published [][]string
+}
+
+func (p *stubSites) PublishSites(_ context.Context, sites []string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.published = append(p.published, sites)
+	return nil
+}
+
+func (p *stubSites) count() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return len(p.published)
 }
 
 type stubSecrets struct{}
@@ -188,5 +209,37 @@ func TestSchedulerRunsWithoutSiteHealth(t *testing.T) {
 	runScheduler(t, s, 60*time.Millisecond)
 	if _, published := pub.counts(); published == 0 {
 		t.Fatal("no jobs published without a SiteHealth repo")
+	}
+}
+
+// The site list is what lets a poller serve a site nobody configured it with.
+// It is republished on a timer rather than on change: a poller that missed an
+// announcement, or started after the last one, has to converge without anyone
+// creating a site to trigger it.
+func TestSchedulerAnnouncesTheActiveSiteList(t *testing.T) {
+	sites := &stubSites{}
+	s := &Scheduler{
+		Repo:      &stubRepo{due: nil, sites: []string{"s_a", "s_b"}},
+		Publisher: &stubPublisher{consumers: 1},
+		Secrets:   stubSecrets{},
+		Leader:    stubLeader{},
+		Sites:     sites,
+		Log:       slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil)),
+		Tick:      5 * time.Millisecond,
+	}
+	runScheduler(t, s, 80*time.Millisecond)
+
+	if sites.count() == 0 {
+		t.Fatal("scheduler never announced the site list")
+	}
+	got := sites.published[0]
+	if len(got) != 2 || got[0] != "s_a" || got[1] != "s_b" {
+		t.Fatalf("announced %v, want the active sites", got)
+	}
+	// Announcing every tick would be needless traffic; the interval throttles
+	// it well below the 5ms tick this test runs at.
+	if sites.count() > 2 {
+		t.Fatalf("announced %d times in 80ms — the interval is not being honoured",
+			sites.count())
 	}
 }

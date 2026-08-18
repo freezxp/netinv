@@ -30,6 +30,13 @@ type JobPublisher interface {
 // SiteHealthRepo records what the broker reported about each site's queue, so
 // the API can answer "is anything collecting for this site" without an AMQP
 // connection of its own — see migration 0013 for why this is not a metric.
+// SitePublisher announces the set of sites being dispatched to, so a poller
+// running in serve-every-site mode can consume queues it was never configured
+// with. Optional: nil leaves pollers on their explicit lists.
+type SitePublisher interface {
+	PublishSites(ctx context.Context, sites []string) error
+}
+
 type SiteHealthRepo interface {
 	RecordSiteQueue(ctx context.Context, siteID string, st domain.SiteQueueState) error
 }
@@ -56,7 +63,9 @@ type Scheduler struct {
 	// disables recording, which keeps the scheduler runnable without a database
 	// in tests.
 	SiteHealth SiteHealthRepo
-	Log        *slog.Logger
+	// Sites announces the active site list on a timer (see siteAnnounce).
+	Sites SitePublisher
+	Log   *slog.Logger
 	Tick       time.Duration // default 10s
 	Batch      int           // max jobs per tick, default 5000
 }
@@ -65,6 +74,11 @@ type Scheduler struct {
 // consumer count. The declare is cheap but not free, and a poller appearing or
 // vanishing does not need to be noticed within one 10 s tick.
 const siteQueueRecheck = time.Minute
+
+// siteAnnounce is how often the active site list is published. It is the
+// upper bound on how long a device sits unpolled after being moved into a new
+// site, so it is short — but the message is tiny and only the leader sends it.
+const siteAnnounce = 15 * time.Second
 
 func (s *Scheduler) Run(ctx context.Context) error {
 	if s.Tick == 0 {
@@ -76,6 +90,7 @@ func (s *Scheduler) Run(ctx context.Context) error {
 	t := time.NewTicker(s.Tick)
 	defer t.Stop()
 	lastQueueCheck := map[string]time.Time{}
+	var lastAnnounce time.Time
 	// Previous consumer state per site, so the log fires on the transition
 	// rather than once a minute forever.
 	hadConsumers := map[string]bool{}
@@ -89,6 +104,17 @@ func (s *Scheduler) Run(ctx context.Context) error {
 			continue // standby replica
 		}
 		start := time.Now()
+		// Announce before dispatching: a poller that has just learned about a
+		// site is consuming it by the time this tick's jobs arrive, rather
+		// than one cycle later.
+		if s.Sites != nil && start.Sub(lastAnnounce) >= siteAnnounce {
+			lastAnnounce = start
+			if sites, err := s.Repo.ActiveSites(ctx); err != nil {
+				s.Log.Warn("active sites unavailable — not announcing", "err", err)
+			} else if err := s.Sites.PublishSites(ctx, sites); err != nil {
+				s.Log.Warn("site announcement failed", "err", err)
+			}
+		}
 		due, err := s.Repo.Due(ctx, start.UTC(), s.Batch)
 		if err != nil {
 			s.Log.Error("schedule scan failed", "err", err)

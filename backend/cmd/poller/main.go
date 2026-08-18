@@ -40,6 +40,10 @@ func main() {
 		// Comma-separated: one host often covers several logical sites, and a
 		// site with no consumer is never polled at all — its jobs pile up in a
 		// queue nobody reads, with nothing else reporting a problem.
+		//
+		// "*" on its own is the answer to that: serve every site the scheduler
+		// announces, so a site created later is picked up without an
+		// environment edit and a restart.
 		var siteIDs []string
 		for _, part := range strings.Split(os.Getenv("NETINV_SITE_ID"), ",") {
 			if p := strings.TrimSpace(part); p != "" {
@@ -49,6 +53,13 @@ func main() {
 		siteID := ""
 		if len(siteIDs) > 0 {
 			siteID = siteIDs[0]
+		}
+		// "*" means serve whatever the scheduler announces, so there is no one
+		// site this poller belongs to — and stamping "*" onto its metric
+		// batches as a site name would be a lie in a field readers assume is
+		// an id.
+		if siteID == pollerrt.AllSitesToken {
+			siteID = ""
 		}
 		pollerID := os.Getenv("NETINV_POLLER_ID")
 		var agent *pollerrt.Agent

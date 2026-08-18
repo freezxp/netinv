@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"sort"
 	"sync"
 	"time"
 
@@ -54,6 +55,45 @@ func (r *Runtime) sites() []string {
 	return nil
 }
 
+// AllSitesToken configures a poller to serve whatever sites exist rather than
+// a list someone maintains by hand. The list was the single most reliable way
+// to lose collection silently: create a site, move a device into it, and its
+// jobs queue up unread until somebody edits an environment variable and
+// restarts the poller. Nothing fails, because nothing ran.
+const AllSitesToken = "*"
+
+func (r *Runtime) allSites() bool {
+	s := r.sites()
+	return len(s) == 1 && s[0] == AllSitesToken
+}
+
+// reconcileSites reports which site consumers to start and which to stop so
+// that `running` matches `desired`.
+//
+// Stopping matters as much as starting: a deleted site takes its queue with
+// it, and a consumer left pointing at a queue that no longer exists reconnects
+// forever, filling the log with a failure that is not one.
+func reconcileSites(running map[string]context.CancelFunc, desired []string) (start, stop []string) {
+	want := make(map[string]bool, len(desired))
+	for _, s := range desired {
+		if s == "" {
+			continue
+		}
+		want[s] = true
+		if _, live := running[s]; !live {
+			start = append(start, s)
+		}
+	}
+	for s := range running {
+		if !want[s] {
+			stop = append(stop, s)
+		}
+	}
+	sort.Strings(start)
+	sort.Strings(stop)
+	return start, stop
+}
+
 func (r *Runtime) Run(ctx context.Context) error {
 	if r.Workers == 0 {
 		r.Workers = 50
@@ -84,57 +124,24 @@ func (r *Runtime) Run(ctx context.Context) error {
 	// are one flat network), and a device whose site has no consumer is
 	// silently never polled: its jobs just accumulate.
 	var supervisors sync.WaitGroup
-	for _, site := range r.sites() {
+	if r.allSites() {
+		// Nothing is consumed until the scheduler says what exists. That gap
+		// is one announcement interval on startup, and it is the price of not
+		// guessing: consuming a site that was deleted would reconnect forever.
+		r.Log.Info("serving every announced site", "workers", r.Workers)
 		supervisors.Add(1)
 		go func() {
 			defer supervisors.Done()
-			queue := amqpx.SiteQueue(site)
-			for ctx.Err() == nil {
-				err := func() error {
-					if err := r.Client.DeclareJobTopology(); err != nil {
-						return err
-					}
-					if _, err := r.Client.EnsureSiteQueue(site); err != nil {
-						return err
-					}
-					return r.Client.EnsureMetricsQueue()
-				}()
-				if err == nil {
-					var (
-						deliveries <-chan amqp.Delivery
-						stop       func()
-					)
-					deliveries, stop, err = r.Client.Consume(queue, r.Workers*2)
-					if err == nil {
-						r.Log.Info("job stream established",
-							"queue", queue, "workers", r.Workers)
-						for d := range deliveries {
-							select {
-							case <-ctx.Done():
-								stop()
-								return
-							case jobs <- d:
-							}
-						}
-						// Cancel before looping round to consume again. Without
-						// this the retry registered an extra consumer each time
-						// and the broker kept feeding the abandoned ones, which
-						// held their deliveries unacked forever.
-						stop()
-						r.Log.Warn("job stream closed — reconnecting", "queue", queue)
-					}
-				}
-				if err != nil {
-					r.Log.Warn("job stream unavailable — retrying",
-						"queue", queue, "err", err)
-				}
-				select {
-				case <-ctx.Done():
-					return
-				case <-time.After(3 * time.Second):
-				}
-			}
+			r.followSites(ctx, jobs, &supervisors)
 		}()
+	} else {
+		for _, site := range r.sites() {
+			supervisors.Add(1)
+			go func() {
+				defer supervisors.Done()
+				r.superviseSite(ctx, site, jobs)
+			}()
+		}
 	}
 	go func() {
 		supervisors.Wait()
@@ -162,6 +169,118 @@ func (r *Runtime) Run(ctx context.Context) error {
 				}
 			}
 		}
+	}
+}
+
+// superviseSite consumes one site's job queue until ctx ends, reconnecting
+// through broker restarts. One goroutine per site: jobs go to a direct
+// exchange keyed by site, so there is no wildcard to bind, and a device whose
+// site has no consumer is silently never polled — its jobs simply accumulate.
+func (r *Runtime) superviseSite(ctx context.Context, site string, jobs chan<- amqp.Delivery) {
+	queue := amqpx.SiteQueue(site)
+	for ctx.Err() == nil {
+		err := func() error {
+			if err := r.Client.DeclareJobTopology(); err != nil {
+				return err
+			}
+			if _, err := r.Client.EnsureSiteQueue(site); err != nil {
+				return err
+			}
+			return r.Client.EnsureMetricsQueue()
+		}()
+		if err == nil {
+			var (
+				deliveries <-chan amqp.Delivery
+				stop       func()
+			)
+			deliveries, stop, err = r.Client.Consume(queue, r.Workers*2)
+			if err == nil {
+				r.Log.Info("job stream established",
+					"queue", queue, "workers", r.Workers)
+				for d := range deliveries {
+					select {
+					case <-ctx.Done():
+						stop()
+						return
+					case jobs <- d:
+					}
+				}
+				// Cancel before looping round to consume again. Without
+				// this the retry registered an extra consumer each time
+				// and the broker kept feeding the abandoned ones, which
+				// held their deliveries unacked forever.
+				stop()
+				r.Log.Warn("job stream closed — reconnecting", "queue", queue)
+			}
+		}
+		if err != nil {
+			r.Log.Warn("job stream unavailable — retrying",
+				"queue", queue, "err", err)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(3 * time.Second):
+		}
+	}
+}
+
+// followSites keeps the set of consumed sites matching what the scheduler
+// announces, so a site created after this poller started is served without an
+// environment edit and a restart.
+//
+// It only ever acts on a full list. A poller that misses an announcement is
+// corrected by the next one rather than left with a stale view, which is why
+// the scheduler republishes on a timer instead of on change.
+func (r *Runtime) followSites(ctx context.Context, jobs chan<- amqp.Delivery,
+	supervisors *sync.WaitGroup) {
+	running := map[string]context.CancelFunc{}
+	defer func() {
+		for _, cancel := range running {
+			cancel()
+		}
+	}()
+	for ctx.Err() == nil {
+		deliveries, stop, err := r.Client.ConsumeSites()
+		if err != nil {
+			r.Log.Warn("site announcements unavailable — retrying", "err", err)
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(3 * time.Second):
+			}
+			continue
+		}
+		for d := range deliveries {
+			var msg struct {
+				Sites []string `json:"sites"`
+			}
+			if err := json.Unmarshal(d.Body, &msg); err != nil {
+				r.Log.Warn("malformed site announcement ignored", "err", err)
+				continue
+			}
+			start, stopping := reconcileSites(running, msg.Sites)
+			for _, site := range stopping {
+				r.Log.Info("site no longer announced — stopping consumer", "site", site)
+				running[site]()
+				delete(running, site)
+			}
+			for _, site := range start {
+				sctx, cancel := context.WithCancel(ctx)
+				running[site] = cancel
+				supervisors.Add(1)
+				go func() {
+					defer supervisors.Done()
+					r.superviseSite(sctx, site, jobs)
+				}()
+			}
+			if len(start) > 0 {
+				r.Log.Info("now serving new sites", "sites", start,
+					"total", len(running))
+			}
+		}
+		stop()
+		r.Log.Warn("site announcement stream closed — reconnecting")
 	}
 }
 

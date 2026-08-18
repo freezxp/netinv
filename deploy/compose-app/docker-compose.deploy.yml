@@ -64,7 +64,14 @@ services:
       net.ipv4.ping_group_range: "0 65534"
     environment:
       NETINV_AMQP_URL: amqp://netinv:${RABBIT_PASSWORD}@rabbitmq:5672/
-      NETINV_SITE_ID: ${CORE_SITE_ID:-s_default}
+      # "*" serves whatever the scheduler announces. The alternative — a
+      # comma-separated list maintained by hand — is the single most reliable
+      # way to lose collection silently on a single-host deployment: create a
+      # site, move a device into it, and its jobs queue up unread until
+      # somebody remembers to edit this and restart the poller. Nothing fails,
+      # because nothing runs. Set CORE_SITE_ID to an explicit list only when a
+      # poller must be restricted to part of the estate.
+      NETINV_SITE_ID: ${CORE_SITE_ID:-*}
       NETINV_STATE_DIR: /var/lib/netinv-poller
     # The image runs non-root; a named volume is root-owned. In k8s the poller
     # pod sets fsGroup so the PVC is group-writable (see netinv-poller chart);

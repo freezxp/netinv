@@ -20,6 +20,13 @@ const (
 	SyncResultsQueue      = "sync.results"
 	DiscoveryResultsQueue = "discovery.results"
 	EventsExchange        = "events.domain"
+	// SitesExchange carries the set of sites the scheduler is dispatching to.
+	// A poller has no database and no API credentials — by design, it is
+	// site-local and holds only AMQP — so this is the only channel through
+	// which it can learn that a site exists. Fanout because every poller in
+	// "serve every site" mode needs the whole list, and each keeps its own
+	// ephemeral queue rather than competing for messages on a shared one.
+	SitesExchange = "sites.active"
 )
 
 func SiteQueue(siteID string) string   { return "poll.site." + siteID }
@@ -228,6 +235,66 @@ func (c *Client) Consume(queue string, prefetch int) (<-chan amqp.Delivery, func
 		return nil, nil, errx.Wrap(errx.KindTransient, err, "amqpx: qos")
 	}
 	deliveries, err := ch.Consume(queue, "", false, false, false, false, nil)
+	if err != nil {
+		stop()
+		return nil, nil, err
+	}
+	return deliveries, stop, nil
+}
+
+// DeclareSitesExchange declares the fanout the active-site list is announced
+// on. Both ends declare it: whichever starts first creates it.
+func (c *Client) DeclareSitesExchange() error {
+	ch, err := c.channel()
+	if err != nil {
+		return err
+	}
+	return ch.ExchangeDeclare(SitesExchange, "fanout", true, false, false, false, nil)
+}
+
+// PublishSites announces the sites currently being dispatched to.
+//
+// Sent on a timer rather than on change, and read as a full list rather than a
+// delta: a poller that misses one message must not be left with a stale view
+// until the next site is created, and a poller that starts late must converge
+// without anyone republishing. The message is small and the cadence is slow.
+func (c *Client) PublishSites(ctx context.Context, sites []string) error {
+	if err := c.DeclareSitesExchange(); err != nil {
+		return err
+	}
+	return c.PublishJSON(ctx, SitesExchange, "", map[string]any{"sites": sites})
+}
+
+// ConsumeSites subscribes to the active-site announcements.
+//
+// The queue is exclusive, auto-delete and server-named: it belongs to this
+// consumer alone and vanishes with it. A durable shared queue would be wrong
+// twice over — two pollers would round-robin the announcements and each would
+// see half of them, and a poller that stopped would leave a queue accumulating
+// messages nobody reads.
+func (c *Client) ConsumeSites() (<-chan amqp.Delivery, func(), error) {
+	if err := c.DeclareSitesExchange(); err != nil {
+		return nil, nil, err
+	}
+	conn, err := c.connection()
+	if err != nil {
+		return nil, nil, err
+	}
+	ch, err := conn.Channel()
+	if err != nil {
+		return nil, nil, errx.Wrap(errx.KindTransient, err, "amqpx: sites channel")
+	}
+	stop := func() { _ = ch.Close() }
+	q, err := ch.QueueDeclare("", false, true, true, false, nil)
+	if err != nil {
+		stop()
+		return nil, nil, errx.Wrap(errx.KindTransient, err, "amqpx: sites queue")
+	}
+	if err := ch.QueueBind(q.Name, "", SitesExchange, false, nil); err != nil {
+		stop()
+		return nil, nil, errx.Wrap(errx.KindTransient, err, "amqpx: sites bind")
+	}
+	deliveries, err := ch.Consume(q.Name, "", true, true, false, false, nil)
 	if err != nil {
 		stop()
 		return nil, nil, err

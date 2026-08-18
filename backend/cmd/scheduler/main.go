@@ -64,6 +64,9 @@ func main() {
 			// Records the consumer count the queue declare reports, so the
 			// device page can name a site nothing is collecting for.
 			SiteHealth: &colpg.PollerRepo{Pool: pool},
+			// Announces the active site list so a poller set to serve every
+			// site consumes queues nobody configured it with.
+			Sites: mq,
 			Log:        rt.Log,
 		}
 		rt.Health.SetReady(true)

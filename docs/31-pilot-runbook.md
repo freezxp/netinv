@@ -177,6 +177,8 @@ agent (doc 10 §7). Restart `snmpd` on the device; the repair keeps the graphs
 honest until you do, and the metric returning to 0 is how you confirm the fix
 took rather than the connector still compensating.
 
+**A poller must be told which sites to serve, unless it is told to serve them all.** `NETINV_SITE_ID` takes a comma-separated list or `*`. With a list, a site created afterwards is not consumed: its jobs are published to a queue nobody reads, no error is raised anywhere, and its devices are simply never polled. With `*` the poller consumes whatever the scheduler announces on the `sites.active` fanout — sites appear and disappear without an environment edit or a restart. A poller deliberately restricted to part of the estate keeps an explicit list; everything else should use `*`.
+
 **A device is added and never leaves `pending`.** A device leaves `pending` in
 exactly one place: the sync apply transaction setting `status='active'` when a
 good snapshot lands. Nothing else promotes it, so ICMP, traffic and health can
