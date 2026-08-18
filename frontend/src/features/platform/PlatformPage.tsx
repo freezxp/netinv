@@ -1,6 +1,7 @@
 // Platform management (doc 30 §8): sites, poller fleet, connector catalog,
 // credentials vault.
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../api/client";
 import { useSites } from "../../api/hooks";
@@ -175,7 +176,23 @@ function ConfirmDeleteSite({
         <p className="mt-2 text-xs text-slate-500">
           A site can only be deleted once nothing references it — no devices
           (retired ones included), child sites, enrolled pollers or discovery
-          rules. Move or purge those first.
+          rules.
+        </p>
+        {/* Retired devices are the blocker people hit, and the answer is not
+            obvious: they are hidden by the default inventory filter, and
+            purging them — the destructive option — is not required. Moving
+            them to another site clears the site and keeps their history, so
+            link straight to the list that can do it in bulk. */}
+        <p className="mt-1 text-xs text-slate-500">
+          Devices can be{" "}
+          <Link
+            to={`/inventory?site=${site.id}`}
+            className="text-sky-500 hover:underline"
+          >
+            moved to another site in bulk
+          </Link>{" "}
+          — including retired ones, which the default filter hides. Moving keeps
+          their history; purging does not.
         </p>
         <label className="mt-3 block text-xs text-slate-500">
           Type the site name to confirm:

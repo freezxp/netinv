@@ -88,6 +88,12 @@ func TestDeleteSiteRefusesForRetiredDevices(t *testing.T) {
 	if !strings.Contains(err.Error(), "retired device") {
 		t.Fatalf("message %q does not mention the retired device", err.Error())
 	}
+	// Purging destroys the history the device was retired to keep, and moving
+	// it to another site clears the blocker without destroying anything. The
+	// message must not name only the destructive way out.
+	if !strings.Contains(err.Error(), "move") {
+		t.Fatalf("message %q offers no non-destructive option", err.Error())
+	}
 }
 
 // Every blocker at once: an operator emptying a site works through all of

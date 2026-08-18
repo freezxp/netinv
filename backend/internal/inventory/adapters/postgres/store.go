@@ -119,7 +119,11 @@ func (r *SiteRepo) Delete(ctx context.Context, sid string) error {
 		many string
 	}{
 		{active, "1 device", "%d devices"},
-		{retired, "1 retired device (purge it first)", "%d retired devices (purge them first)"},
+		// Naming only the destructive option was bad advice: a retired device
+		// can be moved to another site as easily as a live one, and purging it
+		// destroys the history it was retired to keep.
+		{retired, "1 retired device (move or purge it first)",
+			"%d retired devices (move or purge them first)"},
 		{children, "1 child site", "%d child sites"},
 		{pollers, "1 enrolled poller", "%d enrolled pollers"},
 		{rules, "1 discovery rule", "%d discovery rules"},
