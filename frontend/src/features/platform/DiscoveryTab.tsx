@@ -5,7 +5,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../api/client";
 import { useSites } from "../../api/hooks";
-import type { Paged } from "../../api/types";
+import type { Paged, Site } from "../../api/types";
 import {
   Button,
   Card,
@@ -95,10 +95,21 @@ export function DiscoveryTab() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["discovery-rules"] }),
   });
   const approve = useMutation({
-    mutationFn: ({ id, name }: { id: string; name: string }) =>
+    mutationFn: ({
+      id,
+      name,
+      site_id,
+    }: {
+      id: string;
+      name: string;
+      site_id: string;
+    }) =>
       api<{ device_id: string }>(`/discovery/found/${id}/approve`, {
         method: "POST",
-        body: JSON.stringify({ name }),
+        // The site travels with the approval, not with the scan. A subnet is
+        // swept by whichever poller can reach it, which says nothing about how
+        // an operator wants the devices on it grouped.
+        body: JSON.stringify({ name, site_id }),
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["discovery-found"] });
@@ -112,7 +123,9 @@ export function DiscoveryTab() {
   });
 
   const toggleCred = (id: string) =>
-    setCredIDs((c) => (c.includes(id) ? c.filter((x) => x !== id) : [...c, id]));
+    setCredIDs((c) =>
+      c.includes(id) ? c.filter((x) => x !== id) : [...c, id],
+    );
 
   return (
     <div className="flex flex-col gap-3">
@@ -125,7 +138,7 @@ export function DiscoveryTab() {
             onChange={(e) => setCidr(e.target.value)}
           />
           <Select value={siteID} onChange={(e) => setSiteID(e.target.value)}>
-            <option value="">Site…</option>
+            <option value="">Scan from site…</option>
             {sites.data?.data.map((s) => (
               <option key={s.id} value={s.id}>
                 {s.name}
@@ -133,12 +146,20 @@ export function DiscoveryTab() {
             ))}
           </Select>
           <Button
-            disabled={!cidr || !siteID || credIDs.length === 0 || createRule.isPending}
+            disabled={
+              !cidr || !siteID || credIDs.length === 0 || createRule.isPending
+            }
             onClick={() => createRule.mutate()}
           >
             Add scan
           </Button>
         </div>
+        <p className="mt-2 text-xs text-slate-500">
+          The site here decides <em>which poller sweeps the subnet</em>, so it
+          has to be one that can reach it. It does not decide where the devices
+          it finds belong — you choose that per device when you approve it
+          below.
+        </p>
         <div className="mt-2 flex flex-wrap gap-1.5">
           <span className="text-xs text-slate-500">Try credentials:</span>
           {creds.data?.data.map((c) => (
@@ -211,7 +232,10 @@ export function DiscoveryTab() {
 
       {notice && <div className="text-sm text-sky-500">{notice}</div>}
 
-      <Card title={`Discovered — pending approval (${found.data?.data.length ?? 0})`} className="p-0">
+      <Card
+        title={`Discovered — pending approval (${found.data?.data.length ?? 0})`}
+        className="p-0"
+      >
         <div className="p-4">
           {found.data?.data.length === 0 && (
             <EmptyState>
@@ -223,7 +247,10 @@ export function DiscoveryTab() {
               <FoundRow
                 key={f.id}
                 found={f}
-                onApprove={(name) => approve.mutate({ id: f.id, name })}
+                sites={sites.data?.data ?? []}
+                onApprove={(name, site_id) =>
+                  approve.mutate({ id: f.id, name, site_id })
+                }
                 onIgnore={() => ignore.mutate(f.id)}
                 busy={approve.isPending || ignore.isPending}
               />
@@ -242,16 +269,23 @@ export function DiscoveryTab() {
 
 function FoundRow({
   found,
+  sites,
   onApprove,
   onIgnore,
   busy,
 }: {
   found: Found;
-  onApprove: (name: string) => void;
+  sites: Site[];
+  onApprove: (name: string, siteID: string) => void;
   onIgnore: () => void;
   busy: boolean;
 }) {
   const [name, setName] = useState(found.sys_name || found.ip);
+  // Defaults to the site the sweep ran from, because that is usually right and
+  // an operator approving twenty finds should not have to set it twenty times.
+  // It is a default, not a decision: a subnet reachable from one poller can
+  // hold devices an operator wants grouped anywhere.
+  const [siteID, setSiteID] = useState(found.site_id);
   return (
     <div className="flex flex-wrap items-center gap-2 py-2">
       <span className="mono w-32 font-medium">{found.ip}</span>
@@ -272,7 +306,22 @@ function FoundRow({
             value={name}
             onChange={(e) => setName(e.target.value)}
           />
-          <Button disabled={busy} onClick={() => onApprove(name)}>
+          <Select
+            className="w-40"
+            value={siteID}
+            onChange={(e) => setSiteID(e.target.value)}
+            title="Which site this device belongs to"
+          >
+            {sites.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name}
+              </option>
+            ))}
+          </Select>
+          <Button
+            disabled={busy || !siteID}
+            onClick={() => onApprove(name, siteID)}
+          >
             Add
           </Button>
         </>
