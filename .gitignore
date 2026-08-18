@@ -33,3 +33,10 @@ frontend/playwright-report/
 deploy/compose-app/certs/
 *.key
 *.pem
+
+# Deployment backups. scripts/backup.sh and deploy/compose-app/upgrade.sh write
+# here by default, and the contents are a full dump of a live deployment — user
+# accounts and password hashes, the audit log, device inventory with management
+# addresses, refresh tokens. This repository is public (ADR-019), so none of it
+# may ever be committed. Two of these files reached origin/main once already.
+backups/
