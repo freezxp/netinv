@@ -7,9 +7,11 @@ import {
   useDeviceAlerts,
   useDeviceHistory,
   useDeviceInterfaces,
+  useDeviceSyncRuns,
   useQueryRange,
   useMetricsLimits,
   useSyncNow,
+  type SyncRun,
   trafficExpr,
   seriesExpr,
 } from "../../api/hooks";
@@ -124,6 +126,8 @@ export function DeviceDetailPage() {
           )}
         </div>
       )}
+
+      <SyncStatus deviceID={id} status={d?.status} />
 
       <div className="flex items-end gap-1 border-b border-slate-200 dark:border-slate-800">
         <div className="flex flex-1 gap-1 overflow-x-auto">
@@ -595,53 +599,193 @@ function AvailabilityTab({ deviceID }: { deviceID: string }) {
   );
 }
 
+/**
+ * SyncStatus is the page's answer to a device that looks healthy and is not.
+ * Only a sync promotes a device out of `pending`, so a device can pass ICMP,
+ * draw traffic graphs and still never onboard — and until this existed the
+ * reason sat in platform.sync_runs, read by nothing. It stays quiet on a
+ * healthy device: no banner unless something is actually wrong.
+ */
+function SyncStatus({
+  deviceID,
+  status,
+}: {
+  deviceID: string;
+  status?: string;
+}) {
+  const runs = useDeviceSyncRuns(deviceID);
+  const rows = runs.data?.data ?? [];
+  const last = rows[0];
+  const pending = status === "pending";
+  if (!runs.data || (!pending && last?.status !== "failed")) return null;
+
+  // Three distinct faults reach this banner and the operator's next move
+  // differs for each, so name the one that applies rather than saying
+  // "sync failed" three ways.
+  let tone = "amber";
+  let heading = "";
+  let detail: React.ReactNode = null;
+  if (last?.status === "failed") {
+    tone = "red";
+    heading = `Last sync failed — ${new Date(last.started_at).toLocaleString()}`;
+    detail = (
+      <>
+        <div className="mono mt-1 break-words">
+          {last.error || "no reason recorded"}
+        </div>
+        <div className="mt-1 opacity-80">
+          The device answered the poller badly or not at all. Credentials, an
+          ACL on the device, or a walk too slow for the poll budget are the
+          usual causes.
+        </div>
+      </>
+    );
+  } else if (pending && rows.length === 0) {
+    heading = "No sync has ever run for this device";
+    detail = (
+      <div className="mt-1 opacity-80">
+        Nothing has been dispatched, so nothing has failed and nothing is
+        logged. Either the device&apos;s polling profile excludes the{" "}
+        <span className="mono">sync</span> family, or no poller is consuming its
+        site&apos;s queue.
+      </div>
+    );
+  } else if (pending) {
+    heading = "Sync succeeded but the device is still pending";
+    detail = (
+      <div className="mt-1 opacity-80">
+        Collection worked and the inventory write did not. Check the api log for
+        a repeating <span className="mono">sync result requeued</span>.
+      </div>
+    );
+  } else {
+    return null;
+  }
+
+  return (
+    <div
+      role="status"
+      className={cx(
+        "rounded border-l-4 px-3 py-2 text-sm",
+        tone === "red"
+          ? "border-red-500 bg-red-50 text-red-900 dark:bg-red-950/40 dark:text-red-200"
+          : "border-amber-500 bg-amber-50 text-amber-900 dark:bg-amber-950/40 dark:text-amber-200",
+      )}
+    >
+      <div className="font-medium">{heading}</div>
+      {detail}
+    </div>
+  );
+}
+
+function SyncRunsTable({ deviceID }: { deviceID: string }) {
+  const runs = useDeviceSyncRuns(deviceID);
+  const rows = runs.data?.data ?? [];
+  return (
+    <Card title="Sync runs" className="overflow-x-auto p-0">
+      {rows.length === 0 ? (
+        <EmptyState>No sync has run for this device yet.</EmptyState>
+      ) : (
+        <table className="w-full min-w-[36rem] text-sm">
+          <thead>
+            <tr className="border-b border-slate-200 text-left text-xs uppercase text-slate-500 dark:border-slate-800">
+              {["Started", "Trigger", "Status", "Changes", "Took", "Error"].map(
+                (h) => (
+                  <th key={h} className="px-4 py-2 font-medium">
+                    {h}
+                  </th>
+                ),
+              )}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r: SyncRun) => (
+              <tr
+                key={r.id}
+                className="border-b border-slate-100 dark:border-slate-800/60"
+              >
+                <td className="px-4 py-1.5 text-slate-500">
+                  {new Date(r.started_at).toLocaleString()}
+                </td>
+                <td className="px-4 py-1.5">{r.trigger}</td>
+                <td className="px-4 py-1.5">
+                  <span
+                    className={cx(
+                      r.status === "failed"
+                        ? "text-red-500"
+                        : r.status === "ok"
+                          ? "text-green-500"
+                          : "text-slate-500",
+                    )}
+                  >
+                    {r.status}
+                  </span>
+                </td>
+                <td className="px-4 py-1.5">{r.changes_count}</td>
+                <td className="px-4 py-1.5 text-slate-500">
+                  {r.duration_s === undefined ? "—" : formatMs(r.duration_s)}
+                </td>
+                {/* The error is the point of the table: never truncate it. */}
+                <td className="mono px-4 py-1.5 text-red-500">{r.error}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </Card>
+  );
+}
+
 function HistoryTab({ deviceID }: { deviceID: string }) {
   const history = useDeviceHistory(deviceID);
   return (
-    <Card className="overflow-x-auto p-0">
-      <table className="w-full min-w-[36rem] text-sm">
-        <thead>
-          <tr className="border-b border-slate-200 text-left text-xs uppercase text-slate-500 dark:border-slate-800">
-            {["When", "Object", "Field", "Change"].map((h) => (
-              <th key={h} className="px-4 py-2 font-medium">
-                {h}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {history.data?.data.map((h, i) => (
-            <tr
-              key={i}
-              className="border-b border-slate-100 dark:border-slate-800/60"
-            >
-              <td className="px-4 py-1.5 text-slate-500">
-                {new Date(h.detected_at).toLocaleString()}
-              </td>
-              <td className="px-4 py-1.5">{h.object_kind}</td>
-              <td className="px-4 py-1.5">{h.field}</td>
-              <td className="px-4 py-1.5">
-                {h.change_kind === "created" ? (
-                  <span className="text-green-500">+ {h.new_value}</span>
-                ) : h.change_kind === "removed" ? (
-                  <span className="text-red-500">− {h.old_value}</span>
-                ) : (
-                  <span>
-                    <span className="text-slate-500 line-through">
-                      {h.old_value || "∅"}
-                    </span>{" "}
-                    → {h.new_value}
-                  </span>
-                )}
-              </td>
+    <div className="flex flex-col gap-4">
+      <SyncRunsTable deviceID={deviceID} />
+      <Card className="overflow-x-auto p-0">
+        <table className="w-full min-w-[36rem] text-sm">
+          <thead>
+            <tr className="border-b border-slate-200 text-left text-xs uppercase text-slate-500 dark:border-slate-800">
+              {["When", "Object", "Field", "Change"].map((h) => (
+                <th key={h} className="px-4 py-2 font-medium">
+                  {h}
+                </th>
+              ))}
             </tr>
-          ))}
-        </tbody>
-      </table>
-      {history.data?.data.length === 0 && (
-        <EmptyState>No recorded changes yet.</EmptyState>
-      )}
-    </Card>
+          </thead>
+          <tbody>
+            {history.data?.data.map((h, i) => (
+              <tr
+                key={i}
+                className="border-b border-slate-100 dark:border-slate-800/60"
+              >
+                <td className="px-4 py-1.5 text-slate-500">
+                  {new Date(h.detected_at).toLocaleString()}
+                </td>
+                <td className="px-4 py-1.5">{h.object_kind}</td>
+                <td className="px-4 py-1.5">{h.field}</td>
+                <td className="px-4 py-1.5">
+                  {h.change_kind === "created" ? (
+                    <span className="text-green-500">+ {h.new_value}</span>
+                  ) : h.change_kind === "removed" ? (
+                    <span className="text-red-500">− {h.old_value}</span>
+                  ) : (
+                    <span>
+                      <span className="text-slate-500 line-through">
+                        {h.old_value || "∅"}
+                      </span>{" "}
+                      → {h.new_value}
+                    </span>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {history.data?.data.length === 0 && (
+          <EmptyState>No recorded changes yet.</EmptyState>
+        )}
+      </Card>
+    </div>
   );
 }
 

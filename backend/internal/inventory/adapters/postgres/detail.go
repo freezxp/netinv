@@ -124,3 +124,54 @@ func (r *DeviceRepo) Neighbors(ctx context.Context, deviceID string) ([]Neighbor
 	}
 	return out, rows.Err()
 }
+
+// SyncRunRow is one entry of the device's sync history. Until this read model
+// existed, platform.sync_runs was written on every poll and read by nobody: a
+// device that failed to sync sat in 'pending' with the reason recorded in the
+// database and no way to see it short of psql. A failing sync is the one thing
+// on this page that explains a device which otherwise looks healthy, so the
+// error text is part of the read model rather than a status flag.
+type SyncRunRow struct {
+	ID           string  `json:"id"`
+	Trigger      string  `json:"trigger"`
+	Status       string  `json:"status"`
+	ChangesCount int     `json:"changes_count"`
+	Error        string  `json:"error,omitempty"`
+	StartedAt    string  `json:"started_at"`
+	FinishedAt   string  `json:"finished_at,omitempty"`
+	DurationS    float64 `json:"duration_s,omitempty"`
+}
+
+func (r *DeviceRepo) SyncRuns(ctx context.Context, deviceID string, limit int) ([]SyncRunRow, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 20
+	}
+	rows, err := r.Pool.Query(ctx, `
+		SELECT id, trigger, status::text, changes_count, coalesce(error,''),
+		       started_at, finished_at
+		FROM platform.sync_runs
+		WHERE device_id = $1 ORDER BY started_at DESC LIMIT $2`, deviceID, limit)
+	if err != nil {
+		return nil, errx.Wrap(errx.KindTransient, err, "sync runs")
+	}
+	defer rows.Close()
+	out := []SyncRunRow{}
+	for rows.Next() {
+		var s SyncRunRow
+		var started time.Time
+		var finished *time.Time
+		if err := rows.Scan(&s.ID, &s.Trigger, &s.Status, &s.ChangesCount,
+			&s.Error, &started, &finished); err != nil {
+			return nil, err
+		}
+		s.StartedAt = started.UTC().Format(time.RFC3339)
+		// A run with no finished_at is either in flight or was interrupted;
+		// reporting a zero duration for it would read as "instant success".
+		if finished != nil {
+			s.FinishedAt = finished.UTC().Format(time.RFC3339)
+			s.DurationS = finished.Sub(started).Seconds()
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}

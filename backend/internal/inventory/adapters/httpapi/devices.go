@@ -32,6 +32,7 @@ func (h *DeviceHandler) Register(r chi.Router) {
 		pr.Get("/devices/{id}", h.get)
 		pr.Get("/devices/{id}/interfaces", h.interfaces)
 		pr.Get("/devices/{id}/history", h.history)
+		pr.Get("/devices/{id}/sync-runs", h.syncRuns)
 		pr.Get("/devices/{id}/neighbors", h.neighbors)
 	})
 	r.Group(func(pw chi.Router) {
@@ -216,6 +217,21 @@ func (h *DeviceHandler) interfaces(w http.ResponseWriter, r *http.Request) {
 func (h *DeviceHandler) history(w http.ResponseWriter, r *http.Request) {
 	repo := h.Svc.Repo.(*postgres.DeviceRepo)
 	rows, err := repo.History(r.Context(), chi.URLParam(r, "id"), 100)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"data": rows})
+}
+
+// syncRuns exposes platform.sync_runs (doc 09 §6). The failure reason for a
+// device that never leaves 'pending' is recorded there and, before this
+// endpoint, was readable only with psql — which meant an operator watching a
+// device fail had no way to learn why from the product.
+func (h *DeviceHandler) syncRuns(w http.ResponseWriter, r *http.Request) {
+	repo := h.Svc.Repo.(*postgres.DeviceRepo)
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	rows, err := repo.SyncRuns(r.Context(), chi.URLParam(r, "id"), limit)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

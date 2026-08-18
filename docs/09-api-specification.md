@@ -109,7 +109,18 @@ Below, one full worked example per resource family; sibling endpoints share shap
 | GET | `/devices/{id}/neighbors` (topology) | `devices:read` | 200 |
 | GET | `/devices/{id}/alerts` | `alerts:read` | 200 |
 | GET | `/device-groups` + CRUD | `devices:read/write` | 200/201/204 |
-| GET | `/sync-runs?device=…` | `devices:read` | 200 |
+| GET | `/devices/{id}/sync-runs?limit=…` (sync history + failure reason) | `devices:read` | 200 |
+
+`GET /devices/{id}/sync-runs` replaces the `/sync-runs?device=…` collection this
+spec carried until 2026-08-18. It was never built, and the gap had a cost: a
+device leaves `pending` only when a sync applies, so a device that cannot sync
+sits there indefinitely while ICMP and traffic polls keep succeeding — and the
+reason is written to `platform.sync_runs.error` on every attempt. With no
+reader, that reason was visible only to someone with a psql prompt. The route
+is nested to match every other device sub-resource (`/interfaces`, `/history`,
+`/neighbors`), and returns newest-first; `error` is present only on a failed
+run and `duration_s` only on a finished one, so an in-flight sync is not
+reported as an instant one.
 
 **GET /devices?filter=site:eq:s_dceast,status:eq:active&q=core&sort=-updated_at&limit=2**
 ```json

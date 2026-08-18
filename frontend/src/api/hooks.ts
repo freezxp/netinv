@@ -205,6 +205,31 @@ export function useDeviceHistory(id: string) {
   });
 }
 
+/**
+ * A sync run is the only thing that promotes a device out of `pending`, and
+ * when one fails the reason is recorded on the run and nowhere else. Polling
+ * on an interval is deliberate despite syncs being hours apart: it is what
+ * makes "Sync now" show its own outcome.
+ */
+export interface SyncRun {
+  id: string;
+  trigger: string;
+  status: "running" | "ok" | "failed";
+  changes_count: number;
+  error?: string;
+  started_at: string;
+  finished_at?: string;
+  duration_s?: number;
+}
+
+export function useDeviceSyncRuns(id: string) {
+  return useQuery({
+    queryKey: ["device", id, "sync-runs"],
+    queryFn: () => api<{ data: SyncRun[] }>(`/devices/${id}/sync-runs`),
+    refetchInterval: 30_000,
+  });
+}
+
 export function useDeviceAlerts(id: string) {
   return useQuery({
     queryKey: ["alerts", "device", id],
