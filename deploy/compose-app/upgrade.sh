@@ -21,7 +21,8 @@
 #
 # Usage:
 #   ./deploy/compose-app/upgrade.sh                     # rebuild from the working tree
-#   ./deploy/compose-app/upgrade.sh --ref v1.1.0        # fetch + check out first
+#   ./deploy/compose-app/upgrade.sh --latest            # fast-forward to origin, then deploy
+#   ./deploy/compose-app/upgrade.sh --ref v1.1.0        # deploy a tag, branch or commit
 #   ./deploy/compose-app/upgrade.sh --skip-backup       # you already have one
 #   ./deploy/compose-app/upgrade.sh --keep 5            # keep 5 backups (0 = keep all)
 #   ./deploy/compose-app/upgrade.sh --dry-run           # print the plan, change nothing
@@ -41,6 +42,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 REF=""
+LATEST=0
 KEEP="${KEEP:-3}"
 SKIP_BACKUP=0
 DRY_RUN=0
@@ -51,12 +53,13 @@ BACKUP_DIR="${BACKUP_DIR:-$ROOT/backups}"
 while [ $# -gt 0 ]; do
 	case "$1" in
 	--ref) REF="${2:?--ref needs a git ref}"; shift 2 ;;
+	--latest) LATEST=1; shift ;;
 	--skip-backup) SKIP_BACKUP=1; shift ;;
 	--keep) KEEP="${2:?--keep needs a count}"; shift 2 ;;
 	--dry-run) DRY_RUN=1; shift ;;
 	--recover) RECOVER=1; shift ;;
 	--no-rollback) NO_ROLLBACK=1; shift ;;
-	-h | --help) sed -n '2,36p' "$0" | sed 's/^# \?//'; exit 0 ;;
+	-h | --help) sed -n '2,38p' "$0" | sed 's/^# \?//'; exit 0 ;;
 	*) echo "unknown option: $1 (try --help)" >&2; exit 1 ;;
 	esac
 done
@@ -174,15 +177,89 @@ before_commit="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo unknown)"
 moved_checkout=0
 echo "  currently checked out: $before_version ($before_commit)"
 
-if [ -n "$REF" ]; then
+# Fetch unconditionally so the report below is about the remote as it is now,
+# not as it was whenever someone last fetched. It touches remote-tracking refs
+# only — no working tree, no deployment — so it is safe in --dry-run too, and
+# tolerated failing on a host with no route to the remote.
+git -C "$ROOT" fetch --quiet --tags --prune origin 2>/dev/null || true
+
+upstream="$(git -C "$ROOT" rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null || true)"
+if [ -n "$upstream" ]; then
+	behind="$(git -C "$ROOT" rev-list --count "HEAD..$upstream" 2>/dev/null || echo 0)"
+	ahead="$(git -C "$ROOT" rev-list --count "$upstream..HEAD" 2>/dev/null || echo 0)"
+	echo "  tracking $upstream: $behind behind, $ahead ahead"
+	# Saying it plainly beats leaving someone to wonder why their fix is not
+	# running: a plain run rebuilds the working tree, which is not the newest
+	# code just because a fetch happened.
+	if [ "$behind" -gt 0 ] && [ "$LATEST" = 0 ] && [ -z "$REF" ]; then
+		echo "  NOTE: $upstream has $behind newer commit(s). This run deploys the" \
+			"checkout as it is; pass --latest to deploy those instead."
+	fi
+fi
+
+require_clean_tree() {
 	if [ -n "$(git -C "$ROOT" status --porcelain 2>/dev/null)" ]; then
-		echo "Working tree has uncommitted changes; commit or stash before --ref." >&2
+		echo "Working tree has uncommitted changes; commit or stash first." >&2
 		exit 1
 	fi
-	say "Fetching and checking out $REF"
-	run git -C "$ROOT" fetch --tags --prune origin
-	run git -C "$ROOT" checkout "$REF"
+}
+
+if [ "$LATEST" = 1 ]; then
+	[ -n "$upstream" ] || {
+		echo "--latest needs a branch with an upstream; this checkout has none." >&2
+		echo "Use --ref <branch|tag|commit> instead." >&2
+		exit 1
+	}
+	require_clean_tree
+	say "Fast-forwarding to $upstream"
+	# ff-only rather than a plain merge or a reset: local commits that are not
+	# on the remote must stop this loudly rather than be merged into a deploy
+	# nobody reviewed, or silently discarded.
+	if [ "$DRY_RUN" = 1 ]; then
+		echo "  would run: git merge --ff-only $upstream"
+	elif ! git -C "$ROOT" merge --ff-only "$upstream"; then
+		echo >&2
+		echo "Cannot fast-forward: this branch has commits $upstream does not." >&2
+		echo "Push or rebase them, or deploy a specific ref with --ref." >&2
+		exit 1
+	fi
 	[ "$DRY_RUN" = 1 ] || moved_checkout=1
+elif [ -n "$REF" ]; then
+	require_clean_tree
+	say "Checking out $REF"
+	# A branch name must resolve to the *remote's* branch. `git checkout main`
+	# after a fetch lands on the local main, which the fetch did not move — so
+	# asking for a branch by name used to deploy whatever that branch was when
+	# it was last pulled, report success, and leave someone staring at code
+	# that is not running. Verified: a checkout two commits behind stayed two
+	# commits behind.
+	if git -C "$ROOT" rev-parse --verify --quiet "origin/$REF" >/dev/null 2>&1; then
+		if [ "$DRY_RUN" = 1 ]; then
+			echo "  would check out $REF and fast-forward it to origin/$REF"
+		else
+			if git -C "$ROOT" rev-parse --verify --quiet "refs/heads/$REF" >/dev/null 2>&1; then
+				git -C "$ROOT" checkout --quiet "$REF"
+				if ! git -C "$ROOT" merge --ff-only "origin/$REF"; then
+					echo >&2
+					echo "Local branch $REF has commits origin/$REF does not — refusing" >&2
+					echo "to discard them. Push or rebase them first." >&2
+					exit 1
+				fi
+			else
+				git -C "$ROOT" checkout --quiet -b "$REF" --track "origin/$REF"
+			fi
+			moved_checkout=1
+		fi
+	else
+		# A tag or a commit: check it out as given. Detached HEAD is correct
+		# here — a tag is not a branch and pretending otherwise invites a
+		# later push from a deployment host.
+		run git -C "$ROOT" checkout --quiet "$REF"
+		[ "$DRY_RUN" = 1 ] || moved_checkout=1
+	fi
+fi
+
+if [ "$LATEST" = 1 ] || [ -n "$REF" ]; then
 	echo "  now at: $(git -C "$ROOT" describe --tags --always --dirty 2>/dev/null || echo unknown)"
 fi
 
