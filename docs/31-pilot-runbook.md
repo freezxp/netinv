@@ -259,6 +259,11 @@ time (doc 30 §3), so a healthy sync fixes the link with no edit.
 expand-migrate-contract (NFR-51). The poller charts upgrade last and the core
 tolerates ±1 poller version (doc 10 §3).
 
+Use `upgrade.sh --latest` from a script or a cron entry rather than the bare
+form: a plain run degrades to deploying the working tree when it cannot pull —
+right for a person at a terminal, wrong for automation, where deploying older
+code while reporting success is the failure that matters.
+
 On Compose, `deploy/compose-app/upgrade.sh` is the equivalent path in both
 directions: it backs up before it touches anything, and prints the exact
 rollback — check out the previous commit and re-run it — when it finishes. That
