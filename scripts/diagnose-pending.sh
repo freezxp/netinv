@@ -235,28 +235,72 @@ cat <<'EOF'
 The poller image is distroless, so there is no shell to exec into. Attach a
 sidecar to its network namespace instead — same source address, same routes,
 which is what an ACL or a Junos routing-instance restriction keys on. A walk
-that works from your laptop and fails here is exactly that difference:
+that works from your laptop and fails here is exactly that difference.
 
-  docker run --rm --network container:POLLER alpine sh -c \
-    'apk add -q net-snmp-tools && \
-     snmpget -v2c -c COMMUNITY -t 5 -r 2 DEVICE_IP 1.3.6.1.2.1.1.5.0 && \
-     time snmpbulkwalk -v2c -c COMMUNITY -t 5 -r 2 -Cr25 DEVICE_IP 1.3.6.1.2.1.2.2 | wc -l'
+Time the walk as well as watching it succeed: CollectInventory walks ifTable
+AND ifXTable inside a 60 s job budget (pollerrt/runtime.go), so a walk that is
+merely slow by hand is a hard failure in the poller. Raise snmp_timeout_ms /
+snmp_retries on the profile, or cut the interface count at the device.
 
-For SNMPv3, match the stored credential from section 1 exactly (-a SHA is
-SHA-1, not SHA-256):
+Only the secret is missing from the commands below — it is encrypted in the
+vault and this script cannot read it. Everything else is filled in from the
+device's own row, including the SNMPv3 algorithm names, so a credential that
+says sha256 while the device speaks SHA-1 shows up here as a command that
+fails where your manual walk succeeded.
+EOF
 
-  snmpget -v3 -l authPriv -u USER -a SHA -A 'AUTHPASS' -x AES -X 'PRIVPASS' \
-    DEVICE_IP 1.3.6.1.2.1.1.5.0
+# The secrets stay placeholders; everything else is substituted, because a
+# command an operator has to edit in four places is a command they get wrong
+# once and then distrust.
+if [ -z "$POLLER" ]; then
+	echo
+	echo "  (no poller container found — set POLLER=<name> to get ready-made commands)"
+fi
+netsnmp_auth() { # our stored name -> the name net-snmp's -a flag wants
+	case "$1" in
+	sha256) echo "SHA-256" ;; sha1) echo "SHA" ;; md5) echo "MD5" ;;
+	sha512) echo "SHA-512" ;; sha384) echo "SHA-384" ;; sha224) echo "SHA-224" ;;
+	*) echo "SHA" ;;
+	esac
+}
+netsnmp_priv() {
+	case "$1" in
+	aes256) echo "AES-256" ;; aes128) echo "AES" ;; des) echo "DES" ;; *) echo "AES" ;;
+	esac
+}
 
-Time the walk. CollectInventory walks ifTable AND ifXTable inside a 60 s job
-budget (pollerrt/runtime.go), so a walk that is merely slow by hand is a hard
-failure in the poller. Raise snmp_timeout_ms / snmp_retries on the profile, or
-cut the interface count at the device.
+q1 <<SQL |
+SELECT d.id, d.name, host(d.mgmt_ip), coalesce(d.attrs->>'snmp_port','161'),
+       coalesce(c.meta->>'version','v2c'), coalesce(c.meta->>'auth_protocol',''),
+       coalesce(c.meta->>'priv_protocol',''), coalesce(c.meta->>'username','USER')
+FROM inventory.devices d
+JOIN inventory.credentials c ON c.id = d.credential_id
+WHERE d.status = 'pending' AND $filter
+ORDER BY d.name;
+SQL
+	while IFS='|' read -r did dname dip dport dver dauth dpriv duser; do
+		[ -n "$did" ] || continue
+		target="$dip"
+		# net-snmp addresses a non-default port as host:port, not with a flag.
+		[ "$dport" = "161" ] || target="$dip:$dport"
+		printf '\n  %s (%s, %s)\n' "$dname" "$target" "$dver"
+		if [ "$dver" = "v3" ]; then
+			printf "    docker run --rm --network container:%s alpine sh -c \\\\\n" "${POLLER:-POLLER}"
+			printf "      'apk add -q net-snmp-tools && \\\\\n"
+			printf "       time snmpbulkwalk -v3 -l authPriv -u %s -a %s -A \"AUTHPASS\" -x %s -X \"PRIVPASS\" \\\\\n" \
+				"$duser" "$(netsnmp_auth "$dauth")" "$(netsnmp_priv "$dpriv")"
+			printf "         -t 5 -r 2 -Cr25 %s 1.3.6.1.2.1.2.2 | wc -l'\n" "$target"
+		else
+			printf "    docker run --rm --network container:%s alpine sh -c \\\\\n" "${POLLER:-POLLER}"
+			printf "      'apk add -q net-snmp-tools && \\\\\n"
+			printf "       time snmpbulkwalk -v2c -c COMMUNITY -t 5 -r 2 -Cr25 %s 1.3.6.1.2.1.2.2 | wc -l'\n" "$target"
+		fi
+		printf '    then force a sync:  curl -sk -X POST -H "Authorization: Bearer TOKEN" \\\n'
+		printf '                          https://HOST:8443/api/v1/devices/%s/sync\n' "$did"
+	done
 
-Then force a sync rather than waiting out sync_interval_s (6 h by default) —
-"Sync now" on the device page, or:
+cat <<'EOF'
 
-  curl -sk -X POST -b cookies.txt https://HOST:8443/api/v1/devices/DEVICE_ID/sync
-
-and re-run this script a minute later.
+Re-run this script a minute after forcing a sync: a new row appears in section
+2 with either an ok status or a fresh error.
 EOF
