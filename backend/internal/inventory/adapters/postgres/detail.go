@@ -2,7 +2,10 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 
 	"github.com/freezxp/netinv/backend/internal/platform/errx"
 )
@@ -174,4 +177,50 @@ func (r *DeviceRepo) SyncRuns(ctx context.Context, deviceID string, limit int) (
 		out = append(out, s)
 	}
 	return out, rows.Err()
+}
+
+// SiteCollection reports whether anything is consuming the job queue for a
+// device's site. It is the other half of "why is this device pending": a sync
+// that failed leaves a reason on the run row, but a site nobody polls produces
+// no run at all, no failure and no log line, so the device page would
+// otherwise have nothing to show for the commonest silent case.
+//
+// Absent means the scheduler has not yet dispatched to this site — no rows for
+// a site whose devices are all disabled, or a deployment where the scheduler
+// has not ticked since the upgrade that added this. Absence is reported as
+// unknown rather than as "no poller", because claiming a fault from missing
+// data is how a diagnostic loses its credibility.
+type SiteCollection struct {
+	SiteID          string `json:"site_id"`
+	Known           bool   `json:"known"`
+	Consumers       int    `json:"consumers"`
+	Queued          int    `json:"queued"`
+	NoConsumerSince string `json:"no_consumer_since,omitempty"`
+	CheckedAt       string `json:"checked_at,omitempty"`
+}
+
+func (r *DeviceRepo) SiteCollection(ctx context.Context, deviceID string) (SiteCollection, error) {
+	var sc SiteCollection
+	var since, checked *time.Time
+	err := r.Pool.QueryRow(ctx, `
+		SELECT d.site_id, coalesce(h.consumers,0), coalesce(h.queued,0),
+		       h.no_consumer_since, h.checked_at
+		FROM inventory.devices d
+		LEFT JOIN platform.site_collection_health h ON h.site_id = d.site_id
+		WHERE d.id = $1`, deviceID).
+		Scan(&sc.SiteID, &sc.Consumers, &sc.Queued, &since, &checked)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return sc, errx.New(errx.KindNotFound, "device not found")
+	}
+	if err != nil {
+		return sc, errx.Wrap(errx.KindTransient, err, "site collection health")
+	}
+	if checked != nil {
+		sc.Known = true
+		sc.CheckedAt = checked.UTC().Format(time.RFC3339)
+	}
+	if since != nil {
+		sc.NoConsumerSince = since.UTC().Format(time.RFC3339)
+	}
+	return sc, nil
 }

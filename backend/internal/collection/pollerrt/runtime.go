@@ -94,7 +94,7 @@ func (r *Runtime) Run(ctx context.Context) error {
 					if err := r.Client.DeclareJobTopology(); err != nil {
 						return err
 					}
-					if err := r.Client.EnsureSiteQueue(site); err != nil {
+					if _, err := r.Client.EnsureSiteQueue(site); err != nil {
 						return err
 					}
 					return r.Client.EnsureMetricsQueue()

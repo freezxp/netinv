@@ -107,19 +107,38 @@ func (c *Client) DeclareJobTopology() error {
 // EnsureSiteQueue declares poll.site.<id> (quorum, fixed 15-minute stale-job
 // TTL — one policy for all sites so every declarer agrees on queue args) and
 // binds it to the jobs exchange.
-func (c *Client) EnsureSiteQueue(siteID string) error {
+//
+// It returns what the declare reported about the queue. That is not incidental:
+// the publisher declares the site queue itself, so a site no poller serves
+// still gets a queue and every job published to it is routable and simply
+// accumulates unread. "Nobody is consuming this site" is therefore invisible
+// on the publish path, and the consumer count from queue.declare is the only
+// place the truth was already available — it was being discarded.
+func (c *Client) EnsureSiteQueue(siteID string) (QueueState, error) {
 	ch, err := c.channel()
 	if err != nil {
-		return err
+		return QueueState{}, err
 	}
 	args := amqp.Table{
 		"x-queue-type":  "quorum",
 		"x-message-ttl": int32((15 * time.Minute).Milliseconds()),
 	}
-	if _, err := ch.QueueDeclare(SiteQueue(siteID), true, false, false, false, args); err != nil {
-		return fmt.Errorf("amqpx: declare %s: %w", SiteQueue(siteID), err)
+	q, err := ch.QueueDeclare(SiteQueue(siteID), true, false, false, false, args)
+	if err != nil {
+		return QueueState{}, fmt.Errorf("amqpx: declare %s: %w", SiteQueue(siteID), err)
 	}
-	return ch.QueueBind(SiteQueue(siteID), SiteRouting(siteID), JobsExchange, false, nil)
+	if err := ch.QueueBind(SiteQueue(siteID), SiteRouting(siteID), JobsExchange, false, nil); err != nil {
+		return QueueState{}, err
+	}
+	return QueueState{Consumers: q.Consumers, Messages: q.Messages}, nil
+}
+
+// QueueState is what queue.declare reports back about a queue. Consumers is the
+// count at the instant of the declare: a poller reconnecting passes through
+// zero, so a single observation is not a fault.
+type QueueState struct {
+	Consumers int
+	Messages  int
 }
 
 // EnsureMetricsQueue declares metrics.raw (quorum — doc 05 §4).

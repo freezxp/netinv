@@ -122,6 +122,17 @@ is nested to match every other device sub-resource (`/interfaces`, `/history`,
 run and `duration_s` only on a finished one, so an in-flight sync is not
 reported as an instant one.
 
+The response also carries a `site` object — `{site_id, known, consumers,
+queued, no_consumer_since, checked_at}` — reporting whether anything is
+consuming the site's job queue (migration 0013). It rides along rather than
+sitting behind its own endpoint because "why is this device pending" has two
+halves and the page cannot name the cause holding only one: a sync that failed
+leaves a reason on a run row, while a site nobody polls produces *no run at
+all*, no failure and no log line. `known` is false when the scheduler has not
+dispatched to the site yet; that is reported as unknown rather than as "no
+poller", because claiming a fault from missing data is how a diagnostic stops
+being believed.
+
 **GET /devices?filter=site:eq:s_dceast,status:eq:active&q=core&sort=-updated_at&limit=2**
 ```json
 {"data": [{

@@ -20,8 +20,18 @@ type ScheduleRepo interface {
 }
 
 type JobPublisher interface {
-	EnsureSiteQueue(siteID string) error
+	// EnsureSiteQueue declares the site's queue and reports what the broker
+	// says about it. The declare is the only place the consumer count is
+	// available on the publish path.
+	EnsureSiteQueue(siteID string) (domain.SiteQueueState, error)
 	Publish(ctx context.Context, siteID string, job wire.PollJob) error
+}
+
+// SiteHealthRepo records what the broker reported about each site's queue, so
+// the API can answer "is anything collecting for this site" without an AMQP
+// connection of its own — see migration 0013 for why this is not a metric.
+type SiteHealthRepo interface {
+	RecordSiteQueue(ctx context.Context, siteID string, st domain.SiteQueueState) error
 }
 
 // SecretResolver turns a credential reference into the wire credential the
@@ -42,10 +52,19 @@ type Scheduler struct {
 	Publisher JobPublisher
 	Secrets   SecretResolver
 	Leader    Leader
-	Log       *slog.Logger
-	Tick      time.Duration // default 10s
-	Batch     int           // max jobs per tick, default 5000
+	// SiteHealth persists the queue state observed at dispatch. Optional: nil
+	// disables recording, which keeps the scheduler runnable without a database
+	// in tests.
+	SiteHealth SiteHealthRepo
+	Log        *slog.Logger
+	Tick       time.Duration // default 10s
+	Batch      int           // max jobs per tick, default 5000
 }
+
+// siteQueueRecheck is how often a site's queue is re-declared to refresh its
+// consumer count. The declare is cheap but not free, and a poller appearing or
+// vanishing does not need to be noticed within one 10 s tick.
+const siteQueueRecheck = time.Minute
 
 func (s *Scheduler) Run(ctx context.Context) error {
 	if s.Tick == 0 {
@@ -56,7 +75,10 @@ func (s *Scheduler) Run(ctx context.Context) error {
 	}
 	t := time.NewTicker(s.Tick)
 	defer t.Stop()
-	knownQueues := map[string]bool{}
+	lastQueueCheck := map[string]time.Time{}
+	// Previous consumer state per site, so the log fires on the transition
+	// rather than once a minute forever.
+	hadConsumers := map[string]bool{}
 	for {
 		select {
 		case <-ctx.Done():
@@ -74,13 +96,18 @@ func (s *Scheduler) Run(ctx context.Context) error {
 		}
 		published, failed := 0, 0
 		for _, d := range due {
-			if !knownQueues[d.SiteID] {
-				if err := s.Publisher.EnsureSiteQueue(d.SiteID); err != nil {
+			// The queue was declared once and never looked at again, which is
+			// exactly how a site with no poller stayed invisible: the declare
+			// succeeds, the publish succeeds, and the jobs pile up unread.
+			if time.Since(lastQueueCheck[d.SiteID]) >= siteQueueRecheck {
+				st, err := s.Publisher.EnsureSiteQueue(d.SiteID)
+				if err != nil {
 					s.Log.Error("queue declare failed", "site", d.SiteID, "err", err)
 					failed++
 					continue
 				}
-				knownQueues[d.SiteID] = true
+				lastQueueCheck[d.SiteID] = time.Now()
+				s.noteSiteQueue(ctx, d.SiteID, st, hadConsumers)
 			}
 			cred, err := s.Secrets.Resolve(ctx, d.CredentialID)
 			if err != nil {
@@ -108,5 +135,34 @@ func (s *Scheduler) Run(ctx context.Context) error {
 			s.Log.Info("tick complete", "due", len(due), "published", published,
 				"failed", failed, "dur_ms", time.Since(start).Milliseconds())
 		}
+	}
+}
+
+// noteSiteQueue records the queue state and logs the transition into and out of
+// "no poller is reading this site". It logs on change only: a site that has been
+// unserved for a week does not need a line a minute, and the one line that
+// matters is the one naming when it started.
+func (s *Scheduler) noteSiteQueue(ctx context.Context, siteID string,
+	st domain.SiteQueueState, had map[string]bool) {
+	if s.SiteHealth != nil {
+		if err := s.SiteHealth.RecordSiteQueue(ctx, siteID, st); err != nil {
+			s.Log.Warn("site queue health not recorded", "site", siteID, "err", err)
+		}
+	}
+	served := st.Consumers > 0
+	prev, seen := had[siteID]
+	had[siteID] = served
+	if seen && prev == served {
+		return
+	}
+	if !served {
+		// Not an error: nothing has failed, which is the whole problem with it.
+		s.Log.Warn("site has no poller consuming its queue — jobs are being "+
+			"queued and never executed; devices in this site will stay pending",
+			"site", siteID, "queued", st.Queued)
+		return
+	}
+	if seen {
+		s.Log.Info("site queue has a consumer again", "site", siteID)
 	}
 }

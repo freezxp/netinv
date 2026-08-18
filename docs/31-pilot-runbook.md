@@ -192,7 +192,7 @@ them apart:
 | Class | Cause | Where it shows |
 |---|---|---|
 | A | The device's profile omits `sync` from `families_enabled`, so the schedule row was dropped and nothing is dispatched | no `sync=` row in `platform.polling_schedule` |
-| B | No poller consumes the device's site queue, so jobs accumulate unread | `poll.site.<site>` with `consumers = 0`, or no such queue |
+| B | No poller consumes the device's site queue, so jobs accumulate unread | the device page banner names the site; also `poll.site.<site>` with `consumers = 0` |
 | C | The poller ran it and SNMP failed | `platform.sync_runs.error` |
 | D | Collection succeeded but the apply is erroring and requeuing | `sync result requeued` in the api log |
 
@@ -201,10 +201,13 @@ names whichever of A/B, C or D applies, and the History tab lists every sync
 run with the failure reason in full (doc 30 §5, `GET /devices/{id}/sync-runs`).
 Until 2026-08-18 it did not — `platform.sync_runs` was written on every poll
 and read by nothing, so a device could fail for a stated, recorded reason that
-an operator had no way to see short of psql. The script stays because it is
-also the tool for a deployment whose UI you cannot reach, and because class B
-is invisible from the device page alone: nothing is logged at all, because
-nothing ever runs, so only the queue's consumer count gives it away.
+an operator had no way to see short of psql. Class B is named there too since 2026-08-18: the
+scheduler already declares every site queue before publishing to it, and
+`queue.declare` reports the consumer count, so it now records that per site
+(migration 0013) and warns once on the transition — `site has no poller
+consuming its queue`. The script stays because it is the tool for a deployment
+whose UI you cannot reach, and because it reads the broker directly rather than
+what the scheduler last observed.
 
 When the error is a timeout and a manual `snmpwalk` succeeds, reproduce from
 the poller's own network position rather than from a shell — an ACL or a Junos

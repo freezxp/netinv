@@ -120,3 +120,32 @@ func (r *PollerRepo) SetStatus(ctx context.Context, pollerID string, status doma
 	}
 	return nil
 }
+
+// RecordSiteQueue upserts what the broker reported about a site's job queue.
+//
+// no_consumer_since is set on the first observation with no consumer and
+// cleared as soon as one appears, so it answers "since when" rather than "is it
+// bad right now" — a poller restarting passes through zero consumers and the
+// scheduler observes far more often than that takes to resolve, so the instant
+// is what makes the state actionable.
+func (r *PollerRepo) RecordSiteQueue(ctx context.Context, siteID string,
+	st domain.SiteQueueState) error {
+	_, err := r.Pool.Exec(ctx, `
+		INSERT INTO platform.site_collection_health
+			(site_id, consumers, queued, no_consumer_since, checked_at)
+		VALUES ($1, $2, $3, CASE WHEN $2 = 0 THEN now() END, now())
+		ON CONFLICT (site_id) DO UPDATE SET
+			consumers = excluded.consumers,
+			queued = excluded.queued,
+			checked_at = excluded.checked_at,
+			no_consumer_since = CASE
+				WHEN excluded.consumers > 0 THEN NULL
+				-- Keep the original instant across later zero observations.
+				ELSE coalesce(platform.site_collection_health.no_consumer_since, now())
+			END`,
+		siteID, st.Consumers, st.Queued)
+	if err != nil {
+		return errx.Wrap(errx.KindTransient, err, "record site queue")
+	}
+	return nil
+}

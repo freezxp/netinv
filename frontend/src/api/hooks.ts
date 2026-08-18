@@ -222,10 +222,28 @@ export interface SyncRun {
   duration_s?: number;
 }
 
+/**
+ * Whether anything is consuming the job queue for the device's site. `known`
+ * is false when the scheduler has not dispatched to this site yet, which is
+ * reported as unknown rather than as a fault — claiming one from missing data
+ * is how a diagnostic stops being believed.
+ */
+export interface SiteCollection {
+  site_id: string;
+  known: boolean;
+  consumers: number;
+  queued: number;
+  no_consumer_since?: string;
+  checked_at?: string;
+}
+
 export function useDeviceSyncRuns(id: string) {
   return useQuery({
     queryKey: ["device", id, "sync-runs"],
-    queryFn: () => api<{ data: SyncRun[] }>(`/devices/${id}/sync-runs`),
+    queryFn: () =>
+      api<{ data: SyncRun[]; site: SiteCollection }>(
+        `/devices/${id}/sync-runs`,
+      ),
     refetchInterval: 30_000,
   });
 }

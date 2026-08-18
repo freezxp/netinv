@@ -236,7 +236,17 @@ func (h *DeviceHandler) syncRuns(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"data": rows})
+	// The site's collection health rides along rather than sitting behind its
+	// own endpoint. "Why is this device pending" has two halves — a run that
+	// failed, or no run at all because nothing polls this site — and the page
+	// cannot name the cause holding only one of them. Two round-trips to answer
+	// one question is the worse shape.
+	site, err := repo.SiteCollection(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"data": rows, "site": site})
 }
 
 func (h *DeviceHandler) neighbors(w http.ResponseWriter, r *http.Request) {

@@ -32,3 +32,13 @@ type HeartbeatStats struct {
 	BufferBytes int64 `json:"buffer_bytes"`
 	Workers     int   `json:"workers"`
 }
+
+// SiteQueueState is what the broker reports about a site's job queue when the
+// scheduler declares it before publishing. Consumers is the number of pollers
+// reading the queue: zero means every job dispatched to this site is being
+// queued and never executed, which is silent on every other signal — the jobs
+// are routable, the publish succeeds, and nothing fails.
+type SiteQueueState struct {
+	Consumers int
+	Queued    int
+}

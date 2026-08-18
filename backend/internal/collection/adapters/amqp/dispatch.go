@@ -32,7 +32,7 @@ func (d *SyncDispatcher) DispatchSync(ctx context.Context, t SyncTarget) (string
 	if err != nil {
 		return "", err
 	}
-	if err := d.Client.EnsureSiteQueue(t.SiteID); err != nil {
+	if _, err := d.Client.EnsureSiteQueue(t.SiteID); err != nil {
 		return "", err
 	}
 	port := t.Port
@@ -57,7 +57,7 @@ func (d *SyncDispatcher) DispatchSync(ctx context.Context, t SyncTarget) (string
 type DiscoveryDispatcher struct{ Client *amqpx.Client }
 
 func (d *DiscoveryDispatcher) Dispatch(ctx context.Context, job wire.DiscoveryJob) error {
-	if err := d.Client.EnsureSiteQueue(job.SiteID); err != nil {
+	if _, err := d.Client.EnsureSiteQueue(job.SiteID); err != nil {
 		return err
 	}
 	return d.Client.PublishJSON(ctx, amqpx.JobsExchange,

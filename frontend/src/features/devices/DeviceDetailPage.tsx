@@ -615,9 +615,12 @@ function SyncStatus({
 }) {
   const runs = useDeviceSyncRuns(deviceID);
   const rows = runs.data?.data ?? [];
+  const site = runs.data?.site;
   const last = rows[0];
   const pending = status === "pending";
-  if (!runs.data || (!pending && last?.status !== "failed")) return null;
+  const unserved = site?.known === true && site.consumers === 0;
+  if (!runs.data || (!pending && last?.status !== "failed" && !unserved))
+    return null;
 
   // Three distinct faults reach this banner and the operator's next move
   // differs for each, so name the one that applies rather than saying
@@ -640,6 +643,29 @@ function SyncStatus({
         </div>
       </>
     );
+  } else if (
+    pending &&
+    rows.length === 0 &&
+    site?.known &&
+    site.consumers === 0
+  ) {
+    // The cause is known, so name it. This is the quietest fault in the
+    // system: the jobs are routable, the publish succeeds, nothing fails.
+    tone = "red";
+    heading = `No poller is collecting for site ${site.site_id}`;
+    detail = (
+      <div className="mt-1 opacity-80">
+        {site.queued > 0
+          ? `${site.queued} job${site.queued === 1 ? "" : "s"} queued and unread`
+          : "Jobs are being queued and never executed"}
+        {site.no_consumer_since &&
+          ` since ${new Date(site.no_consumer_since).toLocaleString()}`}
+        . Nothing has failed, which is why nothing is logged. Start a poller for
+        this site, add the site to an existing poller&apos;s{" "}
+        <span className="mono">NETINV_SITE_ID</span>, or move the device to a
+        site that is already served.
+      </div>
+    );
   } else if (pending && rows.length === 0) {
     heading = "No sync has ever run for this device";
     detail = (
@@ -656,6 +682,17 @@ function SyncStatus({
       <div className="mt-1 opacity-80">
         Collection worked and the inventory write did not. Check the api log for
         a repeating <span className="mono">sync result requeued</span>.
+      </div>
+    );
+  } else if (unserved && site) {
+    // Not pending: an active device whose site lost its poller stops
+    // collecting just as silently, and its graphs simply stop.
+    tone = "red";
+    heading = `No poller is collecting for site ${site.site_id}`;
+    detail = (
+      <div className="mt-1 opacity-80">
+        This device is {status}, but its site&apos;s job queue has no consumer,
+        so nothing new is being collected for it.
       </div>
     );
   } else {

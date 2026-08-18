@@ -61,7 +61,10 @@ func main() {
 			Publisher: &amqpadapter.JobPublisher{Client: mq},
 			Secrets:   &secrets.Resolver{Vault: &invpg.EnvelopeVault{Pool: pool, Keys: keys}},
 			Leader:    lease,
-			Log:       rt.Log,
+			// Records the consumer count the queue declare reports, so the
+			// device page can name a site nothing is collecting for.
+			SiteHealth: &colpg.PollerRepo{Pool: pool},
+			Log:        rt.Log,
 		}
 		rt.Health.SetReady(true)
 		rt.Log.Info("scheduler running")

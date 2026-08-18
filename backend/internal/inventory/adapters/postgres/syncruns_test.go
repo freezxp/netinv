@@ -128,3 +128,64 @@ func TestSyncRunsLeavesRunningDurationUnset(t *testing.T) {
 			runs[0].FinishedAt, runs[0].DurationS)
 	}
 }
+
+// The read model must not claim a fault it cannot see. A site the scheduler
+// has not dispatched to yet has no row at all, and reporting that as "no
+// poller" would put a red banner on every device of a freshly upgraded
+// deployment until the first tick.
+func TestSiteCollectionSeparatesUnknownFromUnserved(t *testing.T) {
+	_, pool := pgxtest.Throwaway(t)
+	ctx := context.Background()
+
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO platform.connectors
+			(id, vendor, display_name, version, capabilities, sys_object_id_prefixes, enabled)
+		VALUES ('generic','Generic','Generic SNMP','test','[]','[]',true)
+		ON CONFLICT (id) DO NOTHING`); err != nil {
+		t.Fatalf("seed connector: %v", err)
+	}
+	credID := id.New("cr")
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO inventory.credentials (id, tenant_id, name, kind, enc_payload, enc_dek, key_version)
+		VALUES ($1,'t_default',$2,'snmp_v2c','\x00','\x00',1)`,
+		credID, "sitecoll-"+credID); err != nil {
+		t.Fatalf("seed credential: %v", err)
+	}
+	repo := &DeviceRepo{Pool: pool}
+	dev := &domain.Device{
+		ID: id.New("d"), TenantID: "t_default", SiteID: "s_default",
+		ConnectorID: "generic", CredentialID: credID, ProfileID: "pp_default",
+		Name: "unpolled", MgmtIP: "10.255.255.251", Status: domain.DevicePending,
+		Tags: []string{}, Attrs: map[string]any{},
+	}
+	if err := repo.Create(ctx, dev); err != nil {
+		t.Fatalf("create device: %v", err)
+	}
+
+	// Nothing dispatched yet: unknown, not a fault.
+	sc, err := repo.SiteCollection(ctx, dev.ID)
+	if err != nil {
+		t.Fatalf("site collection: %v", err)
+	}
+	if sc.Known {
+		t.Fatal("reported known before the scheduler ever declared the queue")
+	}
+	if sc.SiteID != "s_default" {
+		t.Fatalf("site is %q, want s_default", sc.SiteID)
+	}
+
+	// Now the scheduler has looked and found nobody reading.
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO platform.site_collection_health
+			(site_id, consumers, queued, no_consumer_since, checked_at)
+		VALUES ('s_default', 0, 42, now(), now())`); err != nil {
+		t.Fatalf("seed health: %v", err)
+	}
+	sc, err = repo.SiteCollection(ctx, dev.ID)
+	if err != nil {
+		t.Fatalf("site collection: %v", err)
+	}
+	if !sc.Known || sc.Consumers != 0 || sc.Queued != 42 || sc.NoConsumerSince == "" {
+		t.Fatalf("got %+v, want a known site with 0 consumers, 42 queued and a start instant", sc)
+	}
+}
