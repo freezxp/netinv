@@ -112,6 +112,12 @@ Three decisions worth keeping:
 
 The maps list carries **Generate from topology** next to Create (operator+): one click produces a draft laid out from the LLDP neighbours the devices already report, and reports what it drew — "6 devices and 7 links" — because a generated map that drew nothing looks exactly like a button that did nothing. When there is no drawable topology it says so and why, rather than creating an empty map.
 
+## 5b. Reports `/reports`
+
+Interface bandwidth over a period: search by alias, description or name, pick a period (24 h / 7 d / 30 d / 90 d), run it. Columns are average, 95th percentile and peak in each direction, totals each way, and 95th-percentile utilization, sorted busiest first — a report is read from the top. **95th percentile leads** because it is what transit and transport contracts bill on; the page says so, since a number nobody can explain does not get used.
+
+The report runs on an explicit action rather than as you type: each one rolls up every matching series across the whole period, which is expensive enough to be something an operator asks for on purpose. Periods stop at 24 hours on the short end — anything shorter is a graph question. CSV export goes through a token-authorized fetch, not a plain link, because the session is a bearer token and a link would download a 401 page named like a report.
+
 ## 6. Alerts `/alerts`
 
 Tabs: Active (default: firing+acked, severity→recency), History, Silences, Rules.

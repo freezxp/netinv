@@ -13,6 +13,7 @@ const nav = [
   { to: "/", label: "Dashboard", icon: "dashboard", exact: true },
   { to: "/inventory", label: "Inventory", icon: "inventory" },
   { to: "/interfaces", label: "Interfaces", icon: "inventory" },
+  { to: "/reports", label: "Reports", icon: "audit" },
   { to: "/alerts", label: "Alerts", icon: "alerts" },
   { to: "/maps", label: "Weathermaps", icon: "maps" },
   { to: "/platform", label: "Platform", icon: "platform" },

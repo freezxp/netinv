@@ -107,6 +107,13 @@ Below, one full worked example per resource family; sibling endpoints share shap
 | POST | `/devices/{id}/sync` (on-demand) | `devices:write` | 202 `{sync_run_id}` |
 | GET | `/devices/{id}/interfaces` | `devices:read` | 200 |
 | GET | `/interfaces?q=…&limit=…&offset=…` (fleet-wide search) | `devices:read` | 200 |
+| GET | `/reports/bandwidth?q=…&from=…&to=…&format=csv` | `devices:read` | 200, 422 (backwards window) |
+`GET /reports/bandwidth` answers what a *set* of interfaces did over a period, where the graphs answer what one is doing now. Selection is the same alias/description search, because the set an operator reports on — "every customer circuit", "all the uplinks" — is defined by what they wrote on the ports, not by which chassis those sit in. Per interface it returns average, **95th percentile** and peak bits/second in each direction, total bytes each way, and utilization of the busier direction (negative = speed unknown, since ifSpeed is missing on plenty of real ports and 0% would read as idle).
+
+Four properties are deliberate. Every query is anchored at the **end of the window**, not at now, because a report about last month must not be evaluated against today. Totals use `increase()` over the whole window rather than summing rates, so a device reboot mid-report does not lose its counter reset. The subquery step grows with the window, capping evaluation at ~720 points — a month at the rate window would be tens of thousands of points per series, for resolution a monthly average does not have. And series arriving for interfaces outside the selection are dropped in the caller rather than filtered in the query, because a selector naming 500 device/index pairs is a regex the store recompiles on every evaluation.
+
+`format=csv` streams the same rows with the window in both the filename and a header line: a bandwidth figure without its period is meaningless, and a spreadsheet outlives the filename. Unknown utilization is an empty cell rather than 0.
+
 | PATCH | `/devices/{id}/interfaces/{ifId}` (`monitor`, notes) | `devices:write` | 200 |
 | GET | `/devices/{id}/oids?root=…&limit=…` (live SNMP walk) | `devices:read` | 200, 503 (not configured) |
 | GET | `/devices/{id}/components` | `devices:read` | 200 |

@@ -56,6 +56,7 @@ import (
 	"github.com/freezxp/netinv/backend/internal/platform/redisx"
 	"github.com/freezxp/netinv/backend/internal/platform/service"
 	"github.com/freezxp/netinv/backend/internal/platform/wire"
+	"github.com/freezxp/netinv/backend/internal/reports"
 )
 
 func main() {
@@ -366,6 +367,24 @@ func main() {
 				}).Register(g)
 				(&dashboard.Service{
 					Pool: pool, VM: alertvm.New(vmURL), Redis: redisClient,
+					Checker: checker,
+				}).Register(g)
+				(&reports.Handler{
+					Svc: &reports.Service{
+						Interfaces: &invpg.DeviceRepo{Pool: pool},
+						Metrics:    reports.NewVMReader(vmURL),
+						// Same per-request read as the query proxy: the
+						// cadence is changeable from the UI, and a rate window
+						// shorter than it spans one sample and returns nothing,
+						// emptying every column without erroring.
+						PollInterval: func() time.Duration {
+							ps, err := pollStore.Get(context.Background())
+							if err != nil || ps.TrafficIntervalS <= 0 {
+								return 0
+							}
+							return time.Duration(ps.TrafficIntervalS) * time.Second
+						},
+					},
 					Checker: checker,
 				}).Register(g)
 				mapStore := &maps.Store{Pool: pool}

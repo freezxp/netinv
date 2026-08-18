@@ -24,6 +24,10 @@ const InterfacesPage = lazyRoute(
   () => import("./features/interfaces/InterfacesPage"),
   "InterfacesPage",
 );
+const ReportsPage = lazyRoute(
+  () => import("./features/reports/ReportsPage"),
+  "ReportsPage",
+);
 const MapsListPage = lazyRoute(
   () => import("./features/maps/MapsListPage"),
   "MapsListPage",
@@ -89,6 +93,7 @@ const router = createBrowserRouter([
       { index: true, element: <DashboardPage /> },
       { path: "inventory", element: <InventoryPage /> },
       { path: "interfaces", element: <InterfacesPage /> },
+      { path: "reports", element: <ReportsPage /> },
       { path: "alerts", element: <AlertsPage /> },
       { path: "audit", element: <AuditPage /> },
       { path: "users", element: <UsersPage /> },
