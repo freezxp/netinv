@@ -15,9 +15,26 @@ import (
 // Unprivileged UDP-ICMP by default (needs net.ipv4.ping_group_range on
 // Linux); set NETINV_ICMP_PRIVILEGED=1 for raw sockets + CAP_NET_RAW.
 func probeICMP(ctx context.Context, job wire.PollJob, privileged bool) ([]wire.Sample, error) {
+	// A probe that could not run is not a device that did not answer, and the
+	// difference has to reach the metrics store. Returning only an error wrote
+	// nothing at all, so `max_over_time(netinv_icmp_up[3m]) == 0` had no series
+	// to evaluate and the availability rule went quiet rather than firing:
+	// "the poller cannot send ICMP" — the unprivileged-ping permission case in
+	// an LXC, for one — looked exactly like "nothing to report".
+	//
+	// It deliberately does not report the device as down. The poller does not
+	// know whether it is: claiming a device is unreachable because we failed to
+	// ask would page someone to look at healthy equipment.
+	probeErr := func(err error) ([]wire.Sample, error) {
+		return []wire.Sample{{
+			DeviceID: job.DeviceID, Name: "netinv_icmp_probe_error",
+			TSMillis: time.Now().UTC().UnixMilli(), Value: 1,
+		}}, err
+	}
+
 	p, err := probing.NewPinger(job.MgmtIP)
 	if err != nil {
-		return nil, err
+		return probeErr(err)
 	}
 	p.SetPrivileged(privileged)
 	p.Count = 5
@@ -26,7 +43,7 @@ func probeICMP(ctx context.Context, job wire.PollJob, privileged bool) ([]wire.S
 	p.RecordRtts = true
 
 	if err := p.RunWithContext(ctx); err != nil {
-		return nil, err
+		return probeErr(err)
 	}
 	st := p.Statistics()
 	now := time.Now().UTC().UnixMilli()
@@ -45,6 +62,10 @@ func probeICMP(ctx context.Context, job wire.PollJob, privileged bool) ([]wire.S
 	samples := []wire.Sample{
 		s("netinv_icmp_up", nil, up),
 		s("netinv_icmp_loss_ratio", nil, loss),
+		// Written on every successful probe so the series exists continuously.
+		// A gauge that only appears when broken cannot be alerted on with `==
+		// 1` without also matching every device that has never been probed.
+		s("netinv_icmp_probe_error", nil, 0),
 	}
 	if st.PacketsRecv > 0 {
 		jitter := 0.0

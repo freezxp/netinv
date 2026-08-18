@@ -61,7 +61,21 @@ VALUES
    'absent_over_time(netinv_flow_bytes[20m]) and on() count(last_over_time(netinv_flow_bytes[30d]))',
    '{"operator":"==","value":1,"for_s":1200,"quiet_window":"20m","seen_window":"30d"}',
    true,
-   '{"summary":"No NetFlow/IPFIX received from any exporter for 20m — if netinv-flow logs nothing at all, the exporters stopped sending rather than the collector failing"}');
+   '{"summary":"No NetFlow/IPFIX received from any exporter for 20m — if netinv-flow logs nothing at all, the exporters stopped sending rather than the collector failing"}')
+-- Added after this migration first shipped. alert_rules carries
+-- UNIQUE (tenant_id, name), so on a deployment where an operator had already
+-- created a rule with either of these names, this INSERT aborted the migration
+-- — and an aborted migration exits the api at startup, on every start, leaving
+-- the deployment stuck several versions behind with nothing but a crashloop to
+-- explain it. Seeding fixed rows has to tolerate a database that is not a
+-- fresh install.
+--
+-- Editing an applied migration is safe here specifically: goose keys on the
+-- version number rather than the file's contents, so a database that already
+-- ran this one is untouched, and only deployments that have not yet reached it
+-- see the change. The conflict target is omitted deliberately — the constraint
+-- that bites is the name, not the primary key.
+ON CONFLICT DO NOTHING;
 
 -- +goose Down
 DELETE FROM alerting.alert_rules

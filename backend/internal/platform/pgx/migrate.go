@@ -78,6 +78,24 @@ func MigrateDownTo(ctx context.Context, dsn string, version int64, log *slog.Log
 	return goose.DownToContext(ctx, db, ".", version)
 }
 
+// MigrateUpTo applies migrations up to and including the given version. It is
+// the counterpart of MigrateDownTo, and exists for the same reason: tests need
+// to stand a database up in a state that is *not* the head — here, to put a
+// deployment's own data in place before a later migration seeds over it.
+func MigrateUpTo(ctx context.Context, dsn string, version int64, log *slog.Logger) error {
+	db, err := sql.Open("pgx", dsn)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	goose.SetBaseFS(migrations.FS)
+	goose.SetLogger(gooseLogger{log})
+	if err := goose.SetDialect("postgres"); err != nil {
+		return err
+	}
+	return goose.UpToContext(ctx, db, ".", version)
+}
+
 type gooseLogger struct{ log *slog.Logger }
 
 func (g gooseLogger) Printf(format string, v ...any) {
