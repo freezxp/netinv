@@ -97,6 +97,8 @@ docker logs -f netinv-api-1           # follow a service
 ./deploy/compose-app/upgrade.sh                 # rebuild from the working tree
 ./deploy/compose-app/upgrade.sh --ref v1.1.0    # fetch and check out first
 ./deploy/compose-app/upgrade.sh --dry-run       # print the plan, change nothing
+./deploy/compose-app/upgrade.sh --recover       # stack is down: bring it back up
+./deploy/compose-app/upgrade.sh --no-rollback   # leave a failure in place to inspect
 ```
 
 `quickstart.sh` also updates a stack it created, and for a plain quickstart host either works. `upgrade.sh` exists for the case quickstart cannot serve: **a stack whose compose invocation is not the one quickstart uses**. It takes no compose flags and assumes none — it reads the project name, the config files and the env file back off a running container, where Compose records all three as labels, and rebuilds exactly that. This matters because a NetInv stack is a multi-file project with an `--env-file`, and a bare `docker compose up -d api` resolves to the base file alone: that file carries no `NETINV_PG_DSN`, so the api comes back in skeleton mode with no database while postgres and rabbitmq are recreated with base-file credentials, and every other service then fails AMQP auth. Nothing is lost — the data is in volumes — but the stack is down until someone works out why.
@@ -106,7 +108,14 @@ It backs up first (`scripts/backup.sh`, skip with `--skip-backup`), builds befor
 - **The schema advanced to the highest migration in the checkout.** Migrations are embedded in the api binary, so a new `backend/migrations/*.sql` does nothing until the image is rebuilt. A database version behind the tree is how a stale image announces itself — the same fault that reads as `goose: no migrations to run` while the file sits on disk.
 - **The UI answers through the frontend proxy**, which exercises nginx, the api and the database in one request.
 
-It ends by printing the rollback: check out the previous commit and re-run. That restores the previous binaries but does **not** undo a migration — for that, roll the data back from the backup with `scripts/restore.sh` (doc 20 §12.3), and read its `--force` warning first.
+**It rolls itself back.** If the build fails, or the services do not come up healthy, the script restores the checkout it started from and brings the stack back up on the images already present, rather than leaving a half-upgraded host down while someone reads the output. Two details decide what that rollback is actually worth:
+
+- **A failed build is a clean rollback.** Compose builds into new images and only swaps them in at `up`, so a build that fails has not touched the running stack — the previous images are still tagged and the stack returns to exactly where it was. This is the common case, since a compile error is the likeliest failure.
+- **A failed recreate is not.** By then the new images are built and tagged under the same names, so what comes back up is the *new* code, not the old. The script says so rather than reporting a rollback it did not perform. Getting the old binaries back from there means checking out the previous commit and re-running.
+
+**No rollback touches the database.** goose does not roll a migration back, so if the new api started long enough to migrate, the code is rolled back *under* a newer schema. The schema is a superset and nothing is lost, but old code is then serving data it does not fully know about, and the script prints the query to check the schema version against the highest migration in the tree. To undo the data as well, restore from the backup with `scripts/restore.sh` (doc 20 §12.3) and read its `--force` warning first.
+
+`--recover` is the same machinery with everything optional removed: no backup, no build, no checkout change — it locates the stack from its container labels (**including stopped ones**, which is the point) and starts what is already built. It is for the case where a host is down and the priority is service, not version. `--no-rollback` suppresses the automatic recovery when you would rather inspect the wreckage than have it cleaned up.
 
 Images are built locally rather than pulled. The GHCR packages are private, so an anonymous pull of `ghcr.io/freezxp/netinv-*` gets a 401; "images published per release" is true only for someone holding a token.
 

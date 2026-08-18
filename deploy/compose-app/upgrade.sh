@@ -24,7 +24,16 @@
 #   ./deploy/compose-app/upgrade.sh --ref v1.1.0        # fetch + check out first
 #   ./deploy/compose-app/upgrade.sh --skip-backup       # you already have one
 #   ./deploy/compose-app/upgrade.sh --dry-run           # print the plan, change nothing
+#   ./deploy/compose-app/upgrade.sh --recover           # stack is down: bring it back up
+#   ./deploy/compose-app/upgrade.sh --no-rollback       # leave the wreckage for inspection
 #   PROJECT=netinv-staging ./deploy/compose-app/upgrade.sh
+#
+# On failure the script rolls back by itself: it restores the checkout it started
+# from and brings the stack back up on the images that were already there. What
+# it will not do is touch the database — goose does not roll a migration back, so
+# code that has already applied one is rolled back *under* a newer schema. That is
+# safe (the schema is a superset) but it is not a restore, and the difference
+# matters enough to be told rather than inferred.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -33,6 +42,8 @@ ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 REF=""
 SKIP_BACKUP=0
 DRY_RUN=0
+RECOVER=0
+NO_ROLLBACK=0
 BACKUP_DIR="${BACKUP_DIR:-$ROOT/backups}"
 
 while [ $# -gt 0 ]; do
@@ -40,7 +51,9 @@ while [ $# -gt 0 ]; do
 	--ref) REF="${2:?--ref needs a git ref}"; shift 2 ;;
 	--skip-backup) SKIP_BACKUP=1; shift ;;
 	--dry-run) DRY_RUN=1; shift ;;
-	-h | --help) sed -n '2,27p' "$0" | sed 's/^# \?//'; exit 0 ;;
+	--recover) RECOVER=1; shift ;;
+	--no-rollback) NO_ROLLBACK=1; shift ;;
+	-h | --help) sed -n '2,36p' "$0" | sed 's/^# \?//'; exit 0 ;;
 	*) echo "unknown option: $1 (try --help)" >&2; exit 1 ;;
 	esac
 done
@@ -65,7 +78,13 @@ label() { docker inspect -f "{{index .Config.Labels \"$2\"}}" "$1" 2>/dev/null |
 # Any container of the project will do — they all carry the same project
 # labels. Preferring the api is only so the message names something recognisable.
 ref_container=""
-for candidate in $(docker ps --format '{{.Names}}' --filter "label=com.docker.compose.project${PROJECT:+=$PROJECT}"); do
+# -a, not just running: recovery exists for the case where nothing is up, and
+# the labels this script needs survive on a stopped container.
+running_count=0
+for candidate in $(docker ps -a --format '{{.Names}}' --filter "label=com.docker.compose.project${PROJECT:+=$PROJECT}"); do
+	if docker inspect -f '{{.State.Running}}' "$candidate" 2>/dev/null | grep -q true; then
+		running_count=$((running_count + 1))
+	fi
 	case "$candidate" in
 	*api*) ref_container="$candidate"; break ;;
 	*) [ -n "$ref_container" ] || ref_container="$candidate" ;;
@@ -73,7 +92,7 @@ for candidate in $(docker ps --format '{{.Names}}' --filter "label=com.docker.co
 done
 if [ -z "$ref_container" ]; then
 	cat >&2 <<-EOF
-	No running Compose containers found${PROJECT:+ for project "$PROJECT"}.
+	No Compose containers found${PROJECT:+ for project "$PROJECT"}, running or stopped.
 
 	This script upgrades a stack that is already running, because that is where
 	the flags it was created with are recorded. For a first install use
@@ -128,10 +147,28 @@ if [ -n "$ENV_FILE" ] && ! grep -q '^NETINV_MASTER_KEY=' "$ENV_FILE"; then
 	echo "If the services get a fresh key, stored credentials become undecryptable." >&2
 fi
 
+SKIP_BUILD=0
+if [ "$RECOVER" = 1 ]; then
+	# Recovery is deliberately the smallest possible action: start what is
+	# already built. It takes no backup (the stack is down; there is nothing to
+	# capture that the last backup does not already have) and builds nothing,
+	# because a failed build is the most likely reason someone is here and
+	# repeating it would just fail again.
+	say "Recovery mode"
+	echo "  no backup, no build, no checkout — starting the images already on this host"
+	SKIP_BUILD=1
+	SKIP_BACKUP=1
+	if [ -n "$REF" ]; then
+		echo "  ignoring --ref $REF: recovery restores service, it does not change version"
+		REF=""
+	fi
+fi
+
 # --------------------------------------------------------------- 2. versions
 say "Version"
 before_version="$(git -C "$ROOT" describe --tags --always --dirty 2>/dev/null || echo unknown)"
 before_commit="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo unknown)"
+moved_checkout=0
 echo "  currently checked out: $before_version ($before_commit)"
 
 if [ -n "$REF" ]; then
@@ -142,6 +179,7 @@ if [ -n "$REF" ]; then
 	say "Fetching and checking out $REF"
 	run git -C "$ROOT" fetch --tags --prune origin
 	run git -C "$ROOT" checkout "$REF"
+	[ "$DRY_RUN" = 1 ] || moved_checkout=1
 	echo "  now at: $(git -C "$ROOT" describe --tags --always --dirty 2>/dev/null || echo unknown)"
 fi
 
@@ -155,6 +193,71 @@ else
 	run "$ROOT/scripts/backup.sh" "$BACKUP_DIR"
 fi
 
+# rollback restores the state this run started from, and is called whenever a
+# step that could leave the stack down fails.
+#
+# It is deliberately not a restore. Two things it puts back — the checkout and
+# the running containers — and one it will not touch: the database. goose does
+# not roll a migration back, so if the new api started long enough to migrate,
+# rolling the code back leaves older code on a newer schema. That is safe as
+# far as the schema goes (it is a superset), but anything the new migration
+# introduced is now being served by code that knows nothing about it, and the
+# only real fix is to go forward again or restore data from the backup.
+rollback() {
+	reason="$1"
+	echo >&2
+	echo "FAILED: $reason" >&2
+
+	if [ "$NO_ROLLBACK" = 1 ]; then
+		echo >&2
+		echo "--no-rollback given, so nothing was undone. The stack is in whatever" >&2
+		echo "state that failure left it. To recover by hand:" >&2
+		echo "  $0 --recover" >&2
+		exit 1
+	fi
+
+	say "Rolling back"
+	if [ "$moved_checkout" = 1 ]; then
+		echo "  restoring checkout $before_version ($before_commit)"
+		git -C "$ROOT" checkout --quiet "$before_commit" || {
+			echo "  could not restore the checkout — do it by hand:" >&2
+			echo "    git -C $ROOT checkout $before_commit" >&2
+		}
+	else
+		echo "  checkout was never moved; leaving it alone"
+	fi
+
+	# Whatever images exist are started. After a failed build these are still
+	# the previous ones, which is the common case and a full recovery. After a
+	# failed recreate the new images are built and tagged, so this brings the
+	# *new* code back up rather than the old — say so instead of implying a
+	# clean rollback.
+	echo "  starting the stack from the images on this host"
+	if "${COMPOSE[@]}" --profile app up -d; then
+		echo "  services started"
+	else
+		echo >&2
+		echo "  could not start the stack. Current state:" >&2
+		"${COMPOSE[@]}" --profile app ps >&2 || true
+		echo "  logs:  ${COMPOSE[*]} logs --tail 50 api" >&2
+		exit 1
+	fi
+
+	cat >&2 <<-EOF
+
+	Rolled back. Two things to check before assuming this is over:
+
+	  * If the api started at any point on the new code, its migrations have
+	    already been applied and are NOT undone by this rollback. Compare the
+	    schema version against the highest file in backend/migrations:
+	      ${COMPOSE[*]} exec postgres psql -tAX -U netinv -d netinv -c 'SELECT max(version_id) FROM goose_db_version'
+	    A schema ahead of the checkout means old code on new data.
+	  * The original failure is still unfixed. Re-running this script will hit
+	    it again until it is addressed.
+	EOF
+	exit 1
+}
+
 # ----------------------------------------------------------------- 4. deploy
 # Build first, then start. Doing it in one `up --build` step leaves the stack
 # half-recreated when a build fails partway through; building separately means
@@ -164,7 +267,14 @@ fi
 # so an anonymous pull of ghcr.io/freezxp/netinv-* gets a 401 and the "images
 # published per release" path needs a token nobody has by default.
 say "Building images"
-run "${COMPOSE[@]}" --profile app build
+if [ "$SKIP_BUILD" = 1 ]; then
+	echo "  skipped — recovery starts what is already built"
+elif ! run "${COMPOSE[@]}" --profile app build; then
+	# A build failure has not touched the running stack: compose builds into
+	# new images and only swaps them in at `up`. The previous images are still
+	# tagged, so rollback here is a genuine return to the old version.
+	rollback "the image build failed (see the build output above for the failing stage)"
+fi
 
 say "Recreating services"
 # --wait blocks until healthchecks pass. The api exits rather than waits when
@@ -178,7 +288,7 @@ else
 		"${COMPOSE[@]}" --profile app ps >&2 || true
 		echo >&2
 		echo "Logs:  ${COMPOSE[*]} logs --tail 50 api" >&2
-		exit 1
+		rollback "services did not come up healthy"
 	fi
 fi
 
