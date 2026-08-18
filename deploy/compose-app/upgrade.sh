@@ -218,6 +218,22 @@ docker_root="$(docker info --format '{{.DockerRootDir}}' 2>/dev/null || true)"
 docker_root="${docker_root:-/var/lib/docker}"
 preflight_failed=0
 
+# DockerRootDir is not where the bytes are when the containerd snapshotter is
+# in use — image layers and build cache live under containerd's root instead,
+# and DockerRootDir stays nearly empty. That is not exotic: it is the default
+# on current Docker installs, and it is precisely how a host came to have
+# 127 GB free on /var/lib/docker and a 100% full / that failed every build.
+# Checking DockerRootDir alone would pass on exactly the machine that cannot
+# build.
+containerd_root="${CONTAINERD_ROOT:-}"
+if [ -z "$containerd_root" ] && docker info 2>/dev/null | grep -q 'io.containerd.snapshotter'; then
+	if command -v containerd >/dev/null 2>&1; then
+		containerd_root="$(containerd config dump 2>/dev/null |
+			awk -F\" '/^[[:space:]]*root[[:space:]]*=/ {print $2; exit}')"
+	fi
+	[ -n "$containerd_root" ] || containerd_root=/var/lib/containerd
+fi
+
 check_space() { # path, need_mb, what
 	have="$(free_mb "$1")"
 	pct="$(inode_pct "$1")"
@@ -234,7 +250,13 @@ check_space() { # path, need_mb, what
 	fi
 }
 
-check_space "$docker_root" "$MIN_BUILD_MB" "docker images/build"
+check_space "$docker_root" "$MIN_BUILD_MB" "docker root"
+# Only worth a second line when it is a different filesystem; on a host where
+# both sit on / it would just be the same number twice.
+if [ -n "$containerd_root" ] && [ -d "$(existing_parent "$containerd_root")" ] &&
+	[ "$(fs_of "$containerd_root")" != "$(fs_of "$docker_root")" ]; then
+	check_space "$containerd_root" "$MIN_BUILD_MB" "containerd images/build"
+fi
 if [ "$SKIP_BACKUP" = 0 ]; then
 	# Estimate from the newest existing backup: the best predictor of the size
 	# of the next one is the size of the last one, and it beats a number picked
@@ -261,6 +283,7 @@ if [ "$preflight_failed" = 1 ]; then
 
 	  docker builder prune -af          # build cache, safe with the stack up
 	  docker image prune -af            # unreferenced images
+	  docker system df                  # what is actually holding the space
 	  BACKUP_DIR=/some/large/disk $0
 
 	Thresholds are MIN_BUILD_MB (now $MIN_BUILD_MB) and MIN_BACKUP_MB (now
