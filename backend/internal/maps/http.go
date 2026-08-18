@@ -34,10 +34,34 @@ func (h *Handler) Register(r chi.Router) {
 	r.Group(func(pw chi.Router) {
 		pw.Use(httpx.RequirePerm(h.Checker, authz.MapsWrite))
 		pw.Post("/maps", h.create)
+		pw.Post("/maps/generate", h.generate)
 		pw.Put("/maps/{id}/draft", h.saveDraft)
 		pw.Post("/maps/{id}/publish", h.publish)
 		pw.Get("/maps/{id}/suggestions", h.suggestions)
 		pw.Delete("/maps/{id}", h.del)
+	})
+}
+
+// generate builds a draft map from LLDP adjacencies (FR-MAP-06). The first
+// map is the expensive one — placing every device and binding every link
+// before seeing anything — and the device already reports the topology.
+func (h *Handler) generate(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name string `json:"name"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	if req.Name == "" {
+		req.Name = "Discovered topology"
+	}
+	meta, nodes, links, err := h.Store.GenerateFromTopology(
+		r.Context(), req.Name, httpx.ClaimsFrom(r.Context()).Subject)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusCreated, map[string]any{
+		"id": meta.ID, "name": meta.Name, "draft_rev": meta.DraftRev,
+		"nodes": nodes, "links": links,
 	})
 }
 

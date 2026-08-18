@@ -106,6 +106,8 @@ Three decisions worth keeping:
 - **Unknown speed reads as "speed unknown", not 0%.** ifSpeed is absent or wrong on exactly the ports that matter — a PPPoE session has no ifSpeed — so a bar is drawn only when there is a denominator to draw it against.
 - **Sorting by utilization sorts the current page and says so.** Ranking the whole estate by busiest would mean querying the metrics store first and the database second; showing the busiest hundred *alphabetical* interfaces while calling it "busiest" would be a lie.
 
+The maps list carries **Generate from topology** next to Create (operator+): one click produces a draft laid out from the LLDP neighbours the devices already report, and reports what it drew — "6 devices and 7 links" — because a generated map that drew nothing looks exactly like a button that did nothing. When there is no drawable topology it says so and why, rather than creating an empty map.
+
 ## 6. Alerts `/alerts`
 
 Tabs: Active (default: firing+acked, severity→recency), History, Silences, Rules.

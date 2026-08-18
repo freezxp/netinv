@@ -215,6 +215,17 @@ Built-in rules (`is_builtin`, the FR-ALR-07 pack) are **fully editable** — thr
 | PUT | `/maps/{id}/draft` (full definition autosave) | `maps:write` | 200, 409 (stale base rev) |
 | POST | `/maps/{id}/publish` | `maps:write` | 200, 422 (broken bindings) |
 | GET | `/maps/{id}/live` | `maps:read` | 200 (≤30 s cache) |
+| POST | `/maps/generate` (draft from LLDP topology) | `maps:write` | 201 `{id,name,nodes,links}`, 400 (nothing to draw) |
+
+`POST /maps/generate` builds a **draft** from the LLDP adjacencies between managed devices — the same data `/maps/{id}/suggestions` offers one link at a time (FR-MAP-06). Hand-drawing stays the flagship, but the first map is the expensive one: placing every device and binding every link before seeing anything, when the devices already report the topology. Four rules make the output trustworthy rather than merely present:
+
+- **Both LLDP directions collapse into one link.** A↔B is reported twice, and each row carries the ifIndex of *its own* end, so the two rows are merged to bind both endpoints. Treating them as separate links draws the topology twice; keeping only the first leaves one side graphing nothing.
+- **An endpoint is bound only when its ifIndex is known.** A guessed binding graphs a real port that is not the link, which is far harder to notice than a link that graphs nothing.
+- **Neighbours NetInv does not manage are skipped**, along with self-adjacencies. An unmanaged neighbour has no interfaces to graph, so its link would sit permanently idle and read as a fault.
+- **It is deterministic** — same adjacencies, same node ids and positions. Regenerating after the estate changes is normal, and unstable ids would make every diff look like everything moved.
+
+It returns 400 rather than creating an empty map when nothing is drawable, because a map with no nodes is indistinguishable from a broken generator; the message says what to check. The result is never published: what comes out is a truthful picture of what LLDP saw, not a considered diagram.
+
 | GET | `/maps/{id}/suggestions` (LLDP link candidates) | `maps:write` | 200 |
 | GET | `/maps/{id}/export` · POST `/maps/import` | `maps:read` / `maps:write` | 200/201 |
 | DELETE | `/maps/{id}` | `maps:write` | 204 |

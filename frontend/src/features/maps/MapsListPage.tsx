@@ -1,17 +1,27 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { useCreateMap, useDeleteMap, useMaps, type MapMeta } from "./api";
+import {
+  useCreateMap,
+  useDeleteMap,
+  useGenerateMap,
+  useMaps,
+  type MapMeta,
+} from "./api";
 import { Button, Card, EmptyState, Input } from "../../components/ui";
 import { hasPermissionRole, useAuthStore } from "../auth/store";
 
 export function MapsListPage() {
   const maps = useMaps();
   const create = useCreateMap();
+  const generate = useGenerateMap();
   const [name, setName] = useState("");
   const [deleting, setDeleting] = useState<MapMeta | null>(null);
   // maps:write belongs to admin and operator; without it these buttons would
   // only ever produce a 403.
-  const canEdit = hasPermissionRole(useAuthStore((s) => s.user), "operator");
+  const canEdit = hasPermissionRole(
+    useAuthStore((s) => s.user),
+    "operator",
+  );
 
   return (
     <div className="mx-auto max-w-4xl">
@@ -32,8 +42,33 @@ export function MapsListPage() {
           >
             Create
           </Button>
+          <Button
+            variant="ghost"
+            disabled={generate.isPending}
+            title="Draw a starting map from the LLDP neighbours the devices already report"
+            onClick={() => generate.mutate(name || "Discovered topology")}
+          >
+            {generate.isPending ? "Generating…" : "Generate from topology"}
+          </Button>
         </div>
       </div>
+      {/* The result is reported rather than assumed: a generated map that drew
+          nothing looks identical to a button that did nothing, and the failure
+          case here is a real one — LLDP off, or neighbours not matched to
+          managed devices. */}
+      {generate.isSuccess && (
+        <div className="mb-3 text-sm text-sky-500">
+          Created “{generate.data.name}” as a draft with {generate.data.nodes}{" "}
+          {generate.data.nodes === 1 ? "device" : "devices"} and{" "}
+          {generate.data.links} {generate.data.links === 1 ? "link" : "links"} —
+          open it to arrange and publish.
+        </div>
+      )}
+      {generate.isError && (
+        <div className="mb-3 text-sm text-red-500">
+          {(generate.error as Error).message}
+        </div>
+      )}
       <div className="grid gap-3 md:grid-cols-2">
         {maps.data?.data.length === 0 && (
           <Card>

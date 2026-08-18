@@ -75,6 +75,25 @@ export function useCreateMap() {
   });
 }
 
+/**
+ * Generates a draft map from LLDP adjacencies between managed devices.
+ *
+ * Returns the counts it drew so the caller can say what happened: "created
+ * with 6 nodes and 7 links" is the difference between believing the feature
+ * worked and opening the map to find out.
+ */
+export function useGenerateMap() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (name: string) =>
+      api<{ id: string; name: string; nodes: number; links: number }>(
+        "/maps/generate",
+        { method: "POST", body: JSON.stringify({ name }) },
+      ),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["maps"] }),
+  });
+}
+
 export function useDeleteMap() {
   const qc = useQueryClient();
   return useMutation({
