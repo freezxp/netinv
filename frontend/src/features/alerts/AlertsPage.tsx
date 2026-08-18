@@ -62,9 +62,20 @@ function ActiveTab() {
             <div className="flex-1">
               <div className="font-medium">{a.rule.name}</div>
               <div className="text-sm text-slate-500">
-                {a.labels.device}
-                {a.labels.if_index && ` · if ${a.labels.if_index}`} ·{" "}
-                {formatDuration(a.duration_s)} · {a.state}
+                {/* Joined rather than interleaved with separators: not every
+                    alert is device-scoped. The flow rules (doc 34 §5.1) carry an
+                    `exporter` label or, for the fleet-wide one, no labels at all,
+                    and hardcoding " · " between fields left a dangling separator
+                    and hid which exporter had stopped — the one thing that alert
+                    exists to say. */}
+                {[
+                  a.labels.device || a.labels.exporter,
+                  a.labels.if_index && `if ${a.labels.if_index}`,
+                  formatDuration(a.duration_s),
+                  a.state,
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
                 {a.acked && ` — "${a.acked.comment}"`}
               </div>
             </div>

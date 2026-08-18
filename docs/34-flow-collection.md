@@ -506,6 +506,97 @@ it is the one the pilot gets.
 > a drain returns zero and looks exactly like a broken writer. Wait, or query a
 > range with an end time in the past.
 
+### 5.1 Alerting on staleness
+
+Until 2026-08-17 nothing alerted when flow stopped, and the cost of that was
+measured rather than imagined. On the pilot:
+
+| exporter | last sample | noticed after |
+|---|---|---|
+| remote site A | 2026-08-15 16:57:55Z | 42 h |
+| remote site B | 2026-08-15 16:58:55Z | 42 h |
+| local gateway | 2026-08-17 09:50:55Z | 1.4 h |
+
+The first two stopped within a minute of each other while the third kept going,
+so every fleet-wide flow query stayed non-empty and the Flow tab kept drawing
+charts. **Partial loss is the case that needs alerting**, and it is the one a
+naive "is any flow arriving" check misses entirely.
+
+Two built-in rules cover it (FR-ALR-07, migration 0012):
+
+- **`ar_flow_exporter_stale`** (primary) —
+  `count by (exporter) (last_over_time(netinv_flow_bytes[7d])) unless count by (exporter) (last_over_time(netinv_flow_bytes[20m]))`.
+  One alert per stale exporter, labelled with `exporter`, which
+  `absent_over_time` cannot provide — it reports the absence of a whole selector
+  and returns no labels. Covers total loss too, since when everything stops
+  everything is stale. **Self-gating**: an installation that never received flow
+  has no exporters in the long window, so the rule yields nothing. That matters
+  because flow is optional (ADR-020) and most deployments run without it.
+- **`ar_flow_absent`** —
+  `absent_over_time(netinv_flow_bytes[20m]) and on() count(last_over_time(netinv_flow_bytes[30d]))`.
+  Extends coverage past the primary rule's 7 d window. **The gate is not
+  optional**: bare `absent_over_time(netinv_flow_bytes[20m])` returns 1 when the
+  metric has never existed, so ungated this rule fires on every deployment that
+  never configured flow.
+
+Two things deliberately avoided in both expressions:
+
+1. **No `timestamp(last_over_time(...))`.** That form does not advance reliably
+   under `-search.latencyOffset` plus result caching and reads as stale while
+   collection is perfectly healthy. Presence via `last_over_time` does not have
+   the problem.
+2. **No unbounded scans.** Measured against the pilot's 32 588 flow series on a
+   30 s evaluation cycle: 52 ms for the stale rule, 57 ms for the absent rule.
+
+**The known limitation, stated plainly:** 7 d and 30 d are ceilings. An exporter
+silent for longer leaves the window, its alert resolves, and the fleet goes quiet
+about a fault that is still there — precisely the defect FR-ALR-08 rejects
+lookback windows for. It is accepted here only because the principled fix needs a
+metric NetInv does not publish yet: an inventory-derived
+`netinv_flow_exporter_expected{exporter=…}` built from
+`devices.attrs->'flow_exporters'` (§3.1), which would make the expected exporter
+set a *stored fact* — the equivalent of `inventory.interfaces.ever_up` — instead
+of a window, and would let both rules drop their long lookbacks entirely. That is
+the follow-up; `netinv-flow` currently has no database access, so it cannot
+publish it without new plumbing.
+
+### 5.2 Judging whether flow stopped
+
+`/api/v1/export` is the authority, and the only query form that cannot mislead
+here:
+
+```sh
+curl -s --get http://localhost:8428/api/v1/export \
+  --data-urlencode 'match[]=netinv_flow_bytes' \
+  --data-urlencode "start=$(date -u -d '-2 hours' +%s)" --data-urlencode "end=$(date +%s)"
+```
+
+It returns raw stored samples with their timestamps — no fill, no lookbehind, no
+caching. Three query forms that *do* mislead, all encountered while diagnosing
+the outage above:
+
+- **A coarse `step` fills forward.** A `query_range` at `step=1800` reported a
+  populated bucket at 11:00 when the newest real sample was 09:50 — the lookbehind
+  window is `max(step, 5m)`, so a 30-minute step carries a stale value forward for
+  half an hour and the series looks alive.
+- **Gap detection that ends at the last populated bucket is blind to a trailing
+  gap.** Scanning 7 d of buckets reported *100 % coverage* while flow had been
+  dead for 80 minutes, because the scan's own window ended at the last bucket
+  containing data. Always compare the newest sample against `now` explicitly.
+- **An instant query answers "no data" for a healthy series** whose newest sample
+  is inside the 30 s latency offset.
+
+And when the metric says nothing is arriving, confirm it at the wire before
+blaming the collector — but capture for **longer than one active timeout**. The
+UniFi default is 5 minutes (§4.2), so a 90-second `tcpdump` can fall between
+bursts and read as silence. A useful positive control: send a garbage datagram at
+the port and check the collector counts it —
+
+```sh
+printf 'PROBE' > /dev/udp/<netinv-host>/2055
+# expect: flow intake … undecodable:1   (proves the receive path is live)
+```
+
 ## 6. Exposure
 
 **This is the first NetInv component that accepts unsolicited input from the
