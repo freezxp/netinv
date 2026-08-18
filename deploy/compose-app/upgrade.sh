@@ -23,6 +23,7 @@
 #   ./deploy/compose-app/upgrade.sh                     # rebuild from the working tree
 #   ./deploy/compose-app/upgrade.sh --ref v1.1.0        # fetch + check out first
 #   ./deploy/compose-app/upgrade.sh --skip-backup       # you already have one
+#   ./deploy/compose-app/upgrade.sh --keep 5            # keep 5 backups (0 = keep all)
 #   ./deploy/compose-app/upgrade.sh --dry-run           # print the plan, change nothing
 #   ./deploy/compose-app/upgrade.sh --recover           # stack is down: bring it back up
 #   ./deploy/compose-app/upgrade.sh --no-rollback       # leave the wreckage for inspection
@@ -40,6 +41,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 REF=""
+KEEP="${KEEP:-3}"
 SKIP_BACKUP=0
 DRY_RUN=0
 RECOVER=0
@@ -50,6 +52,7 @@ while [ $# -gt 0 ]; do
 	case "$1" in
 	--ref) REF="${2:?--ref needs a git ref}"; shift 2 ;;
 	--skip-backup) SKIP_BACKUP=1; shift ;;
+	--keep) KEEP="${2:?--keep needs a count}"; shift 2 ;;
 	--dry-run) DRY_RUN=1; shift ;;
 	--recover) RECOVER=1; shift ;;
 	--no-rollback) NO_ROLLBACK=1; shift ;;
@@ -183,7 +186,90 @@ if [ -n "$REF" ]; then
 	echo "  now at: $(git -C "$ROOT" describe --tags --always --dirty 2>/dev/null || echo unknown)"
 fi
 
-# ---------------------------------------------------------------- 3. backup
+# ------------------------------------------------------------- 3. preflight
+# Both of the things this script needs disk for are measurable before it does
+# any work, and neither reports itself usefully when it runs out. A Go build
+# that fills the disk fails inside BuildKit as `exit code 1`, with the real
+# message — "no space left on device" — buried in one of eight parallel build
+# streams. That cost a real deployment several rounds of diagnosis, so it is
+# now one line, up front, naming the filesystem.
+#
+# The Docker root is asked for rather than assumed: /var/lib/docker can be a
+# mount with plenty of room while the daemon stores elsewhere, or the reverse.
+# The host that hit this had 127 GB free on /var/lib/docker and a full / — and
+# `df /var/lib/docker` looked reassuring while being the wrong question.
+MIN_BUILD_MB="${MIN_BUILD_MB:-5120}"
+MIN_BACKUP_MB="${MIN_BACKUP_MB:-1024}"
+
+# free_mb / inode_pct take a path that may not exist yet and walk up to the
+# nearest ancestor that does, since df cannot stat a directory we are about to
+# create.
+existing_parent() {
+	d="$1"
+	while [ ! -d "$d" ] && [ "$d" != "/" ]; do d="$(dirname "$d")"; done
+	printf '%s' "$d"
+}
+free_mb() { df -Pk "$(existing_parent "$1")" | awk 'NR==2 {print int($4/1024)}'; }
+inode_pct() { df -Pi "$(existing_parent "$1")" | awk 'NR==2 {gsub(/%/,"",$5); print $5+0}'; }
+fs_of() { df -Pk "$(existing_parent "$1")" | awk 'NR==2 {print $1" on "$6}'; }
+
+say "Preflight"
+docker_root="$(docker info --format '{{.DockerRootDir}}' 2>/dev/null || true)"
+docker_root="${docker_root:-/var/lib/docker}"
+preflight_failed=0
+
+check_space() { # path, need_mb, what
+	have="$(free_mb "$1")"
+	pct="$(inode_pct "$1")"
+	printf '  %-22s %6s MB free, inodes %s%% used  (%s)\n' "$3" "$have" "$pct" "$(fs_of "$1")"
+	if [ "$have" -lt "$2" ]; then
+		echo "    NOT ENOUGH: needs about $2 MB free" >&2
+		preflight_failed=1
+	fi
+	# Inodes exhaust independently of bytes, and a Go build writes a great many
+	# small files — df -h looks fine while the build fails the same way.
+	if [ "$pct" -ge 95 ]; then
+		echo "    INODES NEARLY EXHAUSTED: $pct% used" >&2
+		preflight_failed=1
+	fi
+}
+
+check_space "$docker_root" "$MIN_BUILD_MB" "docker images/build"
+if [ "$SKIP_BACKUP" = 0 ]; then
+	# Estimate from the newest existing backup: the best predictor of the size
+	# of the next one is the size of the last one, and it beats a number picked
+	# out of the air on a deployment whose history has grown for a year.
+	need="$MIN_BACKUP_MB"
+	# Backup directories are UTC timestamps, so newest is last in sort order —
+	# no need to stat them, and it handles an empty directory cleanly.
+	newest="$(find "$BACKUP_DIR" -mindepth 1 -maxdepth 1 -type d 2>/dev/null |
+		sort | tail -1)"
+	if [ -n "$newest" ]; then
+		last_mb="$(du -sm "$newest" 2>/dev/null | awk '{print $1}')"
+		[ -n "$last_mb" ] && [ "$last_mb" -gt 0 ] && need=$(( last_mb * 12 / 10 ))
+		[ "$need" -lt "$MIN_BACKUP_MB" ] && need="$MIN_BACKUP_MB"
+	fi
+	check_space "$BACKUP_DIR" "$need" "backup target"
+fi
+
+if [ "$preflight_failed" = 1 ]; then
+	cat >&2 <<-EOF
+
+	Refusing to start: there is not enough disk for this to finish.
+
+	Free space, or put the backup somewhere with room:
+
+	  docker builder prune -af          # build cache, safe with the stack up
+	  docker image prune -af            # unreferenced images
+	  BACKUP_DIR=/some/large/disk $0
+
+	Thresholds are MIN_BUILD_MB (now $MIN_BUILD_MB) and MIN_BACKUP_MB (now
+	$MIN_BACKUP_MB) if this is wrong for your host.
+	EOF
+	exit 1
+fi
+
+# ---------------------------------------------------------------- 4. backup
 # Before anything is recreated: an upgrade that goes wrong is a restore, and a
 # restore needs a backup taken while the old version was still running.
 if [ "$SKIP_BACKUP" = 1 ]; then
@@ -191,6 +277,27 @@ if [ "$SKIP_BACKUP" = 1 ]; then
 else
 	say "Backing up to $BACKUP_DIR"
 	run "$ROOT/scripts/backup.sh" "$BACKUP_DIR"
+	# Prune, because this script is the reason there are many: it takes a full
+	# dump plus a metrics snapshot on *every* run, and without this they
+	# accumulate on whatever filesystem BACKUP_DIR sits on until it fills. On
+	# one host that was a 19 GB root filesystem, and the first thing the full
+	# disk broke was this upgrade.
+	#
+	# Only directories matching the timestamp backup.sh generates are ever
+	# removed, so pointing BACKUP_DIR at a directory holding anything else
+	# cannot lose it.
+	if [ "$KEEP" -gt 0 ] && [ "$DRY_RUN" = 0 ]; then
+		stale="$(find "$BACKUP_DIR" -mindepth 1 -maxdepth 1 -type d \
+			-regextype posix-extended -regex '.*/[0-9]{8}-[0-9]{6}$' 2>/dev/null |
+			sort -r | tail -n +$((KEEP + 1)))"
+		if [ -n "$stale" ]; then
+			echo "  pruning $(printf '%s\n' "$stale" | wc -l) backup(s), keeping the newest $KEEP"
+			printf '%s\n' "$stale" | while IFS= read -r old_backup; do
+				[ -n "$old_backup" ] || continue
+				rm -rf -- "$old_backup"
+			done
+		fi
+	fi
 fi
 
 # rollback restores the state this run started from, and is called whenever a
@@ -258,7 +365,7 @@ rollback() {
 	exit 1
 }
 
-# ----------------------------------------------------------------- 4. deploy
+# ----------------------------------------------------------------- 5. deploy
 # Build first, then start. Doing it in one `up --build` step leaves the stack
 # half-recreated when a build fails partway through; building separately means
 # a compile error costs nothing but time.
@@ -292,7 +399,7 @@ else
 	fi
 fi
 
-# ----------------------------------------------------------------- 5. verify
+# ----------------------------------------------------------------- 6. verify
 say "Verifying"
 if [ "$DRY_RUN" = 1 ]; then
 	echo "  (dry run — nothing to verify)"
