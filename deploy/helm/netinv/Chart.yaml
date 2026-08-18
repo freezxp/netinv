@@ -6,8 +6,8 @@ type: application
 # 1.0.0 and runs a real network, but it runs it from the Compose deployment
 # (doc 32) — this chart renders and validates, and has not yet been installed
 # on a cluster and watched come up. It reaches 1.0.0 when it has.
-version: 0.2.0
-appVersion: "1.0.0"
+version: 0.3.0
+appVersion: "1.1.0"
 home: https://github.com/freezxp/netinv
 sources:
   - https://github.com/freezxp/netinv
