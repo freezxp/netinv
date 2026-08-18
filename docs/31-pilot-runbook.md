@@ -90,6 +90,8 @@ the site (step 4).
    connector (leave blank to auto-match on first sync), snmp_port if not 161.
 3. Within ~2 minutes the device syncs (identity + interfaces + LLDP) and
    graphs begin. Watch Platform → Pollers for heartbeat + poll counts.
+4. If it is still `pending` after that, run `scripts/diagnose-pending.sh` — a
+   device stuck in `pending` is silent by default and §9 explains why.
 
 ## 6. Validate before widening (this is the pilot's real work)
 
@@ -174,6 +176,51 @@ with targeted GETs and reports `netinv_if_counters_repaired` — zero on a healt
 agent (doc 10 §7). Restart `snmpd` on the device; the repair keeps the graphs
 honest until you do, and the metric returning to 0 is how you confirm the fix
 took rather than the connector still compensating.
+
+**A device is added and never leaves `pending`.** A device leaves `pending` in
+exactly one place: the sync apply transaction setting `status='active'` when a
+good snapshot lands. Nothing else promotes it, so ICMP, traffic and health can
+all succeed — graphs and all — while the device sits in `pending` forever. Four
+distinct faults present identically, and `scripts/diagnose-pending.sh` tells
+them apart:
+
+```bash
+./scripts/diagnose-pending.sh                 # every pending device
+./scripts/diagnose-pending.sh juniper-junos   # one connector
+```
+
+| Class | Cause | Where it shows |
+|---|---|---|
+| A | The device's profile omits `sync` from `families_enabled`, so the schedule row was dropped and nothing is dispatched | no `sync=` row in `platform.polling_schedule` |
+| B | No poller consumes the device's site queue, so jobs accumulate unread | `poll.site.<site>` with `consumers = 0`, or no such queue |
+| C | The poller ran it and SNMP failed | `platform.sync_runs.error` |
+| D | Collection succeeded but the apply is erroring and requeuing | `sync result requeued` in the api log |
+
+The device detail page carries the same diagnosis: a banner above the tabs
+names whichever of A/B, C or D applies, and the History tab lists every sync
+run with the failure reason in full (doc 30 §5, `GET /devices/{id}/sync-runs`).
+Until 2026-08-18 it did not — `platform.sync_runs` was written on every poll
+and read by nothing, so a device could fail for a stated, recorded reason that
+an operator had no way to see short of psql. The script stays because it is
+also the tool for a deployment whose UI you cannot reach, and because class B
+is invisible from the device page alone: nothing is logged at all, because
+nothing ever runs, so only the queue's consumer count gives it away.
+
+When the error is a timeout and a manual `snmpwalk` succeeds, reproduce from
+the poller's own network position rather than from a shell — an ACL or a Junos
+`routing-instance-access` restriction keys on the source address, and the
+poller image is distroless, so attach a sidecar to its network namespace:
+
+```bash
+docker run --rm --network container:netinv-poller-1 alpine sh -c \
+  'apk add -q net-snmp-tools && time snmpbulkwalk -v2c -c <community> \
+   -Cr25 <host> 1.3.6.1.2.1.2.2 | wc -l'
+```
+
+Time it: inventory walks `ifTable` *and* `ifXTable` inside a 60 s job budget, so
+a walk that is merely slow by hand is a hard failure in the poller. Raise
+`snmp_timeout_ms` / `snmp_retries` on the profile, or cut the interface count at
+the device.
 
 **A whole site is losing polls while reporting success.** A leaked AMQP consumer
 takes a share of the jobs and acks none:
