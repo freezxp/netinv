@@ -58,7 +58,7 @@ Below, one full worked example per resource family; sibling endpoints share shap
 | Method | URI | Permission | Codes |
 |---|---|---|---|
 | GET/POST | `/sites` | `platform:read` / `platform:write` | 200/201 |
-| GET/PATCH/DELETE | `/sites/{id}` | ″ | 200, 204, 404, 409 (has devices) |
+| GET/PATCH/DELETE | `/sites/{id}` | ″ | 200, 204, 404, 409 (still referenced) |
 | GET | `/pollers` | `platform:read` | 200 |
 | POST | `/pollers/enroll-tokens` | `platform:write` | 201 `{token, expires_at}` (once) |
 | POST | `/pollers/register` | enroll token | 201 (called by poller itself) |
@@ -98,6 +98,8 @@ Below, one full worked example per resource family; sibling endpoints share shap
 | PATCH | `/devices/{id}` | `devices:write` | 200, 409 (address in use), 422 |
 | POST | `/devices/{id}/retire` · `/enable` · `/disable` | `devices:write` | 200 |
 | DELETE | `/devices/{id}` (hard purge) | `devices:admin` | 204, 409 (not retired) |
+
+`DELETE /sites/{id}` refuses with 409 while anything still references the site, and the message names **every** blocker at once — devices, retired devices, child sites, enrolled pollers and discovery rules — rather than the first one found. An operator emptying a site works through all of them, and discovering them one failed request at a time is the slow way to do it. Retired devices are called out separately because they are excluded from "managed devices" everywhere else in the product: the count that guarded this originally skipped them while the foreign key did not, so the delete failed regardless and blamed pollers and child sites for a site whose only problem was a device someone had retired.
 
 `PATCH /devices/{id}` is a partial update over operator-owned fields. Identity discovered by sync — sysName, sysDescr, serial, model — is not writable; a change there would be overwritten by the next sync anyway. **`mgmt_ip` and `snmp_port` are writable**, because a device gets renumbered or moves off DHCP and NetInv has to follow it; until 2026-08-10 both were silently dropped, so a re-address returned 200 and changed nothing, and the only way to correct one was to delete the device and lose its history. Re-addressing onto an address another device holds is a 409, matching create. `snmp_port` omitted means "leave it"; set to 161 it clears the override so the device follows the default rather than pinning to today's value of it.
 | POST | `/devices/{id}/sync` (on-demand) | `devices:write` | 202 `{sync_run_id}` |

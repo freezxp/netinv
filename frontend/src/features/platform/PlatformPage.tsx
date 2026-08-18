@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../api/client";
 import { useSites } from "../../api/hooks";
+import type { Site } from "../../api/types";
 import { useAuthStore, hasPermissionRole } from "../auth/store";
 import { DiscoveryTab } from "./DiscoveryTab";
 import { CapacityTab } from "./CapacityTab";
@@ -66,12 +67,23 @@ function SitesTab() {
   const sites = useSites();
   const qc = useQueryClient();
   const [name, setName] = useState("");
+  const [deleting, setDeleting] = useState<Site | null>(null);
   const create = useMutation({
     mutationFn: () =>
       api("/sites", { method: "POST", body: JSON.stringify({ name }) }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["sites"] });
       setName("");
+    },
+  });
+  const del = useMutation({
+    mutationFn: (id: string) => api(`/sites/${id}`, { method: "DELETE" }),
+    onSuccess: () => {
+      // Devices carry a site, and the device list renders its name, so a stale
+      // cache shows a site that no longer exists.
+      qc.invalidateQueries({ queryKey: ["sites"] });
+      qc.invalidateQueries({ queryKey: ["devices"] });
+      setDeleting(null);
     },
   });
   return (
@@ -103,10 +115,93 @@ function SitesTab() {
                 <td className="mono px-4 py-2 text-xs text-slate-500">
                   {s.id}
                 </td>
+                <td className="px-4 py-2 text-right">
+                  <Button
+                    variant="ghost"
+                    onClick={() => {
+                      del.reset();
+                      setDeleting(s);
+                    }}
+                  >
+                    Delete
+                  </Button>
+                </td>
               </tr>
             ))}
           </tbody>
         </table>
+      </Card>
+      {deleting && (
+        <ConfirmDeleteSite
+          site={deleting}
+          pending={del.isPending}
+          error={del.error as Error | null}
+          onCancel={() => setDeleting(null)}
+          onConfirm={() => del.mutate(deleting.id)}
+        />
+      )}
+    </div>
+  );
+}
+
+/**
+ * Deleting a site is refused while anything still references it, and the API
+ * names every blocker at once. That message is the useful part of this dialog,
+ * so it is shown verbatim rather than replaced with a generic failure: an
+ * operator clearing a site out wants the whole list, not the first item of it
+ * one attempt at a time.
+ */
+function ConfirmDeleteSite({
+  site,
+  pending,
+  error,
+  onCancel,
+  onConfirm,
+}: {
+  site: Site;
+  pending: boolean;
+  error: Error | null;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const [typed, setTyped] = useState("");
+  return (
+    <div className="fixed inset-0 z-30 flex items-center justify-center bg-black/50 p-4">
+      <Card title="Delete site" className="w-full max-w-[26rem]">
+        <p className="text-sm">
+          This removes <span className="font-medium">{site.name}</span> (
+          <span className="mono text-xs">{site.id}</span>). It cannot be undone.
+        </p>
+        <p className="mt-2 text-xs text-slate-500">
+          A site can only be deleted once nothing references it — no devices
+          (retired ones included), child sites, enrolled pollers or discovery
+          rules. Move or purge those first.
+        </p>
+        <label className="mt-3 block text-xs text-slate-500">
+          Type the site name to confirm:
+          <Input
+            className="mt-1 w-full"
+            value={typed}
+            autoFocus
+            onChange={(e) => setTyped(e.target.value)}
+            placeholder={site.name}
+          />
+        </label>
+        {error && (
+          <div className="mt-2 text-sm text-red-500">{error.message}</div>
+        )}
+        <div className="mt-3 flex justify-end gap-2">
+          <Button variant="ghost" onClick={onCancel}>
+            Cancel
+          </Button>
+          <Button
+            variant="danger"
+            disabled={typed !== site.name || pending}
+            onClick={onConfirm}
+          >
+            {pending ? "Deleting…" : "Delete site"}
+          </Button>
+        </div>
       </Card>
     </div>
   );

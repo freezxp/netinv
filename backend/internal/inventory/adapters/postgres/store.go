@@ -6,6 +6,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -84,20 +86,63 @@ func (r *SiteRepo) Update(ctx context.Context, s *domain.Site) error {
 	return nil
 }
 
+// Delete removes a site, refusing while anything still references it.
+//
+// It names every blocker rather than reporting the first one, because an
+// operator clearing a site out works through all of them and finding out about
+// them one round-trip at a time is a bad way to spend an afternoon.
+//
+// Retired devices are the reason this is not a single count. They are excluded
+// from "managed devices" everywhere else in the product, so the old check
+// skipped them — but the foreign key does not, and the delete failed anyway
+// with a message about pollers and child sites that did not mention devices at
+// all. A count that disagrees with the constraint it is protecting is worse
+// than no count.
 func (r *SiteRepo) Delete(ctx context.Context, sid string) error {
-	var devices int
-	if err := r.Pool.QueryRow(ctx,
-		`SELECT count(*) FROM inventory.devices WHERE site_id = $1 AND status != 'retired'`,
-		sid).Scan(&devices); err != nil {
-		return errx.Wrap(errx.KindTransient, err, "count site devices")
+	var active, retired, children, pollers, rules int
+	err := r.Pool.QueryRow(ctx, `
+		SELECT (SELECT count(*) FROM inventory.devices
+		         WHERE site_id = $1 AND status != 'retired'),
+		       (SELECT count(*) FROM inventory.devices
+		         WHERE site_id = $1 AND status = 'retired'),
+		       (SELECT count(*) FROM platform.sites WHERE parent_site_id = $1),
+		       (SELECT count(*) FROM platform.pollers WHERE site_id = $1),
+		       (SELECT count(*) FROM platform.discovery_rules WHERE site_id = $1)`,
+		sid).Scan(&active, &retired, &children, &pollers, &rules)
+	if err != nil {
+		return errx.Wrap(errx.KindTransient, err, "count site references")
 	}
-	if devices > 0 {
-		return errx.New(errx.KindConflict, "site has managed devices")
+	var blockers []string
+	for _, b := range []struct {
+		n    int
+		one  string
+		many string
+	}{
+		{active, "1 device", "%d devices"},
+		{retired, "1 retired device (purge it first)", "%d retired devices (purge them first)"},
+		{children, "1 child site", "%d child sites"},
+		{pollers, "1 enrolled poller", "%d enrolled pollers"},
+		{rules, "1 discovery rule", "%d discovery rules"},
+	} {
+		switch {
+		case b.n == 1:
+			blockers = append(blockers, b.one)
+		case b.n > 1:
+			blockers = append(blockers, fmt.Sprintf(b.many, b.n))
+		}
+	}
+	if len(blockers) > 0 {
+		return errx.New(errx.KindConflict, "site still has %s",
+			strings.Join(blockers, ", "))
 	}
 	tag, err := r.Pool.Exec(ctx, `DELETE FROM platform.sites WHERE id = $1`, sid)
 	if err != nil {
+		// Anything left is a reference this function does not know about, which
+		// means a table was added without updating it. Say so plainly instead
+		// of listing the things already ruled out above.
 		if isFK(err) {
-			return errx.New(errx.KindConflict, "site is referenced (pollers or child sites)")
+			return errx.New(errx.KindConflict,
+				"site is still referenced by another record")
 		}
 		return errx.Wrap(errx.KindTransient, err, "delete site")
 	}

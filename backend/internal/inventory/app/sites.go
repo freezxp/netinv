@@ -90,9 +90,19 @@ func (s *SiteService) Update(ctx context.Context, siteID string, in SiteInput, m
 }
 
 func (s *SiteService) Delete(ctx context.Context, siteID string, m Meta) error {
+	// Read it before it is gone: an audit row saying only that site s_01H… was
+	// deleted is close to useless six months later, when the name is the only
+	// handle anyone still has on what it was. Deletion is the one action where
+	// the record cannot be reconstructed from the surviving state.
+	before, err := s.Repo.Get(ctx, siteID)
+	if err != nil {
+		return err
+	}
 	if err := s.Repo.Delete(ctx, siteID); err != nil {
 		return err
 	}
-	s.Audit.Write(ctx, m.event("site.delete", "site", siteID, nil, nil))
+	s.Audit.Write(ctx, m.event("site.delete", "site", siteID,
+		map[string]any{"name": before.Name, "location": before.Location,
+			"contact": before.Contact, "parent_site_id": before.ParentSiteID}, nil))
 	return nil
 }
