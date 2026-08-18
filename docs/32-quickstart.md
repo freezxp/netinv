@@ -95,11 +95,16 @@ docker logs -f netinv-api-1           # follow a service
 
 ```bash
 ./deploy/compose-app/upgrade.sh                 # rebuild from the working tree
-./deploy/compose-app/upgrade.sh --ref v1.1.0    # fetch and check out first
+./deploy/compose-app/upgrade.sh --latest        # fast-forward to origin, then deploy
+./deploy/compose-app/upgrade.sh --ref v1.1.0    # deploy a tag, branch or commit
 ./deploy/compose-app/upgrade.sh --dry-run       # print the plan, change nothing
 ./deploy/compose-app/upgrade.sh --recover       # stack is down: bring it back up
 ./deploy/compose-app/upgrade.sh --no-rollback   # leave a failure in place to inspect
 ```
+
+**To deploy the newest code, use `--latest`.** A plain run rebuilds the checkout exactly as it stands, which is not the same thing — so every run fetches and reports where the checkout sits against its upstream (`tracking origin/main: 2 behind, 0 ahead`), and says outright when newer commits exist that this run is not deploying.
+
+`--ref` takes a tag, a commit or a **branch**, and a branch name resolves to the *remote's* branch. That correction matters more than it looks: `git checkout main` after a fetch lands on the local `main`, which the fetch never moves, so asking for a branch by name used to deploy whatever it was when someone last pulled — and report success. Reproduced on a checkout two commits behind: it stayed two commits behind. Both `--latest` and a branch `--ref` are fast-forward only, so local commits the remote does not have stop the deploy loudly rather than being merged into an unreviewed build or reset away.
 
 `quickstart.sh` also updates a stack it created, and for a plain quickstart host either works. `upgrade.sh` exists for the case quickstart cannot serve: **a stack whose compose invocation is not the one quickstart uses**. It takes no compose flags and assumes none — it reads the project name, the config files and the env file back off a running container, where Compose records all three as labels, and rebuilds exactly that. This matters because a NetInv stack is a multi-file project with an `--env-file`, and a bare `docker compose up -d api` resolves to the base file alone: that file carries no `NETINV_PG_DSN`, so the api comes back in skeleton mode with no database while postgres and rabbitmq are recreated with base-file credentials, and every other service then fails AMQP auth. Nothing is lost — the data is in volumes — but the stack is down until someone works out why.
 
