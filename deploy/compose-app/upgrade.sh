@@ -1,0 +1,253 @@
+#!/usr/bin/env bash
+# Upgrade a running Compose deployment of NetInv in place (doc 32, Upgrading).
+#
+# The flags a NetInv stack was created with are not optional and not guessable:
+# it is a two-file project with an --env-file, and a bare `docker compose up -d
+# api` from the repo root resolves to the base file alone. That file carries no
+# NETINV_PG_DSN, so the api is silently recreated in skeleton mode with no
+# database, and postgres/rabbitmq come back with base-file credentials — at
+# which point every other service fails AMQP auth. Nothing is lost, but the
+# stack is down until someone works out why.
+#
+# So this script does not accept compose flags and does not assume any: it
+# reads them back off a running container, where Compose records the project
+# name, the config files and the env file as labels. Upgrading the wrong stack,
+# or half of one, is therefore not a thing it can do.
+#
+# Data lives in named volumes and survives. Migrations are embedded in the api
+# binary and run at startup under an advisory lock, so there is no migration
+# step here — but that is also why a new backend/migrations/*.sql does nothing
+# until the image is rebuilt, which is what step 5 verifies.
+#
+# Usage:
+#   ./deploy/compose-app/upgrade.sh                     # rebuild from the working tree
+#   ./deploy/compose-app/upgrade.sh --ref v1.1.0        # fetch + check out first
+#   ./deploy/compose-app/upgrade.sh --skip-backup       # you already have one
+#   ./deploy/compose-app/upgrade.sh --dry-run           # print the plan, change nothing
+#   PROJECT=netinv-staging ./deploy/compose-app/upgrade.sh
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
+REF=""
+SKIP_BACKUP=0
+DRY_RUN=0
+BACKUP_DIR="${BACKUP_DIR:-$ROOT/backups}"
+
+while [ $# -gt 0 ]; do
+	case "$1" in
+	--ref) REF="${2:?--ref needs a git ref}"; shift 2 ;;
+	--skip-backup) SKIP_BACKUP=1; shift ;;
+	--dry-run) DRY_RUN=1; shift ;;
+	-h | --help) sed -n '2,27p' "$0" | sed 's/^# \?//'; exit 0 ;;
+	*) echo "unknown option: $1 (try --help)" >&2; exit 1 ;;
+	esac
+done
+
+say() { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
+run() {
+	if [ "$DRY_RUN" = 1 ]; then
+		printf '  would run: %s\n' "$*"
+	else
+		"$@"
+	fi
+}
+
+command -v docker >/dev/null || { echo "Docker is required." >&2; exit 1; }
+docker compose version >/dev/null 2>&1 ||
+	{ echo "Docker Compose v2 is required." >&2; exit 1; }
+
+# ---------------------------------------------------------- 1. find the stack
+say "Locating the running stack"
+label() { docker inspect -f "{{index .Config.Labels \"$2\"}}" "$1" 2>/dev/null || true; }
+
+# Any container of the project will do — they all carry the same project
+# labels. Preferring the api is only so the message names something recognisable.
+ref_container=""
+for candidate in $(docker ps --format '{{.Names}}' --filter "label=com.docker.compose.project${PROJECT:+=$PROJECT}"); do
+	case "$candidate" in
+	*api*) ref_container="$candidate"; break ;;
+	*) [ -n "$ref_container" ] || ref_container="$candidate" ;;
+	esac
+done
+if [ -z "$ref_container" ]; then
+	cat >&2 <<-EOF
+	No running Compose containers found${PROJECT:+ for project "$PROJECT"}.
+
+	This script upgrades a stack that is already running, because that is where
+	the flags it was created with are recorded. For a first install use
+	quickstart.sh. If the stack is stopped, start it the way it was created and
+	re-run this; if you no longer know how, the labels survive on the stopped
+	containers:
+
+	  docker inspect -f '{{index .Config.Labels "com.docker.compose.project.config_files"}}' <container>
+	EOF
+	exit 1
+fi
+
+PROJECT="$(label "$ref_container" com.docker.compose.project)"
+CONFIG_FILES="$(label "$ref_container" com.docker.compose.project.config_files)"
+ENV_FILE="$(label "$ref_container" com.docker.compose.project.environment_file)"
+WORK_DIR="$(label "$ref_container" com.docker.compose.project.working_dir)"
+[ -n "$CONFIG_FILES" ] || { echo "container $ref_container has no compose config-files label" >&2; exit 1; }
+
+COMPOSE=(docker compose -p "$PROJECT")
+if [ -n "$ENV_FILE" ]; then
+	COMPOSE+=(--env-file "$ENV_FILE")
+fi
+# The label is a comma-separated list, in the order the files were given.
+while IFS= read -r f; do
+	[ -n "$f" ] || continue
+	[ -f "$f" ] || { echo "compose file from the running stack is missing: $f" >&2; exit 1; }
+	COMPOSE+=(-f "$f")
+done <<<"${CONFIG_FILES//,/$'\n'}"
+
+echo "  project:      $PROJECT"
+echo "  config files: ${CONFIG_FILES//,/, }"
+echo "  env file:     ${ENV_FILE:-<none>}"
+echo "  working dir:  ${WORK_DIR:-<unset>}"
+echo "  derived from: $ref_container"
+
+# A stack whose working_dir is not this checkout would be rebuilt from the
+# wrong source. Refuse rather than quietly ship someone else's tree.
+if [ -n "$WORK_DIR" ] && [ "$WORK_DIR" != "$ROOT" ]; then
+	echo >&2
+	echo "This stack was created from $WORK_DIR but this script lives in $ROOT." >&2
+	echo "Run the upgrade from the checkout the stack was built from." >&2
+	exit 1
+fi
+
+# The credential vault is sealed with NETINV_MASTER_KEY. A stack that comes
+# back with a different one keeps its inventory and history and can no longer
+# decrypt a single SNMP credential, which presents as every device failing to
+# poll after a "successful" upgrade.
+if [ -n "$ENV_FILE" ] && ! grep -q '^NETINV_MASTER_KEY=' "$ENV_FILE"; then
+	echo >&2
+	echo "WARNING: $ENV_FILE has no NETINV_MASTER_KEY." >&2
+	echo "If the services get a fresh key, stored credentials become undecryptable." >&2
+fi
+
+# --------------------------------------------------------------- 2. versions
+say "Version"
+before_version="$(git -C "$ROOT" describe --tags --always --dirty 2>/dev/null || echo unknown)"
+before_commit="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo unknown)"
+echo "  currently checked out: $before_version ($before_commit)"
+
+if [ -n "$REF" ]; then
+	if [ -n "$(git -C "$ROOT" status --porcelain 2>/dev/null)" ]; then
+		echo "Working tree has uncommitted changes; commit or stash before --ref." >&2
+		exit 1
+	fi
+	say "Fetching and checking out $REF"
+	run git -C "$ROOT" fetch --tags --prune origin
+	run git -C "$ROOT" checkout "$REF"
+	echo "  now at: $(git -C "$ROOT" describe --tags --always --dirty 2>/dev/null || echo unknown)"
+fi
+
+# ---------------------------------------------------------------- 3. backup
+# Before anything is recreated: an upgrade that goes wrong is a restore, and a
+# restore needs a backup taken while the old version was still running.
+if [ "$SKIP_BACKUP" = 1 ]; then
+	say "Skipping backup (--skip-backup)"
+else
+	say "Backing up to $BACKUP_DIR"
+	run "$ROOT/scripts/backup.sh" "$BACKUP_DIR"
+fi
+
+# ----------------------------------------------------------------- 4. deploy
+# Build first, then start. Doing it in one `up --build` step leaves the stack
+# half-recreated when a build fails partway through; building separately means
+# a compile error costs nothing but time.
+#
+# Images are built locally rather than pulled: the GHCR packages are private,
+# so an anonymous pull of ghcr.io/freezxp/netinv-* gets a 401 and the "images
+# published per release" path needs a token nobody has by default.
+say "Building images"
+run "${COMPOSE[@]}" --profile app build
+
+say "Recreating services"
+# --wait blocks until healthchecks pass. The api exits rather than waits when
+# Postgres is not up yet, so a few restarts here are normal, not a failure.
+if [ "$DRY_RUN" = 1 ]; then
+	run "${COMPOSE[@]}" --profile app up -d --wait
+else
+	if ! "${COMPOSE[@]}" --profile app up -d --wait; then
+		echo >&2
+		echo "Services did not all come up healthy. Current state:" >&2
+		"${COMPOSE[@]}" --profile app ps >&2 || true
+		echo >&2
+		echo "Logs:  ${COMPOSE[*]} logs --tail 50 api" >&2
+		exit 1
+	fi
+fi
+
+# ----------------------------------------------------------------- 5. verify
+say "Verifying"
+if [ "$DRY_RUN" = 1 ]; then
+	echo "  (dry run — nothing to verify)"
+	exit 0
+fi
+
+"${COMPOSE[@]}" --profile app ps --format 'table {{.Service}}\t{{.Status}}' || true
+
+# Migrations are embedded in the api binary, so the schema advancing is the
+# proof that a *new* binary is running. A database version behind the highest
+# file on disk means the image was not rebuilt — the same fault that shows up
+# as "goose: no migrations to run" while a new .sql sits in the tree.
+pg_container="$(docker ps --format '{{.Names}}' \
+	--filter "label=com.docker.compose.project=$PROJECT" | grep -m1 -- '-postgres-' || true)"
+if [ -n "$pg_container" ]; then
+	disk_version="$(find "$ROOT/backend/migrations" -name '[0-9]*.sql' -printf '%f\n' 2>/dev/null |
+		sed 's/_.*//' | sort -n | tail -1 | sed 's/^0*//')"
+	db_version=""
+	for _ in $(seq 1 15); do
+		db_version="$(docker exec "$pg_container" psql -tAX -U netinv -d netinv \
+			-c 'SELECT max(version_id) FROM goose_db_version' 2>/dev/null || true)"
+		[ -n "$db_version" ] && [ "$db_version" = "$disk_version" ] && break
+		sleep 2
+	done
+	echo "  schema version: ${db_version:-unknown} (highest migration on disk: ${disk_version:-unknown})"
+	if [ -n "$db_version" ] && [ -n "$disk_version" ] && [ "$db_version" != "$disk_version" ]; then
+		echo >&2
+		echo "  Schema is behind the migrations in this checkout. The api image is" >&2
+		echo "  probably stale — migrations ship inside the binary, so a new .sql" >&2
+		echo "  file does nothing until the image is rebuilt. Check:" >&2
+		echo "    ${COMPOSE[*]} logs --tail 30 api" >&2
+	fi
+fi
+
+# The UI, through the frontend proxy, is the end-to-end check: it exercises
+# nginx, the api and its database in one request. -k because the certificate is
+# self-signed unless someone replaced it.
+ui_port="$(docker ps --format '{{.Ports}}' \
+	--filter "label=com.docker.compose.project=$PROJECT" |
+	grep -o '0.0.0.0:[0-9]*->443/tcp' | head -1 | sed 's/.*:\([0-9]*\)->.*/\1/')"
+ui_port="${ui_port:-8443}"
+printf '  waiting for the UI on :%s' "$ui_port"
+ui_ok=0
+for _ in $(seq 1 30); do
+	if curl -skf -o /dev/null "https://localhost:$ui_port/"; then ui_ok=1; break; fi
+	printf '.'; sleep 2
+done
+echo
+if [ "$ui_ok" = 1 ]; then
+	echo "  UI is answering on https://localhost:$ui_port"
+else
+	echo "  UI did not answer on :$ui_port — check the frontend service." >&2
+fi
+
+after_version="$(git -C "$ROOT" describe --tags --always --dirty 2>/dev/null || echo unknown)"
+cat <<EOF
+
+  Upgrade complete: $before_version → $after_version
+
+  If something is wrong, roll back to the previous code and re-run this script:
+
+    git -C $ROOT checkout $before_commit
+    $0 --skip-backup
+
+  That restores the previous binaries. It does NOT undo a migration — if the
+  new version added one, roll the data back from the backup instead
+  (scripts/restore.sh, doc 20 §12.3), and read its --force warning first.
+EOF

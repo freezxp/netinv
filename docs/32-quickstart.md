@@ -91,6 +91,25 @@ docker logs -f netinv-api-1           # follow a service
 ./deploy/compose-app/quickstart.sh reset    # stop and WIPE all data (fresh start)
 ```
 
+### Upgrading an existing deployment
+
+```bash
+./deploy/compose-app/upgrade.sh                 # rebuild from the working tree
+./deploy/compose-app/upgrade.sh --ref v1.1.0    # fetch and check out first
+./deploy/compose-app/upgrade.sh --dry-run       # print the plan, change nothing
+```
+
+`quickstart.sh` also updates a stack it created, and for a plain quickstart host either works. `upgrade.sh` exists for the case quickstart cannot serve: **a stack whose compose invocation is not the one quickstart uses**. It takes no compose flags and assumes none — it reads the project name, the config files and the env file back off a running container, where Compose records all three as labels, and rebuilds exactly that. This matters because a NetInv stack is a multi-file project with an `--env-file`, and a bare `docker compose up -d api` resolves to the base file alone: that file carries no `NETINV_PG_DSN`, so the api comes back in skeleton mode with no database while postgres and rabbitmq are recreated with base-file credentials, and every other service then fails AMQP auth. Nothing is lost — the data is in volumes — but the stack is down until someone works out why.
+
+It backs up first (`scripts/backup.sh`, skip with `--skip-backup`), builds before it recreates anything so a compile error costs only time, waits for healthchecks, and then verifies two things worth verifying:
+
+- **The schema advanced to the highest migration in the checkout.** Migrations are embedded in the api binary, so a new `backend/migrations/*.sql` does nothing until the image is rebuilt. A database version behind the tree is how a stale image announces itself — the same fault that reads as `goose: no migrations to run` while the file sits on disk.
+- **The UI answers through the frontend proxy**, which exercises nginx, the api and the database in one request.
+
+It ends by printing the rollback: check out the previous commit and re-run. That restores the previous binaries but does **not** undo a migration — for that, roll the data back from the backup with `scripts/restore.sh` (doc 20 §12.3), and read its `--force` warning first.
+
+Images are built locally rather than pulled. The GHCR packages are private, so an anonymous pull of `ghcr.io/freezxp/netinv-*` gets a 401; "images published per release" is true only for someone holding a token.
+
 ### After a host reboot
 
 Every service runs with `restart: unless-stopped`, and Docker is enabled at boot on a normal install, so the stack comes back on its own. A deliberate `quickstart.sh down` still stays down — the policy only restores what was running.

@@ -255,3 +255,9 @@ time (doc 30 §3), so a healthy sync fixes the link with no edit.
 `helm rollback netinv` is safe one version back — migrations are
 expand-migrate-contract (NFR-51). The poller charts upgrade last and the core
 tolerates ±1 poller version (doc 10 §3).
+
+On Compose, `deploy/compose-app/upgrade.sh` is the equivalent path in both
+directions: it backs up before it touches anything, and prints the exact
+rollback — check out the previous commit and re-run it — when it finishes. That
+restores the previous binaries only; undoing a migration means restoring the
+data from the backup it took (doc 32, Upgrading).
