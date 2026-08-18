@@ -334,6 +334,48 @@ export function useClaimFlowExporter(deviceID: string) {
   });
 }
 
+/**
+ * Moves devices between sites.
+ *
+ * One PATCH per device rather than a bulk endpoint, deliberately: each device
+ * update writes its own audit record with before and after, and moving thirty
+ * devices is thirty things that happened. A bulk call would collapse that into
+ * one entry naming a count.
+ *
+ * Failures are collected instead of aborting. A device that has been retired
+ * or deleted since the page loaded should not stop the other twenty-nine from
+ * moving, and the caller reports which ones did not.
+ */
+export function useMoveDevicesToSite() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      deviceIDs,
+      siteID,
+    }: {
+      deviceIDs: string[];
+      siteID: string;
+    }) => {
+      const failed: Array<{ id: string; message: string }> = [];
+      for (const id of deviceIDs) {
+        try {
+          await api(`/devices/${id}`, {
+            method: "PATCH",
+            body: JSON.stringify({ site_id: siteID }),
+          });
+        } catch (e) {
+          failed.push({ id, message: (e as Error).message });
+        }
+      }
+      return { moved: deviceIDs.length - failed.length, failed };
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["devices"] });
+      qc.invalidateQueries({ queryKey: ["device"] });
+    },
+  });
+}
+
 export function useSyncNow() {
   const qc = useQueryClient();
   return useMutation({

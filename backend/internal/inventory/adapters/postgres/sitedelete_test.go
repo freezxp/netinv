@@ -196,3 +196,62 @@ func TestSearchInterfacesMatchesAliasAndDescription(t *testing.T) {
 			len(rows), total)
 	}
 }
+
+// A site is a grouping, so moving a device between sites has to be a plain
+// update — and the scheduler has to follow it. Jobs are routed by the device's
+// current site_id at dispatch (the Due query joins devices), so nothing needs
+// rewriting for polling to move with it; this pins that, because a schedule
+// that kept pointing at the old site would send the device's jobs to a queue
+// its poller no longer reads and collection would stop silently.
+func TestDeviceCanMoveBetweenSites(t *testing.T) {
+	repo, dr, ctx := newSiteRepo(t)
+	from := addSite(t, repo, ctx, "site-from")
+	to := addSite(t, repo, ctx, "site-to")
+	addDevice(t, dr, ctx, from.ID, "10.93.0.1", domain.DevicePending)
+
+	var dev domain.Device
+	if err := dr.Pool.QueryRow(ctx,
+		`SELECT id, site_id, connector_id, credential_id, profile_id, name
+		   FROM inventory.devices WHERE site_id = $1`, from.ID).
+		Scan(&dev.ID, &dev.SiteID, &dev.ConnectorID, &dev.CredentialID,
+			&dev.ProfileID, &dev.Name); err != nil {
+		t.Fatalf("load device: %v", err)
+	}
+
+	dev.SiteID = to.ID
+	dev.MgmtIP = "10.93.0.1"
+	dev.Tags = []string{}
+	dev.Attrs = map[string]any{}
+	if err := dr.Update(ctx, &dev); err != nil {
+		t.Fatalf("move device: %v", err)
+	}
+
+	var got string
+	if err := dr.Pool.QueryRow(ctx,
+		`SELECT site_id FROM inventory.devices WHERE id = $1`, dev.ID).
+		Scan(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got != to.ID {
+		t.Fatalf("device is in site %s, want %s", got, to.ID)
+	}
+
+	// The schedule rows are untouched by design — they carry no site — and the
+	// dispatch query resolves the site from the device, so the next poll goes
+	// to the new site's queue with no further action.
+	var scheduled int
+	if err := dr.Pool.QueryRow(ctx,
+		`SELECT count(*) FROM platform.polling_schedule WHERE device_id = $1`,
+		dev.ID).Scan(&scheduled); err != nil {
+		t.Fatal(err)
+	}
+	if scheduled == 0 {
+		t.Fatal("moving the device lost its polling schedule")
+	}
+
+	// The old site is now empty and must be deletable: a grouping you cannot
+	// dissolve after emptying it is not a grouping.
+	if err := repo.Delete(ctx, from.ID); err != nil {
+		t.Fatalf("deleting the emptied site: %v", err)
+	}
+}

@@ -2,7 +2,12 @@
 // keyset pagination. Virtualization arrives with the large-fleet sprint.
 import { useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { useDeviceHealth, useDevices, useSites } from "../../api/hooks";
+import {
+  useDeviceHealth,
+  useDevices,
+  useMoveDevicesToSite,
+  useSites,
+} from "../../api/hooks";
 import { useAuthStore } from "../auth/store";
 import {
   Button,
@@ -45,6 +50,24 @@ export function InventoryPage() {
   };
   const devices = useDevices(filters);
   const sites = useSites();
+  const move = useMoveDevicesToSite();
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [moveTo, setMoveTo] = useState("");
+  const rows = devices.data?.data ?? [];
+  // Selection is per page and cleared whenever the page changes: a checkbox
+  // that survives a filter change would let someone move devices they can no
+  // longer see.
+  const clearSelection = () => {
+    setSelected(new Set());
+    move.reset();
+  };
+  const toggle = (id: string) =>
+    setSelected((s) => {
+      const next = new Set(s);
+      if (!next.delete(id)) next.add(id);
+      return next;
+    });
+  const allShown = rows.length > 0 && rows.every((d) => selected.has(d.id));
   const health = useDeviceHealth();
   const siteName = (id: string) =>
     sites.data?.data.find((s) => s.id === id)?.name ?? id;
@@ -55,12 +78,14 @@ export function InventoryPage() {
     else next.delete(key);
     next.delete("cursor"); // filters reset pagination
     setCursors([]);
+    clearSelection();
     setParams(next, { replace: true });
   };
 
   const goNext = () => {
     const next = devices.data?.next_cursor;
     if (!next) return;
+    clearSelection();
     setCursors((c) => [...c, filters.cursor]);
     const p = new URLSearchParams(params);
     p.set("cursor", next);
@@ -68,6 +93,7 @@ export function InventoryPage() {
   };
 
   const goPrev = () => {
+    clearSelection();
     const prev = cursors[cursors.length - 1];
     setCursors((c) => c.slice(0, -1));
     const p = new URLSearchParams(params);
@@ -149,19 +175,93 @@ export function InventoryPage() {
           onChange={(e) => update("status", e.target.value)}
         >
           <option value="">All statuses</option>
-          {["active", "pending", "unreachable", "disabled", "retired"].map((s) => (
-            <option key={s} value={s}>
-              {s}
-            </option>
-          ))}
+          {["active", "pending", "unreachable", "disabled", "retired"].map(
+            (s) => (
+              <option key={s} value={s}>
+                {s}
+              </option>
+            ),
+          )}
         </Select>
       </div>
+
+      {selected.size > 0 && (
+        <Card className="mb-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-sm font-medium">
+              {selected.size} selected
+            </span>
+            <span className="text-sm text-slate-500">Move to site:</span>
+            <Select
+              className="w-48"
+              value={moveTo}
+              onChange={(e) => setMoveTo(e.target.value)}
+            >
+              <option value="">Choose a site…</option>
+              {sites.data?.data.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                </option>
+              ))}
+            </Select>
+            <Button
+              disabled={!moveTo || move.isPending}
+              onClick={() =>
+                move.mutate(
+                  { deviceIDs: [...selected], siteID: moveTo },
+                  {
+                    onSuccess: (r) => {
+                      // Selection survives a partial failure so the ones that
+                      // did not move are still in hand.
+                      if (r.failed.length === 0) setSelected(new Set());
+                    },
+                  },
+                )
+              }
+            >
+              {move.isPending ? "Moving…" : "Move"}
+            </Button>
+            <Button variant="ghost" onClick={clearSelection}>
+              Clear
+            </Button>
+          </div>
+          {/* A site is a grouping, so moving a device between sites changes
+              nothing it collects — but it does change which poller queue its
+              jobs go to, and that is worth knowing before someone moves a
+              device to a site nothing serves. */}
+          <p className="mt-2 text-xs text-slate-500">
+            A site is a grouping. Moving a device keeps its history, metrics and
+            configuration — but its polling jobs move to the new site&apos;s
+            queue, so the new site needs a poller that can reach it.
+          </p>
+          {move.isSuccess && (
+            <div className="mt-2 text-sm">
+              <span className="text-green-500">
+                Moved {move.data.moved}{" "}
+                {move.data.moved === 1 ? "device" : "devices"}.
+              </span>
+              {move.data.failed.length > 0 && (
+                <span className="ml-2 text-red-500">
+                  {move.data.failed.length} failed:{" "}
+                  {move.data.failed[0].message}
+                </span>
+              )}
+            </div>
+          )}
+          {move.isError && (
+            <div className="mt-2 text-sm text-red-500">
+              {(move.error as Error).message}
+            </div>
+          )}
+        </Card>
+      )}
 
       <Card className="overflow-x-auto p-0">
         <table className="w-full min-w-[52rem] text-sm">
           <thead>
             <tr className="border-b border-slate-200 text-left text-xs uppercase text-slate-500 dark:border-slate-800">
               {[
+                "",
                 "Status",
                 "Name",
                 "Management IP",
@@ -172,11 +272,26 @@ export function InventoryPage() {
                 "Temp",
                 "Tags",
                 "",
-              ].map((h, i) => (
-                <th key={h + i} className="px-4 py-2.5 font-medium">
-                  {h}
-                </th>
-              ))}
+              ].map((h, i) =>
+                i === 0 ? (
+                  <th key="sel" className="w-8 px-4 py-2.5">
+                    <input
+                      type="checkbox"
+                      aria-label="Select every device on this page"
+                      checked={allShown}
+                      onChange={() =>
+                        setSelected(
+                          allShown ? new Set() : new Set(rows.map((d) => d.id)),
+                        )
+                      }
+                    />
+                  </th>
+                ) : (
+                  <th key={h + i} className="px-4 py-2.5 font-medium">
+                    {h}
+                  </th>
+                ),
+              )}
             </tr>
           </thead>
           <tbody>
@@ -185,6 +300,14 @@ export function InventoryPage() {
                 key={d.id}
                 className="border-b border-slate-100 hover:bg-slate-50 dark:border-slate-800/60 dark:hover:bg-slate-800/40"
               >
+                <td className="px-4 py-2">
+                  <input
+                    type="checkbox"
+                    aria-label={`Select ${d.name}`}
+                    checked={selected.has(d.id)}
+                    onChange={() => toggle(d.id)}
+                  />
+                </td>
                 <td className="px-4 py-2">
                   <StatusBadge status={d.status} />
                 </td>
@@ -204,13 +327,28 @@ export function InventoryPage() {
                 <td className="px-4 py-2">{siteName(d.site_id)}</td>
                 <td className="px-4 py-2">{d.model || "—"}</td>
                 <td className="px-4 py-2">
-                  <StatCell value={health.data?.data[d.id]?.cpu} unit="%" warn={70} crit={85} />
+                  <StatCell
+                    value={health.data?.data[d.id]?.cpu}
+                    unit="%"
+                    warn={70}
+                    crit={85}
+                  />
                 </td>
                 <td className="px-4 py-2">
-                  <StatCell value={health.data?.data[d.id]?.memory} unit="%" warn={80} crit={90} />
+                  <StatCell
+                    value={health.data?.data[d.id]?.memory}
+                    unit="%"
+                    warn={80}
+                    crit={90}
+                  />
                 </td>
                 <td className="px-4 py-2">
-                  <StatCell value={health.data?.data[d.id]?.temp} unit="°C" warn={70} crit={85} />
+                  <StatCell
+                    value={health.data?.data[d.id]?.temp}
+                    unit="°C"
+                    warn={70}
+                    crit={85}
+                  />
                 </td>
                 <td className="px-4 py-2 text-slate-500">
                   {d.tags.join(", ") || "—"}
@@ -233,11 +371,7 @@ export function InventoryPage() {
       </Card>
 
       <div className="mt-3 flex justify-end gap-2">
-        <Button
-          variant="ghost"
-          onClick={goPrev}
-          disabled={!filters.cursor}
-        >
+        <Button variant="ghost" onClick={goPrev} disabled={!filters.cursor}>
           ← Previous
         </Button>
         <Button
