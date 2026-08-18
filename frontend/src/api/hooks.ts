@@ -188,6 +188,66 @@ export function useDeviceInterfaces(id: string) {
   });
 }
 
+export interface InterfaceSearchRow {
+  id: string;
+  device_id: string;
+  device_name: string;
+  site_id: string;
+  if_index: number;
+  name: string;
+  alias: string;
+  descr: string;
+  speed_bps: number;
+  admin_status: number;
+  oper_status: number;
+  state: string;
+  monitor: boolean;
+}
+
+export function useInterfaceSearch(q: string, limit = 100, offset = 0) {
+  return useQuery({
+    queryKey: ["interfaces", q, limit, offset],
+    queryFn: () => {
+      const p = new URLSearchParams({
+        q,
+        limit: String(limit),
+        offset: String(offset),
+      });
+      return api<{ data: InterfaceSearchRow[]; total: number }>(
+        `/interfaces?${p}`,
+      );
+    },
+    // Keeps the previous page on screen while the next loads, so typing in the
+    // search box does not blank the table on every keystroke.
+    placeholderData: (prev) => prev,
+  });
+}
+
+/**
+ * utilizationExpr returns bits/second for the busier direction of each
+ * interface, keyed by device_id and if_index.
+ *
+ * It does not divide by speed. ifSpeed is often wrong or zero on exactly the
+ * ports people care about — a PPPoE session has no ifSpeed, and a subscribed
+ * rate is not a link rate — so the caller divides by the speed inventory holds
+ * and can say "unknown" rather than plotting a percentage of nothing.
+ *
+ * The label_set/or shape is the one from trafficExpr and it is load-bearing:
+ * `or` matches on labels excluding __name__, so in and out — identical in
+ * every other label — would collapse and the out direction would vanish. The
+ * explicit dir label keeps them distinct so max() actually sees both.
+ */
+export function utilizationExpr(deviceIDs: string[], window = "5m") {
+  if (deviceIDs.length === 0) return "";
+  const sel = `{device_id=~"${deviceIDs.map(reQuote).join("|")}"}`;
+  return (
+    `max by (device_id, if_index) (` +
+    `label_set(rate(netinv_if_in_octets_total${sel}[${window}]) * 8, "dir", "in")` +
+    ` or label_set(rate(netinv_if_out_octets_total${sel}[${window}]) * 8, "dir", "out")` +
+    `)`
+  );
+}
+
 export interface HistoryRow {
   object_kind: string;
   object_id: string;

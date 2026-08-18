@@ -12,6 +12,7 @@ import { Footer } from "./Footer";
 const nav = [
   { to: "/", label: "Dashboard", icon: "dashboard", exact: true },
   { to: "/inventory", label: "Inventory", icon: "inventory" },
+  { to: "/interfaces", label: "Interfaces", icon: "inventory" },
   { to: "/alerts", label: "Alerts", icon: "alerts" },
   { to: "/maps", label: "Weathermaps", icon: "maps" },
   { to: "/platform", label: "Platform", icon: "platform" },
@@ -185,7 +186,9 @@ export function AppShell() {
             {!wide ? (
               <>
                 <IconButton
-                  label={dark ? "Switch to light theme" : "Switch to dark theme"}
+                  label={
+                    dark ? "Switch to light theme" : "Switch to dark theme"
+                  }
                   icon={dark ? "sun" : "moon"}
                   onClick={toggle}
                 />
@@ -222,7 +225,9 @@ export function AppShell() {
           {/* Routes are code-split, so the first visit to a page waits on its
               chunk. The fallback is deliberately plain: a spinner that appears
               for 50ms on a fast connection reads as a flicker. */}
-          <Suspense fallback={<div className="text-sm text-slate-500">Loading…</div>}>
+          <Suspense
+            fallback={<div className="text-sm text-slate-500">Loading…</div>}
+          >
             <Outlet />
           </Suspense>
         </div>

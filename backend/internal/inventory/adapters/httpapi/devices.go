@@ -31,6 +31,9 @@ func (h *DeviceHandler) Register(r chi.Router) {
 		pr.Get("/devices", h.list)
 		pr.Get("/devices/{id}", h.get)
 		pr.Get("/devices/{id}/interfaces", h.interfaces)
+		// Fleet-wide, not device-scoped: the search exists for when you do
+		// not know which device holds the port.
+		pr.Get("/interfaces", h.searchInterfaces)
 		pr.Get("/devices/{id}/history", h.history)
 		pr.Get("/devices/{id}/sync-runs", h.syncRuns)
 		pr.Get("/devices/{id}/neighbors", h.neighbors)
@@ -247,6 +250,21 @@ func (h *DeviceHandler) syncRuns(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"data": rows, "site": site})
+}
+
+// searchInterfaces serves the Interfaces page (doc 30 §9): find a port by what
+// an operator wrote on it — alias or description — across every device.
+func (h *DeviceHandler) searchInterfaces(w http.ResponseWriter, r *http.Request) {
+	repo := h.Svc.Repo.(*postgres.DeviceRepo)
+	q := r.URL.Query()
+	limit, _ := strconv.Atoi(q.Get("limit"))
+	offset, _ := strconv.Atoi(q.Get("offset"))
+	rows, total, err := repo.SearchInterfaces(r.Context(), strings.TrimSpace(q.Get("q")), limit, offset)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"data": rows, "total": total})
 }
 
 func (h *DeviceHandler) neighbors(w http.ResponseWriter, r *http.Request) {

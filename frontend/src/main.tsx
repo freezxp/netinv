@@ -12,19 +12,52 @@ import { DashboardPage } from "./features/dashboard/DashboardPage";
 // a NOC operator watching the dashboard should not be made to download the
 // weathermap editor to get there. AppShell renders these inside a Suspense
 // boundary.
-const InventoryPage = lazyRoute(() => import("./features/inventory/InventoryPage"), "InventoryPage");
-const DeviceDetailPage = lazyRoute(() => import("./features/devices/DeviceDetailPage"), "DeviceDetailPage");
-const MapsListPage = lazyRoute(() => import("./features/maps/MapsListPage"), "MapsListPage");
-const MapViewPage = lazyRoute(() => import("./features/maps/MapViewPage"), "MapViewPage");
-const MapEditorPage = lazyRoute(() => import("./features/maps/MapEditorPage"), "MapEditorPage");
-const AlertsPage = lazyRoute(() => import("./features/alerts/AlertsPage"), "AlertsPage");
-const PlatformPage = lazyRoute(() => import("./features/platform/PlatformPage"), "PlatformPage");
-const UsersPage = lazyRoute(() => import("./features/admin/UsersPage"), "UsersPage");
-const AuditPage = lazyRoute(() => import("./features/admin/AuditPage"), "AuditPage");
-const SettingsPage = lazyRoute(() => import("./features/admin/SettingsPage"), "SettingsPage");
+const InventoryPage = lazyRoute(
+  () => import("./features/inventory/InventoryPage"),
+  "InventoryPage",
+);
+const DeviceDetailPage = lazyRoute(
+  () => import("./features/devices/DeviceDetailPage"),
+  "DeviceDetailPage",
+);
+const InterfacesPage = lazyRoute(
+  () => import("./features/interfaces/InterfacesPage"),
+  "InterfacesPage",
+);
+const MapsListPage = lazyRoute(
+  () => import("./features/maps/MapsListPage"),
+  "MapsListPage",
+);
+const MapViewPage = lazyRoute(
+  () => import("./features/maps/MapViewPage"),
+  "MapViewPage",
+);
+const MapEditorPage = lazyRoute(
+  () => import("./features/maps/MapEditorPage"),
+  "MapEditorPage",
+);
+const AlertsPage = lazyRoute(
+  () => import("./features/alerts/AlertsPage"),
+  "AlertsPage",
+);
+const PlatformPage = lazyRoute(
+  () => import("./features/platform/PlatformPage"),
+  "PlatformPage",
+);
+const UsersPage = lazyRoute(
+  () => import("./features/admin/UsersPage"),
+  "UsersPage",
+);
+const AuditPage = lazyRoute(
+  () => import("./features/admin/AuditPage"),
+  "AuditPage",
+);
+const SettingsPage = lazyRoute(
+  () => import("./features/admin/SettingsPage"),
+  "SettingsPage",
+);
 import { ApiError } from "./api/client";
 import "./styles/base.css";
-
 
 // The pages are named exports; React.lazy resolves a module's default. This
 // adapts one to the other without making every page file declare a default
@@ -55,6 +88,7 @@ const router = createBrowserRouter([
     children: [
       { index: true, element: <DashboardPage /> },
       { path: "inventory", element: <InventoryPage /> },
+      { path: "interfaces", element: <InterfacesPage /> },
       { path: "alerts", element: <AlertsPage /> },
       { path: "audit", element: <AuditPage /> },
       { path: "users", element: <UsersPage /> },

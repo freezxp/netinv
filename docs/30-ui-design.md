@@ -96,6 +96,16 @@ This replaces the separate **Sync** tab this document specified until 2026-08-18
 
 **The sync banner** sits under the identity header, above the tabs, and is the page's answer to a device that looks healthy and is not. It renders nothing on a healthy device. Otherwise it names which of three faults applies, because the operator's next move differs for each and "sync failed" said three ways does not help: the last run **failed** (red — the recorded reason, verbatim and unabbreviated, since it is the whole point); the device is pending and **no run has ever happened** (amber — nothing was dispatched, so nothing failed and nothing is logged: either the polling profile excludes the `sync` family or no poller consumes the site's queue); or a run **succeeded and the device is still pending** (amber — collection worked and the inventory write did not). A fourth case is named outright rather than guessed at: **no poller is consuming the site's job queue** (red, with the queued-job count and the instant it started), which is the commonest silent cause and the one the page could not previously distinguish. That banner is the only one that also shows on a device which is *not* pending — an active device whose site loses its poller stops collecting just as quietly, and its graphs simply stop. Doc 31 §9 carries the same three classes for the operator working from a shell, and `scripts/diagnose-pending.sh` tells them apart on a deployment with no UI access.
 
+## 5a. Interfaces `/interfaces`
+
+A fleet-wide port finder, because until now an interface could only be reached through the device that owns it. Search matches **alias, description and interface name** at once — the label an operator wrote may be in any of them — and the table shows the owning device, speed, oper/admin state and current utilization, with the interface name linking straight to its graph on device detail (`/devices/:id?if=<ifIndex>`).
+
+Three decisions worth keeping:
+
+- **Utilization is computed from the counters, not read from a metric.** `netinv_if_utilization_percent` does not exist and never has; the page derives bits/second per interface with the `label_set`/`or` shape from `trafficExpr` (an `or` without distinct `dir` labels collapses in and out and silently drops one direction), then divides by the speed inventory holds.
+- **Unknown speed reads as "speed unknown", not 0%.** ifSpeed is absent or wrong on exactly the ports that matter — a PPPoE session has no ifSpeed — so a bar is drawn only when there is a denominator to draw it against.
+- **Sorting by utilization sorts the current page and says so.** Ranking the whole estate by busiest would mean querying the metrics store first and the database second; showing the busiest hundred *alphabetical* interfaces while calling it "busiest" would be a lie.
+
 ## 6. Alerts `/alerts`
 
 Tabs: Active (default: firing+acked, severity→recency), History, Silences, Rules.

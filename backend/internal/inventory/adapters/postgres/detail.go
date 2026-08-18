@@ -224,3 +224,81 @@ func (r *DeviceRepo) SiteCollection(ctx context.Context, deviceID string) (SiteC
 	}
 	return sc, nil
 }
+
+// InterfaceSearchRow is one hit from the fleet-wide interface search. It
+// carries the owning device because the whole point of searching across
+// devices is not knowing which one holds the port you are looking for.
+type InterfaceSearchRow struct {
+	ID          string `json:"id"`
+	DeviceID    string `json:"device_id"`
+	DeviceName  string `json:"device_name"`
+	SiteID      string `json:"site_id"`
+	IfIndex     int    `json:"if_index"`
+	Name        string `json:"name"`
+	Alias       string `json:"alias"`
+	Descr       string `json:"descr"`
+	SpeedBPS    int64  `json:"speed_bps"`
+	AdminStatus int    `json:"admin_status"`
+	OperStatus  int    `json:"oper_status"`
+	State       string `json:"state"`
+	Monitor     bool   `json:"monitor"`
+}
+
+// SearchInterfaces finds interfaces across every device by alias, description
+// or name.
+//
+// Alias is the field operators actually curate — it is where the circuit id,
+// the customer name or the far end goes — and until now it was only readable
+// one device at a time. "Which port is the London circuit on" was a question
+// the product could not answer without knowing the answer first.
+//
+// The match is a case-insensitive substring across all three fields: an
+// operator typing "uplink" does not know or care whether the previous engineer
+// put it in ifAlias or ifDescr. Removed interfaces and retired devices are
+// excluded — searching turns up ports you can act on, not history.
+func (r *DeviceRepo) SearchInterfaces(ctx context.Context, q string, limit, offset int) ([]InterfaceSearchRow, int, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	// A blank q lists everything, which is what an empty search box should show.
+	pattern := "%" + q + "%"
+	var total int
+	if err := r.Pool.QueryRow(ctx, `
+		SELECT count(*)
+		FROM inventory.interfaces i
+		JOIN inventory.devices d ON d.id = i.device_id
+		WHERE i.state != 'removed' AND d.status != 'retired'
+		  AND ($1 = '' OR i.alias ILIKE $2 OR i.descr ILIKE $2 OR i.name ILIKE $2)`,
+		q, pattern).Scan(&total); err != nil {
+		return nil, 0, errx.Wrap(errx.KindTransient, err, "count interface search")
+	}
+	rows, err := r.Pool.Query(ctx, `
+		SELECT i.id, i.device_id, d.name, d.site_id, i.if_index,
+		       coalesce(i.name,''), coalesce(i.alias,''), coalesce(i.descr,''),
+		       coalesce(i.speed_bps,0), coalesce(i.admin_status,0),
+		       coalesce(i.oper_status,0), i.state, i.monitor
+		FROM inventory.interfaces i
+		JOIN inventory.devices d ON d.id = i.device_id
+		WHERE i.state != 'removed' AND d.status != 'retired'
+		  AND ($1 = '' OR i.alias ILIKE $2 OR i.descr ILIKE $2 OR i.name ILIKE $2)
+		ORDER BY d.name, i.if_index
+		LIMIT $3 OFFSET $4`, q, pattern, limit, offset)
+	if err != nil {
+		return nil, 0, errx.Wrap(errx.KindTransient, err, "interface search")
+	}
+	defer rows.Close()
+	out := []InterfaceSearchRow{}
+	for rows.Next() {
+		var i InterfaceSearchRow
+		if err := rows.Scan(&i.ID, &i.DeviceID, &i.DeviceName, &i.SiteID,
+			&i.IfIndex, &i.Name, &i.Alias, &i.Descr, &i.SpeedBPS,
+			&i.AdminStatus, &i.OperStatus, &i.State, &i.Monitor); err != nil {
+			return nil, 0, err
+		}
+		out = append(out, i)
+	}
+	return out, total, rows.Err()
+}

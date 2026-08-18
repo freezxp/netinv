@@ -128,3 +128,71 @@ func TestDeleteSiteReportsMissingSite(t *testing.T) {
 		t.Fatalf("kind is %v, want not-found (err = %v)", errx.KindOf(err), err)
 	}
 }
+
+// The interface search exists so an operator can find a port by what someone
+// wrote on it. Alias is the field people actually curate — circuit ids,
+// customer names — and it was previously readable one device at a time.
+func TestSearchInterfacesMatchesAliasAndDescription(t *testing.T) {
+	repo, dr, ctx := newSiteRepo(t)
+	site := addSite(t, repo, ctx, "search-site")
+	addDevice(t, dr, ctx, site.ID, "10.91.0.1", domain.DevicePending)
+
+	var deviceID string
+	if err := dr.Pool.QueryRow(ctx,
+		`SELECT id FROM inventory.devices WHERE site_id = $1`, site.ID).
+		Scan(&deviceID); err != nil {
+		t.Fatalf("find device: %v", err)
+	}
+	seed := []struct {
+		idx                       int
+		name, alias, descr, state string
+	}{
+		{1, "ge-0/0/0", "LONDON-CIRCUIT-4471", "uplink to core", "present"},
+		{2, "ge-0/0/1", "", "spare port", "present"},
+		{3, "ge-0/0/2", "OLD-LONDON-LINK", "decommissioned", "removed"},
+	}
+	for _, s := range seed {
+		if _, err := dr.Pool.Exec(ctx, `
+			INSERT INTO inventory.interfaces
+				(id, device_id, if_index, name, alias, descr, speed_bps, state)
+			VALUES ($1,$2,$3,$4,$5,$6,1000000000,$7)`,
+			id.New("if"), deviceID, s.idx, s.name, s.alias, s.descr, s.state); err != nil {
+			t.Fatalf("seed interface: %v", err)
+		}
+	}
+
+	// Alias hit.
+	rows, total, err := dr.SearchInterfaces(ctx, "london", 0, 0)
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	// Case-insensitive, and the removed interface must not appear: search
+	// turns up ports you can act on, not history.
+	if total != 1 || len(rows) != 1 || rows[0].Alias != "LONDON-CIRCUIT-4471" {
+		t.Fatalf("got %d rows (total %d) %+v, want only the present London circuit",
+			len(rows), total, rows)
+	}
+	if rows[0].DeviceName == "" || rows[0].SpeedBPS != 1000000000 {
+		t.Fatalf("row missing device name or speed: %+v", rows[0])
+	}
+
+	// Description hit — whoever labelled the port may have used either field.
+	rows, _, err = dr.SearchInterfaces(ctx, "spare", 0, 0)
+	if err != nil {
+		t.Fatalf("search descr: %v", err)
+	}
+	if len(rows) != 1 || rows[0].IfIndex != 2 {
+		t.Fatalf("description search returned %+v", rows)
+	}
+
+	// Empty query lists everything present, which is what an empty search box
+	// should show rather than nothing.
+	rows, total, err = dr.SearchInterfaces(ctx, "", 0, 0)
+	if err != nil {
+		t.Fatalf("search all: %v", err)
+	}
+	if total != 2 || len(rows) != 2 {
+		t.Fatalf("empty search returned %d rows (total %d), want the 2 present ones",
+			len(rows), total)
+	}
+}
