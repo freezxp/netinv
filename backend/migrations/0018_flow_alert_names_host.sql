@@ -1,7 +1,7 @@
 -- +goose Up
 -- A firing flow alert named an address and nothing else:
 --
---   "Flow exporter 192.168.0.2 has sent nothing for 20m"
+--   "Flow exporter 192.0.2.7 has sent nothing for 20m"
 --
 -- Every other alert family names a device, because device/interface metrics
 -- carry `device`, `device_id` and `site` labels. Flow series carry none of them
