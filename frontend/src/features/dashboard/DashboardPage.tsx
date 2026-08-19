@@ -26,6 +26,7 @@ import { TimeSeries } from "../../components/TimeSeries";
 import { HeatmapPanel, TopNPanel, WatchlistPanel } from "./panels";
 import {
   formatBps,
+  formatAlertInterface,
   formatDuration,
   formatMs,
   formatPercent,
@@ -108,15 +109,18 @@ function AlertsPanel() {
       )}
       <div className="flex flex-col divide-y divide-slate-100 dark:divide-slate-800">
         {alerts.data?.data.map((a) => (
-          <div key={a.id} className="flex items-center gap-3 py-2">
+          <div key={a.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2">
             <SeverityPill severity={a.severity} />
             <div className="flex-1">
               <span className="font-medium">{a.rule.name}</span>
               <span className="ml-2 text-sm text-slate-500">
-                {a.labels.device}
-                {a.labels.if_index ? ` · if ${a.labels.if_index}` : ""}
-                {" · "}
-                {formatDuration(a.duration_s)}
+                {[
+                  a.labels.device || a.labels.exporter,
+                  formatAlertInterface(a.labels),
+                  formatDuration(a.duration_s),
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
               </span>
             </div>
             {a.state === "acknowledged" ? (
@@ -220,6 +224,12 @@ export function DashboardPage() {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<DashboardLayout | null>(null);
   const shown = draft ?? layout;
+  // Position in the layout still decides order *within* each column, but an
+  // alerts panel is always the right-hand column regardless of where it sits
+  // in the list — so the Customise editor reorders the graphs without being
+  // able to bury the alerts among them.
+  const alertPanels = shown.panels.filter((p) => p.kind === "alerts");
+  const mainPanels = shown.panels.filter((p) => p.kind !== "alerts");
 
   const apply = (l: DashboardLayout) => {
     setDraft(l);
@@ -227,7 +237,7 @@ export function DashboardPage() {
   };
 
   return (
-    <div className="mx-auto flex max-w-6xl flex-col gap-4">
+    <div className="mx-auto flex max-w-7xl flex-col gap-4">
       <div className="flex items-center justify-between gap-3">
         <h1 className="text-xl font-semibold">Dashboard</h1>
         <div className="flex items-center gap-2">
@@ -262,12 +272,29 @@ export function DashboardPage() {
           the default layout.
         </EmptyState>
       ) : (
-        <div className="grid gap-4 lg:grid-cols-2">
-          {shown.panels.map((p) => (
-            <div key={p.id} className={p.wide ? "lg:col-span-2" : undefined}>
-              {renderPanel(p)}
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
+          {/* Alerts move to a column of their own rather than sitting in the
+              flow of panels. On a NOC screen the alert list is the thing being
+              watched, and as a full-width row it pushed every graph down the
+              page as it grew. `lg:items-start` is what lets it size to its own
+              content instead of stretching to the height of the graphs beside
+              it — "expand with the list" is the whole point of the column. */}
+          <div className="min-w-0 flex-1">
+            <div className="grid gap-4 lg:grid-cols-2">
+              {mainPanels.map((p) => (
+                <div key={p.id} className={p.wide ? "lg:col-span-2" : undefined}>
+                  {renderPanel(p)}
+                </div>
+              ))}
             </div>
-          ))}
+          </div>
+          {alertPanels.length > 0 && (
+            <aside className="flex w-full flex-col gap-4 lg:w-96 lg:shrink-0">
+              {alertPanels.map((p) => (
+                <div key={p.id}>{renderPanel(p)}</div>
+              ))}
+            </aside>
+          )}
         </div>
       )}
     </div>
