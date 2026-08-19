@@ -19,6 +19,7 @@ import {
   Button,
   Card,
   EmptyState,
+  Input,
   SeverityPill,
   StatusBadge,
   cx,
@@ -203,6 +204,22 @@ function InterfacesTab({
     () => rows.find((r) => String(r.if_index) === focusIf) ?? rows[0],
     [rows, focusIf],
   );
+  // Filtering narrows the table only. `focused` stays derived from the full
+  // list on purpose: typing in the box must not move the graph out from under
+  // whoever is reading it, and a filter that silently changed which interface
+  // was being charted would be worse than no filter.
+  const [filter, setFilter] = useState("");
+  const shown = useMemo(() => {
+    const q = filter.trim().toLowerCase();
+    if (!q) return rows;
+    // ifDescr as well as ifAlias: vendors disagree about which one carries the
+    // text an operator wrote, and searching only one finds half the fleet.
+    // if_index is matched too, so a remembered index still works as a query.
+    return rows.filter((i) =>
+      [i.name, i.alias, i.descr, String(i.if_index)]
+        .some((v) => (v ?? "").toLowerCase().includes(q)),
+    );
+  }, [rows, filter]);
   const range = useTimeRange();
   const pollS = useMetricsLimits().data?.poll_interval_s ?? 0;
   const traffic = useQueryRange(
@@ -215,10 +232,35 @@ function InterfacesTab({
   return (
     <div className="grid gap-4 lg:grid-cols-2">
       <Card className="overflow-x-auto p-0">
+        {rows.length > 0 && (
+          <div className="flex items-center gap-2 border-b border-slate-100 px-3 py-2 dark:border-slate-800/60">
+            <Input
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+              placeholder="Filter by name, alias, description or ifIndex"
+              className="w-full"
+              aria-label="Filter interfaces"
+            />
+            {filter && (
+              <span className="whitespace-nowrap text-xs text-slate-500">
+                {shown.length} of {rows.length}
+              </span>
+            )}
+          </div>
+        )}
         <table className="w-full min-w-[36rem] text-sm">
           <thead>
             <tr className="border-b border-slate-200 text-left text-xs uppercase text-slate-500 dark:border-slate-800">
-              {["If", "Name", "Alias", "Speed", "Oper", "Admin", "State"].map(
+              {[
+                "If",
+                "Name",
+                "Alias",
+                "Descr",
+                "Speed",
+                "Oper",
+                "Admin",
+                "State",
+              ].map(
                 (h) => (
                   <th key={h} className="px-3 py-2 font-medium">
                     {h}
@@ -228,7 +270,7 @@ function InterfacesTab({
             </tr>
           </thead>
           <tbody>
-            {rows.map((i) => (
+            {shown.map((i) => (
               <tr
                 key={i.id}
                 onClick={() => onFocus(String(i.if_index))}
@@ -242,6 +284,7 @@ function InterfacesTab({
                 <td className="px-3 py-1.5">{i.if_index}</td>
                 <td className="mono px-3 py-1.5">{i.name}</td>
                 <td className="px-3 py-1.5 text-slate-500">{i.alias || "—"}</td>
+                <td className="px-3 py-1.5 text-slate-500">{i.descr || "—"}</td>
                 <td className="px-3 py-1.5">
                   {i.speed_bps ? formatBps(i.speed_bps) : "—"}
                 </td>
@@ -274,6 +317,15 @@ function InterfacesTab({
         </table>
         {rows.length === 0 && (
           <EmptyState>No interfaces yet — waiting for first sync.</EmptyState>
+        )}
+        {/* Distinct from the above on purpose: "no interfaces" while a filter is
+            active reads as a failed sync, and someone goes looking for a fault
+            that is a typed character. */}
+        {rows.length > 0 && shown.length === 0 && (
+          <EmptyState>
+            No interface matches “{filter}”. Names, aliases, descriptions and
+            ifIndex are searched.
+          </EmptyState>
         )}
       </Card>
       <Card

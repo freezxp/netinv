@@ -170,6 +170,9 @@ export interface InterfaceRow {
   if_index: number;
   name: string;
   alias: string;
+  /** ifDescr. Searched alongside alias: vendors disagree about which of the two
+   *  carries the text an operator actually wrote. */
+  descr: string;
   speed_bps: number;
   mtu: number;
   admin_status: number;

@@ -13,10 +13,15 @@ import (
 // Read models for the device detail page (doc 09 §6, doc 30 §5).
 
 type InterfaceRow struct {
-	ID          string `json:"id"`
-	IfIndex     int    `json:"if_index"`
-	Name        string `json:"name"`
-	Alias       string `json:"alias"`
+	ID      string `json:"id"`
+	IfIndex int    `json:"if_index"`
+	Name    string `json:"name"`
+	Alias   string `json:"alias"`
+	// Descr is ifDescr. Kept alongside Alias because vendors disagree about
+	// which one carries the useful text: some put the port's purpose in the
+	// alias and a model string in the description, others the reverse. The
+	// interface filter searches both for that reason.
+	Descr       string `json:"descr"`
 	SpeedBPS    int64  `json:"speed_bps"`
 	MTU         int    `json:"mtu"`
 	AdminStatus int    `json:"admin_status"`
@@ -32,6 +37,7 @@ type InterfaceRow struct {
 func (r *DeviceRepo) Interfaces(ctx context.Context, deviceID string) ([]InterfaceRow, error) {
 	rows, err := r.Pool.Query(ctx, `
 		SELECT id, if_index, coalesce(name,''), coalesce(alias,''),
+		       coalesce(descr,''),
 		       coalesce(speed_bps,0), coalesce(mtu,0), coalesce(admin_status,0),
 		       coalesce(oper_status,0), state, monitor, ever_up
 		FROM inventory.interfaces
@@ -44,7 +50,7 @@ func (r *DeviceRepo) Interfaces(ctx context.Context, deviceID string) ([]Interfa
 	out := []InterfaceRow{}
 	for rows.Next() {
 		var i InterfaceRow
-		if err := rows.Scan(&i.ID, &i.IfIndex, &i.Name, &i.Alias, &i.SpeedBPS,
+		if err := rows.Scan(&i.ID, &i.IfIndex, &i.Name, &i.Alias, &i.Descr, &i.SpeedBPS,
 			&i.MTU, &i.AdminStatus, &i.OperStatus, &i.State, &i.Monitor,
 			&i.EverUp); err != nil {
 			return nil, err
