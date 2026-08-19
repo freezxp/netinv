@@ -9,12 +9,14 @@ import { useState } from "react";
 import { api } from "../../api/client";
 import { useQuery } from "@tanstack/react-query";
 import { useAuthStore } from "../auth/store";
+import { useCustomers } from "../../api/hooks";
 import { Button, Card, EmptyState, Input, Select } from "../../components/ui";
 import { formatBps, formatBytes } from "../../lib/format";
 
 interface ReportRow {
   device_id: string;
   device_name: string;
+  customer?: string;
   if_index: number;
   name: string;
   alias: string;
@@ -35,6 +37,7 @@ interface ReportRow {
 
 interface BandwidthReport {
   query: string;
+  customer?: string;
   from: string;
   to: string;
   truncated: boolean;
@@ -74,6 +77,9 @@ async function downloadCSV(params: URLSearchParams) {
 export function ReportsPage() {
   const [typed, setTyped] = useState("");
   const [q, setQ] = useState("");
+  const [customer, setCustomer] = useState("");
+  const [ranCustomer, setRanCustomer] = useState("");
+  const customers = useCustomers();
   const [period, setPeriod] = useState<(typeof PERIODS)[number]["key"]>("7d");
   const hours = PERIODS.find((p) => p.key === period)!.hours;
   const [ran, setRan] = useState(false);
@@ -83,6 +89,7 @@ export function ReportsPage() {
     const from = new Date(to.getTime() - hours * 3600_000);
     return new URLSearchParams({
       q,
+      customer: ranCustomer,
       from: from.toISOString(),
       to: to.toISOString(),
     });
@@ -92,7 +99,7 @@ export function ReportsPage() {
   // series over the whole period, which is expensive enough that it should be
   // something an operator asks for on purpose.
   const report = useQuery({
-    queryKey: ["report", "bandwidth", q, period],
+    queryKey: ["report", "bandwidth", q, ranCustomer, period],
     queryFn: () => api<BandwidthReport>(`/reports/bandwidth?${params()}`),
     enabled: ran,
     staleTime: 60_000,
@@ -100,6 +107,7 @@ export function ReportsPage() {
 
   const run = () => {
     setQ(typed);
+    setRanCustomer(customer);
     setRan(true);
   };
 
@@ -124,6 +132,21 @@ export function ReportsPage() {
               onKeyDown={(e) => e.key === "Enter" && run()}
               placeholder="e.g. CUSTOMER, uplink, WAN — blank reports on everything"
             />
+          </label>
+          <label className="text-xs text-slate-500">
+            Customer
+            <Select
+              className="mt-1 w-52"
+              value={customer}
+              onChange={(e) => setCustomer(e.target.value)}
+            >
+              <option value="">Any customer</option>
+              {customers.data?.data.map((c) => (
+                <option key={c.customer} value={c.customer}>
+                  {c.customer} ({c.interfaces})
+                </option>
+              ))}
+            </Select>
           </label>
           <label className="text-xs text-slate-500">
             Period
@@ -173,8 +196,9 @@ export function ReportsPage() {
         <>
           <div className="text-xs text-slate-500">
             {new Date(report.data.from).toLocaleString()} —{" "}
-            {new Date(report.data.to).toLocaleString()} · {rows.length}{" "}
-            interface{rows.length === 1 ? "" : "s"}
+            {new Date(report.data.to).toLocaleString()}
+            {report.data.customer && ` · ${report.data.customer}`} ·{" "}
+            {rows.length} interface{rows.length === 1 ? "" : "s"}
             {report.data.truncated && (
               <span className="ml-2 text-amber-500">
                 truncated — narrow the search to report on the rest
@@ -192,6 +216,7 @@ export function ReportsPage() {
                 <thead>
                   <tr className="border-b border-slate-200 text-left text-xs uppercase text-slate-500 dark:border-slate-800">
                     {[
+                      "Customer",
                       "Device",
                       "Interface",
                       "Alias",
@@ -213,6 +238,11 @@ export function ReportsPage() {
                       key={`${r.device_id}-${r.if_index}`}
                       className="border-b border-slate-100 dark:border-slate-800/60"
                     >
+                      <td className="px-3 py-1.5">
+                        {r.customer || (
+                          <span className="text-slate-400">—</span>
+                        )}
+                      </td>
                       <td className="px-3 py-1.5">{r.device_name}</td>
                       <td className="mono px-3 py-1.5 text-xs">{r.name}</td>
                       <td className="px-3 py-1.5">{r.alias || "—"}</td>

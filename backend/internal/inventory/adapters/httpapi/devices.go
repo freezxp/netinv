@@ -2,13 +2,16 @@ package httpapi
 
 import (
 	"context"
+	"encoding/csv"
 	"encoding/json"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/freezxp/netinv/backend/internal/audit"
 	"github.com/freezxp/netinv/backend/internal/inventory/adapters/postgres"
 	"github.com/freezxp/netinv/backend/internal/inventory/app"
 	"github.com/freezxp/netinv/backend/internal/inventory/domain"
@@ -34,6 +37,7 @@ func (h *DeviceHandler) Register(r chi.Router) {
 		// Fleet-wide, not device-scoped: the search exists for when you do
 		// not know which device holds the port.
 		pr.Get("/interfaces", h.searchInterfaces)
+		pr.Get("/interfaces/customers", h.customers)
 		pr.Get("/devices/{id}/history", h.history)
 		pr.Get("/devices/{id}/sync-runs", h.syncRuns)
 		pr.Get("/devices/{id}/neighbors", h.neighbors)
@@ -47,6 +51,9 @@ func (h *DeviceHandler) Register(r chi.Router) {
 		pw.Post("/devices/{id}/enable", h.status(domain.DeviceActive))
 		pw.Post("/devices/{id}/disable", h.status(domain.DeviceDisabled))
 		pw.Post("/devices/{id}/sync", h.syncNow)
+		// Tagging is operator knowledge about the network, so it is a write
+		// even though it changes nothing the network can see.
+		pw.Post("/interfaces/tags", h.tagInterfaces)
 		// Live SNMP walk: read-only, but it loads the device, so operator+.
 		pw.Get("/devices/{id}/oids", h.oids)
 	})
@@ -259,12 +266,143 @@ func (h *DeviceHandler) searchInterfaces(w http.ResponseWriter, r *http.Request)
 	q := r.URL.Query()
 	limit, _ := strconv.Atoi(q.Get("limit"))
 	offset, _ := strconv.Atoi(q.Get("offset"))
-	rows, total, err := repo.SearchInterfaces(r.Context(), strings.TrimSpace(q.Get("q")), limit, offset)
+	rows, total, err := repo.FindInterfaces(r.Context(), postgres.InterfaceFilter{
+		Q:        strings.TrimSpace(q.Get("q")),
+		Customer: strings.TrimSpace(q.Get("customer")),
+	}, limit, offset)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"data": rows, "total": total})
+}
+
+// customers lists assigned customer names and their interface counts, for the
+// filter. Derived from the interfaces themselves — there is no customer entity
+// in NetInv, and inventing one would put an onboarding step in front of
+// tagging a single port.
+func (h *DeviceHandler) customers(w http.ResponseWriter, r *http.Request) {
+	repo := h.Svc.Repo.(*postgres.DeviceRepo)
+	rows, err := repo.Customers(r.Context())
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"data": rows})
+}
+
+// tagInterfaces assigns customers and tags in bulk, from CSV or JSON.
+//
+// CSV because the list already exists somewhere else — a billing system, a
+// spreadsheet, an old NMS — and retyping it into a UI one port at a time is
+// the work worth removing. Columns: device, interface, customer, tags.
+func (h *DeviceHandler) tagInterfaces(w http.ResponseWriter, r *http.Request) {
+	repo := h.Svc.Repo.(*postgres.DeviceRepo)
+	var in []postgres.TagAssignment
+	var err error
+	if strings.HasPrefix(r.Header.Get("Content-Type"), "text/csv") {
+		in, err = parseTagCSV(r.Body)
+	} else {
+		var body struct {
+			Assignments []struct {
+				Device    string    `json:"device"`
+				Interface string    `json:"interface"`
+				Customer  string    `json:"customer"`
+				Tags      *[]string `json:"tags"`
+			} `json:"assignments"`
+		}
+		if derr := json.NewDecoder(r.Body).Decode(&body); derr != nil {
+			err = errx.New(errx.KindInvalid, "malformed JSON body")
+		} else {
+			for _, a := range body.Assignments {
+				t := postgres.TagAssignment{Device: a.Device, Interface: a.Interface,
+					Customer: a.Customer}
+				if a.Tags != nil {
+					t.Tags, t.SetTags = *a.Tags, true
+				}
+				in = append(in, t)
+			}
+		}
+	}
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if len(in) == 0 {
+		httpx.WriteError(w, r, errx.New(errx.KindInvalid, "no assignments to apply"))
+		return
+	}
+	res, err := repo.ApplyTags(r.Context(), in)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	h.Svc.Audit.Write(r.Context(), audit.Event{
+		ActorKind: "user", ActorID: httpx.ClaimsFrom(r.Context()).Subject,
+		Action: "interface.tag", ResourceKind: "interface",
+		Detail: map[string]any{"submitted": len(in), "updated": res.Updated,
+			"unmatched": len(res.Unmatched), "ambiguous": len(res.Ambiguous)},
+	})
+	httpx.WriteJSON(w, http.StatusOK, res)
+}
+
+// parseTagCSV reads the import format. A header row is required and its column
+// names are honoured, because an export from somewhere else will not have the
+// columns in the order this happens to expect, and silently reading customer
+// names out of the wrong column is the worst outcome available.
+func parseTagCSV(rd io.Reader) ([]postgres.TagAssignment, error) {
+	c := csv.NewReader(rd)
+	c.FieldsPerRecord = -1
+	c.TrimLeadingSpace = true
+	records, err := c.ReadAll()
+	if err != nil {
+		return nil, errx.New(errx.KindInvalid, "malformed CSV: %s", err)
+	}
+	if len(records) < 2 {
+		return nil, errx.New(errx.KindInvalid,
+			"expected a header row (device,interface,customer,tags) and at least one row")
+	}
+	col := map[string]int{}
+	for i, name := range records[0] {
+		col[strings.ToLower(strings.TrimSpace(name))] = i
+	}
+	if _, ok := col["device"]; !ok {
+		return nil, errx.New(errx.KindInvalid, "CSV has no 'device' column")
+	}
+	if _, ok := col["interface"]; !ok {
+		return nil, errx.New(errx.KindInvalid, "CSV has no 'interface' column")
+	}
+	at := func(rec []string, name string) string {
+		i, ok := col[name]
+		if !ok || i >= len(rec) {
+			return ""
+		}
+		return strings.TrimSpace(rec[i])
+	}
+	var out []postgres.TagAssignment
+	for _, rec := range records[1:] {
+		if len(rec) == 0 || strings.TrimSpace(strings.Join(rec, "")) == "" {
+			continue // blank line
+		}
+		a := postgres.TagAssignment{
+			Device: at(rec, "device"), Interface: at(rec, "interface"),
+			Customer: at(rec, "customer"),
+		}
+		if _, ok := col["tags"]; ok {
+			raw := at(rec, "tags")
+			a.SetTags = true
+			for _, t := range strings.Split(raw, "|") {
+				if t = strings.TrimSpace(t); t != "" {
+					a.Tags = append(a.Tags, t)
+				}
+			}
+			if a.Tags == nil {
+				a.Tags = []string{}
+			}
+		}
+		out = append(out, a)
+	}
+	return out, nil
 }
 
 func (h *DeviceHandler) neighbors(w http.ResponseWriter, r *http.Request) {

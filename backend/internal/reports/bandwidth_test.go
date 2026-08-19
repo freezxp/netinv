@@ -15,8 +15,8 @@ type stubFinder struct {
 	gotQ  string
 }
 
-func (f *stubFinder) SearchInterfaces(_ context.Context, q string, limit, _ int) ([]postgres.InterfaceSearchRow, int, error) {
-	f.gotQ = q
+func (f *stubFinder) FindInterfaces(_ context.Context, flt postgres.InterfaceFilter, limit, _ int) ([]postgres.InterfaceSearchRow, int, error) {
+	f.gotQ = flt.Q
 	rows := f.rows
 	if limit < len(rows) {
 		rows = rows[:limit]
@@ -67,7 +67,7 @@ func TestBandwidthMergesDirectionsAndComputesUtilization(t *testing.T) {
 		"increase":           {sample("d_a", "1", "in", 5e9), sample("d_a", "1", "out", 7e9)},
 	})
 	to := time.Date(2026, 8, 19, 12, 0, 0, 0, time.UTC)
-	rep, err := s.Bandwidth(context.Background(), "london", to.Add(-24*time.Hour), to, 0)
+	rep, err := s.Bandwidth(context.Background(), postgres.InterfaceFilter{Q: "london"}, to.Add(-24*time.Hour), to, 0)
 	if err != nil {
 		t.Fatalf("bandwidth: %v", err)
 	}
@@ -109,7 +109,7 @@ func TestBandwidthLeavesUtilizationUnknownWithoutSpeed(t *testing.T) {
 		"avg_over_time": {sample("d_a", "2", "in", 50e6)},
 	})
 	to := time.Now().UTC()
-	rep, err := s.Bandwidth(context.Background(), "", to.Add(-time.Hour), to, 0)
+	rep, err := s.Bandwidth(context.Background(), postgres.InterfaceFilter{Q: ""}, to.Add(-time.Hour), to, 0)
 	if err != nil {
 		t.Fatalf("bandwidth: %v", err)
 	}
@@ -139,7 +139,7 @@ func TestBandwidthIgnoresSeriesOutsideTheSelection(t *testing.T) {
 		},
 	})
 	to := time.Now().UTC()
-	rep, err := s.Bandwidth(context.Background(), "", to.Add(-time.Hour), to, 0)
+	rep, err := s.Bandwidth(context.Background(), postgres.InterfaceFilter{Q: ""}, to.Add(-time.Hour), to, 0)
 	if err != nil {
 		t.Fatalf("bandwidth: %v", err)
 	}
@@ -151,7 +151,7 @@ func TestBandwidthIgnoresSeriesOutsideTheSelection(t *testing.T) {
 func TestBandwidthRejectsABackwardsWindow(t *testing.T) {
 	s, _ := svc(nil, nil)
 	now := time.Now().UTC()
-	if _, err := s.Bandwidth(context.Background(), "", now, now.Add(-time.Hour), 0); err == nil {
+	if _, err := s.Bandwidth(context.Background(), postgres.InterfaceFilter{Q: ""}, now, now.Add(-time.Hour), 0); err == nil {
 		t.Fatal("accepted a window that ends before it starts")
 	}
 }

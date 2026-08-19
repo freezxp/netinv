@@ -8,13 +8,22 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import {
+  useCustomers,
+  useImportInterfaceTags,
   useInterfaceSearch,
   useInstantQuery,
   useMetricsLimits,
   utilizationExpr,
   type InterfaceSearchRow,
 } from "../../api/hooks";
-import { Button, Card, EmptyState, Input, cx } from "../../components/ui";
+import {
+  Button,
+  Card,
+  EmptyState,
+  Input,
+  Select,
+  cx,
+} from "../../components/ui";
 import { formatBps } from "../../lib/format";
 import { rateWindow } from "../../api/timerange";
 
@@ -22,9 +31,12 @@ const PAGE = 100;
 
 export function InterfacesPage() {
   const [typed, setTyped] = useState("");
+  const [customer, setCustomer] = useState("");
   const [page, setPage] = useState(0);
+  const [importing, setImporting] = useState(false);
   const q = useDebounced(typed, 300);
-  const search = useInterfaceSearch(q, PAGE, page * PAGE);
+  const customers = useCustomers();
+  const search = useInterfaceSearch(q, customer, PAGE, page * PAGE);
   const rows = search.data?.data ?? [];
   const total = search.data?.total ?? 0;
 
@@ -74,6 +86,9 @@ export function InterfacesPage() {
         >
           {sortByUtil ? "Sorted by utilization" : "Sort by utilization"}
         </Button>
+        <Button variant="ghost" onClick={() => setImporting(true)}>
+          Import customers
+        </Button>
       </div>
 
       <Card>
@@ -87,10 +102,34 @@ export function InterfacesPage() {
           }}
           placeholder="Search alias, description or interface name — e.g. uplink, WAN, ge-0/0/1"
         />
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <span className="text-xs text-slate-500">Customer:</span>
+          <Select
+            className="w-56"
+            value={customer}
+            onChange={(e) => {
+              setCustomer(e.target.value);
+              setPage(0);
+            }}
+          >
+            <option value="">Any customer</option>
+            {customers.data?.data.map((c) => (
+              <option key={c.customer} value={c.customer}>
+                {c.customer} ({c.interfaces})
+              </option>
+            ))}
+          </Select>
+          {customers.data?.data.length === 0 && (
+            <span className="text-xs text-slate-500">
+              nothing tagged yet — use Import customers
+            </span>
+          )}
+        </div>
         <p className="mt-2 text-xs text-slate-500">
-          Case-insensitive substring across all three fields, because whoever
-          labelled the port may have put it in any of them. Removed interfaces
-          and retired devices are excluded.
+          Case-insensitive substring across alias, description, name and
+          customer. The customer picker is an exact match instead: a billing run
+          must not pick up a different customer whose name merely contains this
+          one. Removed interfaces and retired devices are excluded.
         </p>
       </Card>
 
@@ -108,6 +147,7 @@ export function InterfacesPage() {
                 {[
                   "Device",
                   "Interface",
+                  "Customer",
                   "Alias",
                   "Description",
                   "Speed",
@@ -133,6 +173,8 @@ export function InterfacesPage() {
           </table>
         )}
       </Card>
+
+      {importing && <ImportCustomers onClose={() => setImporting(false)} />}
 
       {total > PAGE && (
         <div className="flex items-center justify-between text-sm">
@@ -203,6 +245,18 @@ function Row({
           {row.name || row.if_index}
         </Link>
       </td>
+      <td className="px-3 py-1.5">
+        {row.customer ? (
+          <span className="font-medium">{row.customer}</span>
+        ) : (
+          <span className="text-slate-400">—</span>
+        )}
+        {row.tags?.length > 0 && (
+          <span className="ml-1 text-xs text-slate-500">
+            {row.tags.join(", ")}
+          </span>
+        )}
+      </td>
       <td className="px-3 py-1.5">{row.alias || "—"}</td>
       <td
         className="max-w-[16rem] truncate px-3 py-1.5 text-slate-500"
@@ -268,4 +322,96 @@ function useDebounced(value: string, ms: number) {
     return () => clearTimeout(t);
   }, [value, ms]);
   return held;
+}
+
+/**
+ * Bulk import of customer and tag assignments.
+ *
+ * CSV because the list already exists somewhere else — a billing system, a
+ * spreadsheet, an old NMS — and retyping it one port at a time is the work
+ * worth removing. The result names every row that did not match: an import
+ * that silently applies 40 of 50 rows is worse than one that fails.
+ */
+function ImportCustomers({ onClose }: { onClose: () => void }) {
+  const [csv, setCsv] = useState("");
+  const imp = useImportInterfaceTags();
+  return (
+    <div className="fixed inset-0 z-30 flex items-center justify-center bg-black/50 p-4">
+      <Card
+        title="Import customer assignments"
+        className="w-full max-w-[42rem]"
+      >
+        <p className="text-sm text-slate-500">
+          A header row plus one row per interface.{" "}
+          <span className="mono">device</span> accepts a name or management
+          address, <span className="mono">interface</span> a name or ifIndex,
+          and <span className="mono">tags</span> is pipe-separated. A blank cell
+          leaves a value unchanged; <span className="mono">-</span> clears it,
+          because a blank cell in a spreadsheet almost always means “I did not
+          fill this in” rather than “remove this customer”.
+        </p>
+        <textarea
+          className="mono mt-3 h-56 w-full rounded border border-slate-300 bg-transparent p-2 text-xs dark:border-slate-700"
+          spellCheck={false}
+          value={csv}
+          onChange={(e) => setCsv(e.target.value)}
+          placeholder={`device,interface,customer,tags
+core-sw-1,ge-0/0/1,Acme Ltd,gold|circuit
+10.0.0.5,42,Globex,
+core-sw-1,ge-0/0/9,-,`}
+        />
+        <div className="mt-2 flex items-center gap-2">
+          <input
+            type="file"
+            accept=".csv,text/csv"
+            className="text-xs"
+            onChange={async (e) => {
+              const file = e.target.files?.[0];
+              if (file) setCsv(await file.text());
+            }}
+          />
+          <div className="flex-1" />
+          <Button variant="ghost" onClick={onClose}>
+            Close
+          </Button>
+          <Button
+            disabled={!csv.trim() || imp.isPending}
+            onClick={() => imp.mutate(csv)}
+          >
+            {imp.isPending ? "Importing…" : "Import"}
+          </Button>
+        </div>
+        {imp.isError && (
+          <div className="mt-2 text-sm text-red-500">
+            {(imp.error as Error).message}
+          </div>
+        )}
+        {imp.isSuccess && (
+          <div className="mt-2 text-sm">
+            <div className="text-green-500">
+              Updated {imp.data.updated} of {imp.data.matched} matched
+              interfaces.
+            </div>
+            {imp.data.unmatched.length > 0 && (
+              <div className="mt-1 text-amber-500">
+                No match ({imp.data.unmatched.length}):{" "}
+                <span className="mono text-xs">
+                  {imp.data.unmatched.slice(0, 8).join(", ")}
+                  {imp.data.unmatched.length > 8 && " …"}
+                </span>
+              </div>
+            )}
+            {imp.data.ambiguous.length > 0 && (
+              <div className="mt-1 text-amber-500">
+                Ambiguous, left alone ({imp.data.ambiguous.length}):{" "}
+                <span className="mono text-xs">
+                  {imp.data.ambiguous.slice(0, 8).join(", ")}
+                </span>
+              </div>
+            )}
+          </div>
+        )}
+      </Card>
+    </div>
+  );
 }

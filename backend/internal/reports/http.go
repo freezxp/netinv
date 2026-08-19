@@ -9,6 +9,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/freezxp/netinv/backend/internal/inventory/adapters/postgres"
 	"github.com/freezxp/netinv/backend/internal/platform/authz"
 	"github.com/freezxp/netinv/backend/internal/platform/errx"
 	"github.com/freezxp/netinv/backend/internal/platform/httpx"
@@ -44,7 +45,9 @@ func (h *Handler) bandwidth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	limit, _ := strconv.Atoi(q.Get("limit"))
-	rep, err := h.Svc.Bandwidth(r.Context(), q.Get("q"), from, to, limit)
+	rep, err := h.Svc.Bandwidth(r.Context(), postgres.InterfaceFilter{
+		Q: q.Get("q"), Customer: q.Get("customer"),
+	}, from, to, limit)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -66,16 +69,16 @@ func writeCSV(w http.ResponseWriter, rep *Report) {
 	// emailed twice has to say which period it covers, and a spreadsheet keeps
 	// the rows long after the filename is forgotten.
 	_ = c.Write([]string{"# window", rep.From.UTC().Format(time.RFC3339),
-		rep.To.UTC().Format(time.RFC3339), "match", rep.Query})
+		rep.To.UTC().Format(time.RFC3339), "match", rep.Query, "customer", rep.Customer})
 	_ = c.Write([]string{
-		"device", "interface", "alias", "description", "speed_bps",
+		"customer", "device", "interface", "alias", "description", "speed_bps",
 		"avg_in_bps", "avg_out_bps", "p95_in_bps", "p95_out_bps",
 		"max_in_bps", "max_out_bps", "total_in_bytes", "total_out_bytes",
 		"avg_util_pct", "p95_util_pct", "max_util_pct",
 	})
 	for _, row := range rep.Rows {
 		_ = c.Write([]string{
-			row.DeviceName, row.Name, row.Alias, row.Descr,
+			row.Customer, row.DeviceName, row.Name, row.Alias, row.Descr,
 			strconv.FormatInt(row.SpeedBPS, 10),
 			f(row.AvgInBPS), f(row.AvgOutBPS), f(row.P95InBPS), f(row.P95OutBPS),
 			f(row.MaxInBPS), f(row.MaxOutBPS), f(row.TotalInBytes), f(row.TotalOutBytes),

@@ -26,6 +26,7 @@ import (
 type Row struct {
 	DeviceID   string `json:"device_id"`
 	DeviceName string `json:"device_name"`
+	Customer   string `json:"customer,omitempty"`
 	IfIndex    int    `json:"if_index"`
 	Name       string `json:"name"`
 	Alias      string `json:"alias"`
@@ -56,6 +57,7 @@ type Row struct {
 // that has been emailed twice needs to say which is which.
 type Report struct {
 	Query     string    `json:"query"`
+	Customer  string    `json:"customer,omitempty"`
 	From      time.Time `json:"from"`
 	To        time.Time `json:"to"`
 	Truncated bool      `json:"truncated"`
@@ -64,7 +66,7 @@ type Report struct {
 
 // InterfaceFinder is the inventory side: which interfaces the operator means.
 type InterfaceFinder interface {
-	SearchInterfaces(ctx context.Context, q string, limit, offset int) ([]postgres.InterfaceSearchRow, int, error)
+	FindInterfaces(ctx context.Context, f postgres.InterfaceFilter, limit, offset int) ([]postgres.InterfaceSearchRow, int, error)
 }
 
 // SeriesReader runs one MetricsQL expression at an instant and returns the
@@ -97,18 +99,19 @@ type Service struct {
 const MaxRows = 500
 
 // Bandwidth builds the report for interfaces matching q over [from, to].
-func (s *Service) Bandwidth(ctx context.Context, q string, from, to time.Time, limit int) (*Report, error) {
+func (s *Service) Bandwidth(ctx context.Context, f postgres.InterfaceFilter, from, to time.Time, limit int) (*Report, error) {
 	if !to.After(from) {
 		return nil, errx.New(errx.KindInvalid, "the report window ends before it starts")
 	}
 	if limit <= 0 || limit > MaxRows {
 		limit = MaxRows
 	}
-	ifaces, total, err := s.Interfaces.SearchInterfaces(ctx, q, limit, 0)
+	ifaces, total, err := s.Interfaces.FindInterfaces(ctx, f, limit, 0)
 	if err != nil {
 		return nil, err
 	}
-	rep := &Report{Query: q, From: from, To: to, Truncated: total > len(ifaces), Rows: []Row{}}
+	rep := &Report{Query: f.Q, Customer: f.Customer, From: from, To: to,
+		Truncated: total > len(ifaces), Rows: []Row{}}
 	if len(ifaces) == 0 {
 		return rep, nil
 	}
@@ -118,6 +121,7 @@ func (s *Service) Bandwidth(ctx context.Context, q string, from, to time.Time, l
 		r := Row{
 			DeviceID: i.DeviceID, DeviceName: i.DeviceName, IfIndex: i.IfIndex,
 			Name: i.Name, Alias: i.Alias, Descr: i.Descr, SpeedBPS: i.SpeedBPS,
+			Customer:   i.Customer,
 			AvgUtilPct: -1, P95UtilPct: -1, MaxUtilPct: -1,
 		}
 		rep.Rows = append(rep.Rows, r)

@@ -242,6 +242,10 @@ type InterfaceSearchRow struct {
 	OperStatus  int    `json:"oper_status"`
 	State       string `json:"state"`
 	Monitor     bool   `json:"monitor"`
+	// Operator-owned, never written by sync: a port can be renamed,
+	// re-aliased or renumbered without losing who it belongs to.
+	Customer string   `json:"customer,omitempty"`
+	Tags     []string `json:"tags"`
 }
 
 // SearchInterfaces finds interfaces across every device by alias, description
@@ -256,7 +260,20 @@ type InterfaceSearchRow struct {
 // operator typing "uplink" does not know or care whether the previous engineer
 // put it in ifAlias or ifDescr. Removed interfaces and retired devices are
 // excluded — searching turns up ports you can act on, not history.
+// InterfaceFilter narrows a search. Customer is an exact, case-insensitive
+// match rather than a substring: a report says what one customer used, and
+// "Acme" quietly including "Acme Holdings" is the kind of error that reaches
+// an invoice.
+type InterfaceFilter struct {
+	Q        string
+	Customer string
+}
+
 func (r *DeviceRepo) SearchInterfaces(ctx context.Context, q string, limit, offset int) ([]InterfaceSearchRow, int, error) {
+	return r.FindInterfaces(ctx, InterfaceFilter{Q: q}, limit, offset)
+}
+
+func (r *DeviceRepo) FindInterfaces(ctx context.Context, f InterfaceFilter, limit, offset int) ([]InterfaceSearchRow, int, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
@@ -264,28 +281,32 @@ func (r *DeviceRepo) SearchInterfaces(ctx context.Context, q string, limit, offs
 		offset = 0
 	}
 	// A blank q lists everything, which is what an empty search box should show.
-	pattern := "%" + q + "%"
+	// Customer joins the substring match too: someone typing a customer name
+	// into the search box means the same thing as choosing it from the filter.
+	pattern := "%" + f.Q + "%"
+	where := `i.state != 'removed' AND d.status != 'retired'
+		  AND ($1 = '' OR i.alias ILIKE $2 OR i.descr ILIKE $2 OR i.name ILIKE $2
+		       OR i.customer ILIKE $2)
+		  AND ($3 = '' OR lower(i.customer) = lower($3))`
 	var total int
 	if err := r.Pool.QueryRow(ctx, `
 		SELECT count(*)
 		FROM inventory.interfaces i
 		JOIN inventory.devices d ON d.id = i.device_id
-		WHERE i.state != 'removed' AND d.status != 'retired'
-		  AND ($1 = '' OR i.alias ILIKE $2 OR i.descr ILIKE $2 OR i.name ILIKE $2)`,
-		q, pattern).Scan(&total); err != nil {
+		WHERE `+where, f.Q, pattern, f.Customer).Scan(&total); err != nil {
 		return nil, 0, errx.Wrap(errx.KindTransient, err, "count interface search")
 	}
 	rows, err := r.Pool.Query(ctx, `
 		SELECT i.id, i.device_id, d.name, d.site_id, i.if_index,
 		       coalesce(i.name,''), coalesce(i.alias,''), coalesce(i.descr,''),
 		       coalesce(i.speed_bps,0), coalesce(i.admin_status,0),
-		       coalesce(i.oper_status,0), i.state, i.monitor
+		       coalesce(i.oper_status,0), i.state, i.monitor,
+		       coalesce(i.customer,''), i.tags
 		FROM inventory.interfaces i
 		JOIN inventory.devices d ON d.id = i.device_id
-		WHERE i.state != 'removed' AND d.status != 'retired'
-		  AND ($1 = '' OR i.alias ILIKE $2 OR i.descr ILIKE $2 OR i.name ILIKE $2)
+		WHERE `+where+`
 		ORDER BY d.name, i.if_index
-		LIMIT $3 OFFSET $4`, q, pattern, limit, offset)
+		LIMIT $4 OFFSET $5`, f.Q, pattern, f.Customer, limit, offset)
 	if err != nil {
 		return nil, 0, errx.Wrap(errx.KindTransient, err, "interface search")
 	}
@@ -295,8 +316,12 @@ func (r *DeviceRepo) SearchInterfaces(ctx context.Context, q string, limit, offs
 		var i InterfaceSearchRow
 		if err := rows.Scan(&i.ID, &i.DeviceID, &i.DeviceName, &i.SiteID,
 			&i.IfIndex, &i.Name, &i.Alias, &i.Descr, &i.SpeedBPS,
-			&i.AdminStatus, &i.OperStatus, &i.State, &i.Monitor); err != nil {
+			&i.AdminStatus, &i.OperStatus, &i.State, &i.Monitor,
+			&i.Customer, &i.Tags); err != nil {
 			return nil, 0, err
+		}
+		if i.Tags == nil {
+			i.Tags = []string{}
 		}
 		out = append(out, i)
 	}

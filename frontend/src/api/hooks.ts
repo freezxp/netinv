@@ -188,6 +188,48 @@ export function useDeviceInterfaces(id: string) {
   });
 }
 
+export interface CustomerCount {
+  customer: string;
+  interfaces: number;
+}
+
+/** Customer names come from the interfaces themselves — there is no customer
+ *  entity, and inventing one would put an onboarding step in front of tagging
+ *  a single port. */
+export function useCustomers() {
+  return useQuery({
+    queryKey: ["interface-customers"],
+    queryFn: () => api<{ data: CustomerCount[] }>("/interfaces/customers"),
+  });
+}
+
+export interface TagImportResult {
+  matched: number;
+  updated: number;
+  unmatched: string[];
+  ambiguous: string[];
+}
+
+/** Imports customer/tag assignments as CSV. The response names every row that
+ *  did not match, because an import that silently applies 40 of 50 rows is
+ *  worse than one that fails. */
+export function useImportInterfaceTags() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (csv: string) =>
+      api<TagImportResult>("/interfaces/tags", {
+        method: "POST",
+        headers: { "Content-Type": "text/csv" },
+        body: csv,
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["interfaces"] });
+      qc.invalidateQueries({ queryKey: ["interface-customers"] });
+      qc.invalidateQueries({ queryKey: ["report"] });
+    },
+  });
+}
+
 export interface InterfaceSearchRow {
   id: string;
   device_id: string;
@@ -202,14 +244,23 @@ export interface InterfaceSearchRow {
   oper_status: number;
   state: string;
   monitor: boolean;
+  /** Operator-owned; sync never writes these. */
+  customer?: string;
+  tags: string[];
 }
 
-export function useInterfaceSearch(q: string, limit = 100, offset = 0) {
+export function useInterfaceSearch(
+  q: string,
+  customer = "",
+  limit = 100,
+  offset = 0,
+) {
   return useQuery({
-    queryKey: ["interfaces", q, limit, offset],
+    queryKey: ["interfaces", q, customer, limit, offset],
     queryFn: () => {
       const p = new URLSearchParams({
         q,
+        customer,
         limit: String(limit),
         offset: String(offset),
       });
