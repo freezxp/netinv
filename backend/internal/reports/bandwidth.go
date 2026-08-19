@@ -32,6 +32,8 @@ type Row struct {
 	Alias      string `json:"alias"`
 	Descr      string `json:"descr"`
 	SpeedBPS   int64  `json:"speed_bps"`
+	// Interfaces is set only on a grouped row: how many circuits it sums.
+	Interfaces int `json:"interfaces,omitempty"`
 
 	AvgInBPS  float64 `json:"avg_in_bps"`
 	AvgOutBPS float64 `json:"avg_out_bps"`
@@ -58,6 +60,7 @@ type Row struct {
 type Report struct {
 	Query     string    `json:"query"`
 	Customer  string    `json:"customer,omitempty"`
+	GroupedBy string    `json:"grouped_by,omitempty"`
 	From      time.Time `json:"from"`
 	To        time.Time `json:"to"`
 	Truncated bool      `json:"truncated"`

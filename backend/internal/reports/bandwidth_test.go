@@ -204,3 +204,123 @@ func TestDurRendersMetricsQLDurations(t *testing.T) {
 		t.Errorf("dur(0) = %q — a zero range is a parse error", got)
 	}
 }
+
+// Grouping is not "add up the per-interface numbers", and this is the test
+// that says so. A customer's peak is the peak of their *combined* traffic:
+// summing per-interface peaks assumes every circuit peaked at the same
+// instant, which overstates. So the sum has to happen inside the query, and
+// the query has to arrive labelled per group.
+func TestByCustomerSumsInsideTheQuery(t *testing.T) {
+	rows := []postgres.InterfaceSearchRow{
+		{DeviceID: "d_a", IfIndex: 1, Customer: "Acme Ltd", SpeedBPS: 100_000_000},
+		{DeviceID: "d_b", IfIndex: 7, Customer: "Acme Ltd", SpeedBPS: 100_000_000},
+		{DeviceID: "d_c", IfIndex: 3, Customer: "Globex", SpeedBPS: 1_000_000_000},
+	}
+	grouped := func(cust, dir string, v float64) Sample {
+		return Sample{Labels: map[string]string{custLabel: cust, "dir": dir}, Value: v}
+	}
+	s, reader := svc(rows, map[string][]Sample{
+		"avg_over_time":      {grouped("Acme Ltd", "in", 30e6), grouped("Globex", "in", 5e6)},
+		"quantile_over_time": {grouped("Acme Ltd", "in", 60e6)},
+		"max_over_time":      {grouped("Acme Ltd", "in", 150e6)},
+		"increase":           {grouped("Acme Ltd", "in", 9e9), grouped("Globex", "in", 1e9)},
+	})
+	to := time.Now().UTC()
+	rep, err := s.ByCustomer(context.Background(), postgres.InterfaceFilter{},
+		to.Add(-24*time.Hour), to, 0)
+	if err != nil {
+		t.Fatalf("by customer: %v", err)
+	}
+	if rep.GroupedBy != "customer" {
+		t.Fatalf("report is not marked as grouped: %q", rep.GroupedBy)
+	}
+	if len(rep.Rows) != 2 {
+		t.Fatalf("got %d groups, want 2: %+v", len(rep.Rows), rep.Rows)
+	}
+	acme := rep.Rows[0]
+	if acme.Customer != "Acme Ltd" || acme.Interfaces != 2 {
+		t.Fatalf("first row is %+v, want Acme with 2 interfaces (busiest first)", acme)
+	}
+	// Speed is the sum of the group's members, so utilization is against what
+	// the customer actually bought.
+	if acme.SpeedBPS != 200_000_000 {
+		t.Errorf("group speed = %d, want the sum of both circuits", acme.SpeedBPS)
+	}
+	if acme.MaxUtilPct != 75 {
+		t.Errorf("max util = %v, want 75 (150M of 200M)", acme.MaxUtilPct)
+	}
+
+	// The aggregation must be in the expression, not in Go: `sum by (dir)`
+	// per group, each labelled, and every member's selector present.
+	expr := reader.exprs[0]
+	if !strings.Contains(expr, "sum by (dir)") {
+		t.Errorf("expression does not sum inside the query:\n%s", expr)
+	}
+	for _, want := range []string{`device_id="d_a"`, `device_id="d_b"`, `if_index="7"`} {
+		if !strings.Contains(expr, want) {
+			t.Errorf("expression is missing %s:\n%s", want, expr)
+		}
+	}
+	// A regex over both label sets would match the cross product, sweeping one
+	// customer's port on another customer's device into the total — invisible
+	// in the output, and it lands on an invoice.
+	if strings.Contains(expr, `device_id=~`) {
+		t.Errorf("expression uses a regex across device_id, which matches the cross product:\n%s", expr)
+	}
+}
+
+// A group's speed is only meaningful when every member reports one. A partial
+// sum understates the denominator and reports a customer as more congested
+// than they are, on the strength of whichever circuits happen to have ifSpeed.
+func TestByCustomerLeavesUtilizationUnknownWhenAnyMemberHasNoSpeed(t *testing.T) {
+	rows := []postgres.InterfaceSearchRow{
+		{DeviceID: "d_a", IfIndex: 1, Customer: "Acme Ltd", SpeedBPS: 100_000_000},
+		{DeviceID: "d_a", IfIndex: 2, Customer: "Acme Ltd", SpeedBPS: 0}, // PPPoE
+	}
+	s, _ := svc(rows, map[string][]Sample{
+		"avg_over_time": {{Labels: map[string]string{custLabel: "Acme Ltd", "dir": "in"}, Value: 50e6}},
+	})
+	to := time.Now().UTC()
+	rep, err := s.ByCustomer(context.Background(), postgres.InterfaceFilter{},
+		to.Add(-time.Hour), to, 0)
+	if err != nil {
+		t.Fatalf("by customer: %v", err)
+	}
+	r := rep.Rows[0]
+	if r.SpeedBPS != 0 || r.AvgUtilPct >= 0 {
+		t.Fatalf("reported speed %d / util %v with an unmeasurable member",
+			r.SpeedBPS, r.AvgUtilPct)
+	}
+	if r.AvgInBPS != 50e6 {
+		t.Errorf("lost the rate: %v", r.AvgInBPS)
+	}
+}
+
+// Untagged interfaces are grouped, not dropped. A report shaped like an
+// invoice that silently omits whatever nobody has tagged yet is how a circuit
+// goes unbilled for a year.
+func TestByCustomerKeepsUntaggedInterfaces(t *testing.T) {
+	rows := []postgres.InterfaceSearchRow{
+		{DeviceID: "d_a", IfIndex: 1, Customer: "Acme Ltd"},
+		{DeviceID: "d_b", IfIndex: 2, Customer: ""},
+	}
+	s, _ := svc(rows, nil)
+	to := time.Now().UTC()
+	rep, err := s.ByCustomer(context.Background(), postgres.InterfaceFilter{},
+		to.Add(-time.Hour), to, 0)
+	if err != nil {
+		t.Fatalf("by customer: %v", err)
+	}
+	if len(rep.Rows) != 2 {
+		t.Fatalf("got %d groups, want the untagged one kept: %+v", len(rep.Rows), rep.Rows)
+	}
+	var found bool
+	for _, r := range rep.Rows {
+		if r.Customer == UntaggedCustomer && r.Interfaces == 1 {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("untagged group missing from %+v", rep.Rows)
+	}
+}

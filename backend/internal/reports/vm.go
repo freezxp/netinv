@@ -39,11 +39,17 @@ func (r *VMReader) QueryAt(ctx context.Context, expr string, at time.Time) ([]Sa
 		"query": {expr},
 		"time":  {strconv.FormatInt(at.Unix(), 10)},
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
-		r.BaseURL+"/api/v1/query?"+params.Encode(), nil)
+	// POST rather than GET: a grouped report's expression names every
+	// interface belonging to every customer, which runs to tens of kilobytes
+	// on a real fleet. As a query string that is silently truncated or
+	// rejected by whatever proxy sits in the middle; as a form body it is just
+	// a body.
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		r.BaseURL+"/api/v1/query", strings.NewReader(params.Encode()))
 	if err != nil {
 		return nil, err
 	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	resp, err := r.HTTP.Do(req)
 	if err != nil {
 		return nil, errx.Wrap(errx.KindTransient, err, "report query")

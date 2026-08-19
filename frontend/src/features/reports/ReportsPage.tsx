@@ -17,6 +17,8 @@ interface ReportRow {
   device_id: string;
   device_name: string;
   customer?: string;
+  /** Set only on a grouped row: how many circuits it sums. */
+  interfaces?: number;
   if_index: number;
   name: string;
   alias: string;
@@ -38,6 +40,7 @@ interface ReportRow {
 interface BandwidthReport {
   query: string;
   customer?: string;
+  grouped_by?: string;
   from: string;
   to: string;
   truncated: boolean;
@@ -79,6 +82,8 @@ export function ReportsPage() {
   const [q, setQ] = useState("");
   const [customer, setCustomer] = useState("");
   const [ranCustomer, setRanCustomer] = useState("");
+  const [group, setGroup] = useState(false);
+  const [ranGroup, setRanGroup] = useState(false);
   const customers = useCustomers();
   const [period, setPeriod] = useState<(typeof PERIODS)[number]["key"]>("7d");
   const hours = PERIODS.find((p) => p.key === period)!.hours;
@@ -87,19 +92,21 @@ export function ReportsPage() {
   const params = () => {
     const to = new Date();
     const from = new Date(to.getTime() - hours * 3600_000);
-    return new URLSearchParams({
+    const p = new URLSearchParams({
       q,
       customer: ranCustomer,
       from: from.toISOString(),
       to: to.toISOString(),
     });
+    if (ranGroup) p.set("group", "customer");
+    return p;
   };
 
   // Reports are not run on every keystroke: each one rolls up every matching
   // series over the whole period, which is expensive enough that it should be
   // something an operator asks for on purpose.
   const report = useQuery({
-    queryKey: ["report", "bandwidth", q, ranCustomer, period],
+    queryKey: ["report", "bandwidth", q, ranCustomer, period, ranGroup],
     queryFn: () => api<BandwidthReport>(`/reports/bandwidth?${params()}`),
     enabled: ran,
     staleTime: 60_000,
@@ -108,6 +115,7 @@ export function ReportsPage() {
   const run = () => {
     setQ(typed);
     setRanCustomer(customer);
+    setRanGroup(group);
     setRan(true);
   };
 
@@ -164,6 +172,14 @@ export function ReportsPage() {
               ))}
             </Select>
           </label>
+          <label className="flex items-center gap-1.5 text-xs text-slate-500">
+            <input
+              type="checkbox"
+              checked={group}
+              onChange={(e) => setGroup(e.target.checked)}
+            />
+            One row per customer
+          </label>
           <Button onClick={run} disabled={report.isFetching}>
             {report.isFetching ? "Running…" : "Run report"}
           </Button>
@@ -175,6 +191,13 @@ export function ReportsPage() {
             Download CSV
           </Button>
         </div>
+        <p className="mt-2 text-xs text-slate-500">
+          Grouped by customer, the figures are of their <em>combined</em>
+          traffic — summed before the percentile and the peak are taken, not
+          added up afterwards, because circuits do not peak at the same instant
+          and adding peaks would overstate. Interfaces with no customer are
+          grouped as untagged rather than dropped.
+        </p>
         <p className="mt-2 text-xs text-slate-500">
           95th percentile is the figure most transit and transport contracts
           bill on — it discards the top 5% of samples, so a short burst does not
@@ -215,17 +238,28 @@ export function ReportsPage() {
               <table className="w-full min-w-[60rem] text-sm">
                 <thead>
                   <tr className="border-b border-slate-200 text-left text-xs uppercase text-slate-500 dark:border-slate-800">
-                    {[
-                      "Customer",
-                      "Device",
-                      "Interface",
-                      "Alias",
-                      "Avg in / out",
-                      "95th in / out",
-                      "Peak in / out",
-                      "Total in / out",
-                      "Util 95th",
-                    ].map((h) => (
+                    {(report.data.grouped_by === "customer"
+                      ? [
+                          "Customer",
+                          "Circuits",
+                          "Avg in / out",
+                          "95th in / out",
+                          "Peak in / out",
+                          "Total in / out",
+                          "Util 95th",
+                        ]
+                      : [
+                          "Customer",
+                          "Device",
+                          "Interface",
+                          "Alias",
+                          "Avg in / out",
+                          "95th in / out",
+                          "Peak in / out",
+                          "Total in / out",
+                          "Util 95th",
+                        ]
+                    ).map((h) => (
                       <th key={h} className="px-3 py-2 font-medium">
                         {h}
                       </th>
@@ -235,7 +269,11 @@ export function ReportsPage() {
                 <tbody>
                   {rows.map((r) => (
                     <tr
-                      key={`${r.device_id}-${r.if_index}`}
+                      key={
+                        report.data.grouped_by === "customer"
+                          ? `g-${r.customer}`
+                          : `${r.device_id}-${r.if_index}`
+                      }
                       className="border-b border-slate-100 dark:border-slate-800/60"
                     >
                       <td className="px-3 py-1.5">
