@@ -14,7 +14,7 @@ import {
   cx,
 } from "../../components/ui";
 import { hasPermissionRole, useAuthStore } from "../auth/store";
-import { formatDuration } from "../../lib/format";
+import { formatAlertInterface, formatDuration } from "../../lib/format";
 
 const tabs = ["Active", "Silences", "Rules"] as const;
 
@@ -70,7 +70,7 @@ function ActiveTab() {
                     exists to say. */}
                 {[
                   a.labels.device || a.labels.exporter,
-                  a.labels.if_index && `if ${a.labels.if_index}`,
+                  formatAlertInterface(a.labels),
                   formatDuration(a.duration_s),
                   a.state,
                 ]

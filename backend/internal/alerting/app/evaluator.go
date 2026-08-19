@@ -51,6 +51,10 @@ type AlertPublisher interface {
 // InterfaceInfo is what alert suppression needs to know about an interface.
 type InterfaceInfo struct {
 	Name string
+	// Alias is ifAlias — the operator's own description of the port ("uplink to
+	// core", a customer name). Where it is set it says what the port is *for*,
+	// which is more use in an alert than either the ifIndex or the system name.
+	Alias string
 	// EverUp is false until sync has observed the interface operationally up.
 	// Monotonic once true — see FR-ALR-08 for why this is a stored flag rather
 	// than a lookback window.
@@ -174,7 +178,9 @@ func (e *Evaluator) evalRule(ctx context.Context, rule *domain.Rule) error {
 			inst.InterfaceID = e.Ifaces.InterfaceID(ctx, inst.DeviceID, s.Labels["if_index"])
 			// Annotations say "Interface {{if_name}} on {{device}}", but the
 			// metric only carries if_index, so summaries read as a blank.
-			enrich("if_name", ifaces[inst.DeviceID][s.Labels["if_index"]].Name)
+			info := ifaces[inst.DeviceID][s.Labels["if_index"]]
+			enrich("if_name", info.Name)
+			enrich("if_alias", info.Alias)
 		}
 		// Flow series carry an exporter address and no device labels at all, so a
 		// flow alert can name an address and nothing else. Resolve it to the

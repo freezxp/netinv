@@ -45,3 +45,27 @@ export function formatDuration(totalSeconds: number): string {
 export function formatPercent(v: number | undefined): string {
   return v === undefined ? "—" : `${v.toFixed(v >= 100 ? 0 : 1)}%`;
 }
+
+/**
+ * The interface an alert is about, as a human would name it.
+ *
+ * Alert labels carry `if_index` always, and `if_name`/`if_alias` when inventory
+ * knew them at fire time (doc 03 FR-ALR-08). An ifIndex is the least useful of
+ * the three to whoever is reading the alert: it identifies the port only to the
+ * device, changes across reboots, and says nothing about what the port is for.
+ * ifAlias is usually the most useful, because it is the operator's own
+ * description — an uplink, a customer, a circuit id.
+ *
+ * Returns an empty string for alerts that are not interface-scoped, so callers
+ * can drop the segment entirely rather than print a stray separator.
+ */
+export function formatAlertInterface(labels: Record<string, string>): string {
+  const name = labels.if_name?.trim();
+  const alias = labels.if_alias?.trim();
+  const idx = labels.if_index?.trim();
+  if (name && alias && alias !== name) return `${name} — ${alias}`;
+  if (name) return name;
+  // An alias with no name still beats the index; some agents expose only one.
+  if (alias) return alias;
+  return idx ? `if ${idx}` : "";
+}

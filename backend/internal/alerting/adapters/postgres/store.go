@@ -289,7 +289,8 @@ func (s *Store) InterfaceID(ctx context.Context, deviceID, ifIndex string) strin
 // query per device per cycle rather than one per alerting series.
 func (s *Store) Interfaces(ctx context.Context, deviceID string) map[string]app.InterfaceInfo {
 	rows, err := s.Pool.Query(ctx, `
-		SELECT if_index, coalesce(name,''), ever_up FROM inventory.interfaces
+		SELECT if_index, coalesce(name,''), coalesce(alias,''), ever_up
+		FROM inventory.interfaces
 		WHERE device_id=$1 AND state != 'removed'`, deviceID)
 	if err != nil {
 		return nil
@@ -299,7 +300,7 @@ func (s *Store) Interfaces(ctx context.Context, deviceID string) map[string]app.
 	for rows.Next() {
 		var idx int
 		var info app.InterfaceInfo
-		if rows.Scan(&idx, &info.Name, &info.EverUp) == nil {
+		if rows.Scan(&idx, &info.Name, &info.Alias, &info.EverUp) == nil {
 			out[strconv.Itoa(idx)] = info
 		}
 	}
