@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 )
 
 // A map with no links rendered as {"links": null}, and the viewer crashed
@@ -245,5 +246,65 @@ func TestLinkEndpointPrefersTheResolvedIfIndex(t *testing.T) {
 	// The B side is resolved independently of the A side.
 	if got := pick("l1", "/b", 9); got != "9" {
 		t.Errorf("b side = %s, want the saved 9", got)
+	}
+}
+
+// The map used to query a bare instant rate, which returns nothing the moment
+// the rate window holds fewer than two samples — a poller restart, a redeploy,
+// a device that stopped answering a minute ago. Every link dropped to grey
+// while the network was fine. It now carries the last computed rate forward.
+func TestLiveQueriesCarryTheLastValueForward(t *testing.T) {
+	a := &LiveAssembler{}
+	rw, carry := a.windows()
+	if rw != 5*time.Minute {
+		t.Fatalf("rate window = %v at the default cadence, want 5m", rw)
+	}
+	// Bounded on purpose: forward-filling without a limit is how a dead link
+	// keeps showing yesterday's traffic. Past the window the map falls back to
+	// nodata, which is the honest answer once nobody should act on the number.
+	if carry <= rw || carry > time.Hour {
+		t.Fatalf("carry window = %v, want longer than the rate window and at most an hour", carry)
+	}
+
+	// A slow cadence has to widen both: a rate window shorter than the poll
+	// interval spans one sample and returns nothing, which is the very gap the
+	// carry-forward exists to cover.
+	slow := &LiveAssembler{PollInterval: func() time.Duration { return 15 * time.Minute }}
+	rw2, carry2 := slow.windows()
+	if rw2 != time.Hour {
+		t.Errorf("rate window = %v for a 15m cadence, want 1h", rw2)
+	}
+	if carry2 != time.Hour {
+		t.Errorf("carry = %v, want it clamped to the 1h ceiling", carry2)
+	}
+}
+
+// Carrying a value forward silently is how a stale reading gets mistaken for a
+// live one — the same trap that made a coarse range query report a populated
+// bucket 70 minutes after the last real sample. The age has to travel with it.
+func TestLinkLiveCarriesTheDataAge(t *testing.T) {
+	raw, err := json.Marshal(LinkLive{ID: "l1", State: "stale", DataAgeS: 240})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"state":"stale"`, `"data_age_s":240`} {
+		if !strings.Contains(string(raw), want) {
+			t.Errorf("payload missing %s: %s", want, raw)
+		}
+	}
+	// staleAfter has to be longer than a poll cycle at the default cadence, or
+	// every link flickers to stale between samples.
+	if staleAfter <= 60 {
+		t.Errorf("staleAfter = %ds, shorter than the default poll cycle", staleAfter)
+	}
+}
+
+// MetricsQL rejects Go's duration format: "1h0m0s" is not a valid range.
+func TestDurRendersMetricsQLDurations(t *testing.T) {
+	if got := dur(90 * time.Second); got != "90s" {
+		t.Errorf("dur(90s) = %q", got)
+	}
+	if got := dur(0); got != "1s" {
+		t.Errorf("dur(0) = %q — a zero range is a parse error", got)
 	}
 }

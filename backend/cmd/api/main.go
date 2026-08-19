@@ -392,6 +392,13 @@ func main() {
 					Store: mapStore,
 					Live: &maps.LiveAssembler{
 						Store: mapStore, VM: alertvm.New(vmURL), Redis: redisClient,
+						PollInterval: func() time.Duration {
+							ps, err := pollStore.Get(context.Background())
+							if err != nil || ps.TrafficIntervalS <= 0 {
+								return 0
+							}
+							return time.Duration(ps.TrafficIntervalS) * time.Second
+						},
 					},
 					Checker: checker,
 					Audit:   auditor,

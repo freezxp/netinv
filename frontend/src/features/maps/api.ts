@@ -56,6 +56,8 @@ export interface LiveData {
     state: string;
     /** What utilisation was divided by; 0 when no capacity is known. */
     capacity_bps: number;
+    /** Age of the newest sample behind these figures; 0 when current. */
+    data_age_s: number;
   }>;
 }
 
@@ -177,6 +179,11 @@ const scale: Array<[number, string]> = [
 export function utilColor(util: number, state: string): string {
   if (state === "down") return "#ef4444";
   if (state === "nodata") return "#64748b";
+  // A stale link keeps its utilisation colour: the last known throughput is
+  // the most useful thing to show while collection catches up, and greying it
+  // out would throw away the only information available. The dashed stroke and
+  // the age in the hover card are what say it is not live — carrying a value
+  // forward while *looking* live is the failure this has to avoid.
   for (const [max, color] of scale) {
     if (util <= max) return color;
   }

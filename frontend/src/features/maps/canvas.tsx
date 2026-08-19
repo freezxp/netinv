@@ -103,6 +103,7 @@ export interface CactiEdgeData extends Record<string, unknown> {
   outBps: number;
   /** Toward the source node (into the A endpoint). */
   utilIn: number;
+  dataAgeS?: number;
   inBps: number;
   state: string;
   /** False when no capacity is known, so percentages would be meaningless. */
@@ -290,8 +291,14 @@ export function CactiEdge({
   const toY = forward ? tyi : syi;
   const flowPath = `M${fromX},${fromY} L${toX},${toY}`;
 
+  // A stale link keeps its colour and its width — the last known throughput is
+  // the most useful thing on screen while collection catches up — but it is
+  // drawn faded so it cannot be mistaken for a live reading. Blanking it
+  // instead would throw away the only information there is.
+  const stale = d.state === "stale";
+
   return (
-    <g className="netinv-cacti-edge">
+    <g className="netinv-cacti-edge" opacity={stale ? 0.55 : 1}>
       {/* Fat invisible path first: the hover target, so a 5px line is still
           easy to hit with a mouse. pointerEvents is forced back on because the
           viewer runs with elementsSelectable off, which otherwise makes edges
@@ -345,7 +352,11 @@ export function CactiEdge({
         quietBps,
       )} toward ${(forward ? d.sourceLabel : d.targetLabel) ?? "the other end"}${pct(
         quietUtil,
-      )}${d.hasCapacity ? "" : " — no capacity set, so no utilisation colour"}`}</title>
+      )}${d.hasCapacity ? "" : " — no capacity set, so no utilisation colour"}${
+        stale
+          ? ` — last data ${formatAge(d.dataAgeS ?? 0)} ago, carried forward until collection resumes`
+          : ""
+      }`}</title>
       <desc>{id}</desc>
     </g>
   );
@@ -464,6 +475,7 @@ export function toFlow(
       type: "cacti" as const,
       data: {
         utilIn: lv?.util_in ?? 0,
+        dataAgeS: lv?.data_age_s ?? 0,
         utilOut: lv?.util_out ?? 0,
         inBps: lv?.in_bps ?? 0,
         outBps: lv?.out_bps ?? 0,
@@ -508,4 +520,12 @@ export function applyPositions(
 
 export function linkById(def: MapDefinition, id: string): MapLink | undefined {
   return def.links.find((l) => l.id === id);
+}
+
+// formatAge renders how old a carried reading is, in the units someone would
+// say out loud.
+function formatAge(seconds: number): string {
+  if (seconds < 90) return `${Math.round(seconds)}s`;
+  if (seconds < 5400) return `${Math.round(seconds / 60)}m`;
+  return `${(seconds / 3600).toFixed(1)}h`;
 }

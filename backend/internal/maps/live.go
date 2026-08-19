@@ -3,6 +3,7 @@ package maps
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -30,11 +31,19 @@ type LinkLive struct {
 	OutBPS  float64 `json:"out_bps"`
 	UtilIn  float64 `json:"util_in"`
 	UtilOut float64 `json:"util_out"`
-	State   string  `json:"state"` // up | down | partial | nodata
+	State   string  `json:"state"` // up | down | partial | nodata | stale
 	// CapacityBPS is what utilisation was divided by, 0 when unknown. Sent so
 	// the UI can distinguish "idle" from "no capacity to measure against" —
 	// both of which otherwise read as 0%.
 	CapacityBPS float64 `json:"capacity_bps"`
+	// DataAgeS is how old the newest counter sample behind these figures is.
+	// The map carries the last known bandwidth forward through a gap rather
+	// than dropping to nodata — a link that was busy a minute ago is far
+	// better described by that number than by a blank — but carrying a value
+	// forward *silently* is how a stale reading gets mistaken for a live one,
+	// so the age travels with it and the state says `stale` past the
+	// threshold. 0 means the sample is current.
+	DataAgeS int `json:"data_age_s"`
 }
 
 // newLiveData starts from empty slices rather than nil. A map with no links
@@ -52,6 +61,48 @@ type LiveAssembler struct {
 	Store *Store
 	VM    *alertvm.Reader
 	Redis *redis.Client
+	// PollInterval sizes the rate window and how far a value may be carried.
+	// Read per request because the cadence is editable from the UI, and a rate
+	// window shorter than it spans one sample and returns nothing — which is
+	// the very gap this carry-forward exists to cover. nil falls back to 60s.
+	PollInterval func() time.Duration
+}
+
+// staleAfter is when a carried value stops being described as current. Two
+// minutes is longer than a poll cycle at the default cadence and shorter than
+// anyone would call a link "live" without qualification.
+const staleAfter = 120
+
+// windows returns the rate window and how far back a value may be carried.
+//
+// The carry window is bounded on purpose. Forward-filling without a limit is
+// how a dead link keeps showing yesterday's traffic; the map should fall back
+// to nodata once the data is old enough that nobody should be acting on it.
+func (a *LiveAssembler) windows() (rate, carry time.Duration) {
+	var poll time.Duration
+	if a.PollInterval != nil {
+		poll = a.PollInterval()
+	}
+	if poll <= 0 {
+		poll = 60 * time.Second
+	}
+	rate = 4 * poll
+	if rate < 5*time.Minute {
+		rate = 5 * time.Minute
+	}
+	carry = 6 * rate
+	if carry > time.Hour {
+		carry = time.Hour
+	}
+	return rate, carry
+}
+
+// dur renders a duration for MetricsQL, which rejects Go's "1h0m0s" form.
+func dur(d time.Duration) string {
+	if d < time.Second {
+		d = time.Second
+	}
+	return strconv.FormatInt(int64(d.Seconds()), 10) + "s"
 }
 
 func (a *LiveAssembler) Live(ctx context.Context, mapID string) (*LiveData, error) {
@@ -78,14 +129,29 @@ func (a *LiveAssembler) Live(ctx context.Context, mapID string) (*LiveData, erro
 	rateOut := map[key]float64{}
 	speed := map[key]float64{}
 	oper := map[key]float64{}
+	lastSeen := map[key]float64{} // unix seconds of the newest counter sample
+	rw, carry := a.windows()
+	// last_over_time over a subquery rather than a bare instant rate: an
+	// instant query returns nothing the moment the rate window has fewer than
+	// two samples in it, which happens on every collection gap — a poller
+	// restart, a redeploy, a device that stopped answering a minute ago — and
+	// the whole map drops to grey while the network is fine. Carrying the last
+	// computed rate forward keeps the map showing what the link was doing
+	// until something newer arrives.
 	queries := []struct {
 		expr string
 		dst  map[key]float64
 	}{
-		{`rate(netinv_if_in_octets_total[5m]) * 8`, rateIn},
-		{`rate(netinv_if_out_octets_total[5m]) * 8`, rateOut},
-		{`netinv_if_speed_bps`, speed},
-		{`netinv_if_oper_status`, oper},
+		{fmt.Sprintf(`last_over_time((rate(netinv_if_in_octets_total[%s]) * 8)[%s:%s])`,
+			dur(rw), dur(carry), dur(rw)), rateIn},
+		{fmt.Sprintf(`last_over_time((rate(netinv_if_out_octets_total[%s]) * 8)[%s:%s])`,
+			dur(rw), dur(carry), dur(rw)), rateOut},
+		{fmt.Sprintf(`last_over_time(netinv_if_speed_bps[%s])`, dur(carry)), speed},
+		{fmt.Sprintf(`last_over_time(netinv_if_oper_status[%s])`, dur(carry)), oper},
+		// The age of the newest raw sample, which is what makes the carried
+		// value honest rather than merely present.
+		{fmt.Sprintf(`timestamp(last_over_time(netinv_if_in_octets_total[%s]))`,
+			dur(carry)), lastSeen},
 	}
 	for _, q := range queries {
 		series, err := a.VM.Query(ctx, q.expr)
@@ -204,6 +270,18 @@ func (a *LiveAssembler) Live(ctx context.Context, mapID string) (*LiveData, erro
 				ll.State = "up"
 			case 2:
 				ll.State = "down"
+			}
+			// Age travels with the carried value. A link that has been quiet
+			// for six minutes is still showing its last known throughput, and
+			// an operator has to be able to tell that from a live reading —
+			// otherwise a stopped poller looks exactly like a steady link.
+			if ts, ok := lastSeen[k]; ok {
+				if age := int(time.Since(time.Unix(int64(ts), 0)).Seconds()); age > 0 {
+					ll.DataAgeS = age
+					if age > staleAfter && ll.State != "down" {
+						ll.State = "stale"
+					}
+				}
 			}
 		}
 		out.Links = append(out.Links, ll)

@@ -100,6 +100,10 @@ The list also carries **bulk site assignment**: a checkbox per row, select-all f
 
 Selection is per page and cleared on any filter or page change — a checkbox surviving a filter change would let someone move devices they can no longer see.
 
+The weathermap **carries the last known bandwidth forward** rather than dropping to `nodata` the moment a sample is missing. A bare instant `rate()` returns nothing whenever its window holds fewer than two samples — a poller restart, a redeploy, a device that stopped answering a minute ago — and the whole map went grey while the network was fine. Links keep their colour and width, because the last known throughput is the most useful thing on screen while collection catches up.
+
+Carrying it *silently* would be the worse bug, so the age travels with the value: past two minutes the link's state is `stale`, the band is drawn faded, and the hover card says "last data 4m ago, carried forward until collection resumes". The carry window is bounded (six rate windows, capped at an hour) — forward-filling without a limit is how a dead link keeps showing yesterday's traffic, and past that the map falls back to `nodata`, which is the honest answer once nobody should be acting on the number.
+
 ## 5a. Interfaces `/interfaces`
 
 A fleet-wide port finder, because until now an interface could only be reached through the device that owns it. Search matches **alias, description and interface name** at once — the label an operator wrote may be in any of them — and the table shows the owning device, speed, oper/admin state and current utilization, with the interface name linking straight to its graph on device detail (`/devices/:id?if=<ifIndex>`).
