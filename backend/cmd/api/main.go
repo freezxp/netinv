@@ -193,7 +193,24 @@ func main() {
 		exportH := &invhttp.ExportHandler{Repo: devSvc.Repo, Audit: auditor, Checker: checker}
 		pollerH := &colhttp.PollerHandler{Svc: pollerSvc, Checker: checker}
 		// Wired below only when AMQP is available (sweeps need a poller).
-		discH := &colhttp.DiscoveryHandler{Checker: checker}
+		devRepo := &invpg.DeviceRepo{Pool: pool}
+		discH := &colhttp.DiscoveryHandler{
+			Checker: checker,
+			// A device answering on two addresses is discovered twice. The
+			// check runs before anything is created, which is the only moment
+			// the duplicate is cheap to avoid.
+			IdentityMatch: func(ctx context.Context, sysName, serial string) (string, string, string, string, error) {
+				m, match, err := devRepo.MatchByIdentity(ctx, sysName, serial)
+				if err != nil || m == nil {
+					return "", "", "", "", err
+				}
+				return m.ID, m.Name, m.MgmtIP, match, nil
+			},
+			AttachAddress: func(ctx context.Context, deviceID, addr string) error {
+				_, err := devRepo.AddAltAddress(ctx, deviceID, addr)
+				return err
+			},
+		}
 		alertH := &alerthttp.Handler{
 			Store: &alertpg.Store{Pool: pool}, Pool: pool, Checker: checker,
 			Audit: auditor,

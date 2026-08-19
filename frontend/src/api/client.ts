@@ -6,11 +6,25 @@ export class ApiError extends Error {
   code: string;
   status: number;
   traceId?: string;
-  constructor(status: number, code: string, message: string, traceId?: string) {
+  /**
+   * The rest of the error envelope. Some refusals carry the information the
+   * caller needs to offer a way forward — the device a discovery find
+   * duplicates, for instance — and dropping everything but the message would
+   * leave the UI able to say what went wrong and nothing about what to do.
+   */
+  details: Record<string, unknown>;
+  constructor(
+    status: number,
+    code: string,
+    message: string,
+    traceId?: string,
+    details: Record<string, unknown> = {},
+  ) {
     super(message);
     this.status = status;
     this.code = code;
     this.traceId = traceId;
+    this.details = details;
   }
 }
 
@@ -58,6 +72,7 @@ export async function api<T>(
       err?.code ?? "unknown",
       err?.message ?? `request failed (${res.status})`,
       err?.trace_id,
+      typeof err === "object" && err !== null ? err : {},
     );
   }
   return normalizeLists(body) as T;

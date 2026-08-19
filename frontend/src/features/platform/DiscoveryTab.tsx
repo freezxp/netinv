@@ -3,7 +3,7 @@
 // auto-managed.
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api } from "../../api/client";
+import { api, ApiError } from "../../api/client";
 import { useSites } from "../../api/hooks";
 import type { Paged, Site } from "../../api/types";
 import {
@@ -94,24 +94,44 @@ export function DiscoveryTab() {
       api(`/discovery/rules/${ruleID}`, { method: "DELETE" }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["discovery-rules"] }),
   });
+  // A device answering on two addresses is discovered twice. The approve call
+  // refuses with the matching device rather than creating a second record, and
+  // the operator decides: attach the address to it, or onboard anyway when the
+  // two really are different boxes that share a hostname.
+  const [dup, setDup] = useState<{
+    found: Found;
+    name: string;
+    site_id: string;
+    existing_device_id: string;
+    existing_device: string;
+    existing_mgmt_ip: string;
+    matched_on: string;
+    message: string;
+  } | null>(null);
+
   const approve = useMutation({
     mutationFn: ({
       id,
       name,
       site_id,
+      force,
+      attach_to,
     }: {
       id: string;
       name: string;
       site_id: string;
+      force?: boolean;
+      attach_to?: string;
     }) =>
       api<{ device_id: string }>(`/discovery/found/${id}/approve`, {
         method: "POST",
         // The site travels with the approval, not with the scan. A subnet is
         // swept by whichever poller can reach it, which says nothing about how
         // an operator wants the devices on it grouped.
-        body: JSON.stringify({ name, site_id }),
+        body: JSON.stringify({ name, site_id, force, attach_to }),
       }),
     onSuccess: () => {
+      setDup(null);
       qc.invalidateQueries({ queryKey: ["discovery-found"] });
       qc.invalidateQueries({ queryKey: ["devices"] });
     },
@@ -231,6 +251,54 @@ export function DiscoveryTab() {
       ) : null}
 
       {notice && <div className="text-sm text-sky-500">{notice}</div>}
+      {dup && (
+        <Card title="This looks like a device you already have">
+          <p className="text-sm">{dup.message}</p>
+          <p className="mt-2 text-xs text-slate-500">
+            Matched on <span className="mono">{dup.matched_on}</span>. A serial
+            match is as close to certain as inventory gets; a hostname match is
+            usually right but two boxes can be misconfigured with the same one,
+            which is why this asks rather than deciding.
+          </p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Button
+              disabled={approve.isPending}
+              onClick={() =>
+                approve.mutate({
+                  id: dup.found.id,
+                  name: dup.name,
+                  site_id: dup.site_id,
+                  attach_to: dup.existing_device_id,
+                })
+              }
+            >
+              Record {dup.found.ip} on {dup.existing_device}
+            </Button>
+            <Button
+              variant="ghost"
+              disabled={approve.isPending}
+              onClick={() =>
+                approve.mutate({
+                  id: dup.found.id,
+                  name: dup.name,
+                  site_id: dup.site_id,
+                  force: true,
+                })
+              }
+            >
+              They are different devices — add anyway
+            </Button>
+            <Button variant="ghost" onClick={() => setDup(null)}>
+              Cancel
+            </Button>
+          </div>
+          <p className="mt-2 text-xs text-slate-500">
+            Recording the address is a note, not a second polling target: NetInv
+            polls one management address, and polling the same box twice would
+            double its load for two identical sets of graphs.
+          </p>
+        </Card>
+      )}
 
       <Card
         title={`Discovered — pending approval (${found.data?.data.length ?? 0})`}
@@ -249,7 +317,26 @@ export function DiscoveryTab() {
                 found={f}
                 sites={sites.data?.data ?? []}
                 onApprove={(name, site_id) =>
-                  approve.mutate({ id: f.id, name, site_id })
+                  approve.mutate(
+                    { id: f.id, name, site_id },
+                    {
+                      onError: (e) => {
+                        const d = (e as ApiError).details;
+                        if (d && d.code === "duplicate_identity") {
+                          setDup({
+                            found: f,
+                            name,
+                            site_id,
+                            existing_device_id: String(d.existing_device_id),
+                            existing_device: String(d.existing_device),
+                            existing_mgmt_ip: String(d.existing_mgmt_ip),
+                            matched_on: String(d.matched_on),
+                            message: String(d.message),
+                          });
+                        }
+                      },
+                    },
+                  )
                 }
                 onIgnore={() => ignore.mutate(f.id)}
                 busy={approve.isPending || ignore.isPending}

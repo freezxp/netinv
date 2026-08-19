@@ -532,3 +532,118 @@ func TestFindInterfacesSortsAndRejectsUnknownKeys(t *testing.T) {
 		t.Fatalf("interfaces table is %d rows after an injection attempt (err %v)", still, err)
 	}
 }
+
+// A device reachable on two addresses is discovered and onboarded twice: the
+// addresses differ, so the unique constraint on mgmt_ip never sees it. The
+// duplication is in the identity the device reports.
+func TestDuplicateDetectionUsesSerialThenSysName(t *testing.T) {
+	repo, dr, ctx := newSiteRepo(t)
+	site := addSite(t, repo, ctx, "dup-site")
+	for i, ip := range []string{"10.97.0.1", "10.97.0.2", "10.97.0.3", "10.97.0.4"} {
+		addDevice(t, dr, ctx, site.ID, ip, domain.DevicePending)
+		_ = i
+	}
+	set := func(ip, sysName, serial string) {
+		if _, err := dr.Pool.Exec(ctx, `
+			UPDATE inventory.devices SET sys_name = nullif($2,''), serial_number = nullif($3,'')
+			WHERE host(mgmt_ip) = $1`, ip, sysName, serial); err != nil {
+			t.Fatalf("set identity: %v", err)
+		}
+	}
+	// One device, two addresses: same serial.
+	set("10.97.0.1", "core-a", "SER123")
+	set("10.97.0.2", "core-a-mgmt", "SER123")
+	// Another, two addresses, no serial reported: hostname is the only signal.
+	set("10.97.0.3", "edge-b", "")
+	set("10.97.0.4", "EDGE-B", "")
+
+	groups, err := dr.Duplicates(ctx)
+	if err != nil {
+		t.Fatalf("duplicates: %v", err)
+	}
+	if len(groups) != 2 {
+		t.Fatalf("got %d groups, want 2: %+v", len(groups), groups)
+	}
+	byMatch := map[string]DuplicateGroup{}
+	for _, g := range groups {
+		byMatch[g.Match] = g
+	}
+	if g, ok := byMatch["serial"]; !ok || len(g.Devices) != 2 || g.Value != "SER123" {
+		t.Fatalf("serial group is %+v", g)
+	}
+	// Hostname matching is case-insensitive: "EDGE-B" and "edge-b" are one box
+	// reported by two agents that disagree about capitalisation.
+	if g, ok := byMatch["sys_name"]; !ok || len(g.Devices) != 2 || g.Value != "edge-b" {
+		t.Fatalf("sys_name group is %+v", g)
+	}
+
+	// A pair already reported by serial must not also appear under sys_name:
+	// one problem, listed once.
+	set("10.97.0.2", "core-a", "SER123")
+	groups, err = dr.Duplicates(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, g := range groups {
+		if g.Match == "sys_name" && g.Value == "core-a" {
+			t.Fatalf("serial-matched pair reported again under sys_name: %+v", g)
+		}
+	}
+}
+
+// Approval consults the same evidence before anything is created, which is the
+// only moment a duplicate is cheap to avoid.
+func TestMatchByIdentityPrefersSerialAndStopsThere(t *testing.T) {
+	repo, dr, ctx := newSiteRepo(t)
+	site := addSite(t, repo, ctx, "match-site")
+	addDevice(t, dr, ctx, site.ID, "10.98.0.1", domain.DevicePending)
+	if _, err := dr.Pool.Exec(ctx,
+		`UPDATE inventory.devices SET sys_name='core-a', serial_number='SER999'
+		 WHERE host(mgmt_ip)='10.98.0.1'`); err != nil {
+		t.Fatal(err)
+	}
+
+	m, match, err := dr.MatchByIdentity(ctx, "", "SER999")
+	if err != nil || m == nil || match != "serial" {
+		t.Fatalf("serial lookup gave %+v %q %v", m, match, err)
+	}
+	m, match, err = dr.MatchByIdentity(ctx, "CORE-A", "")
+	if err != nil || m == nil || match != "sys_name" {
+		t.Fatalf("hostname lookup gave %+v %q %v", m, match, err)
+	}
+	// A serial that does not match must not fall through to the hostname: the
+	// evidence has already separated these two, and pairing them anyway would
+	// override the stronger signal with the weaker one.
+	if m, _, err := dr.MatchByIdentity(ctx, "core-a", "DIFFERENT"); err != nil || m != nil {
+		t.Fatalf("a mismatched serial fell through to the hostname: %+v", m)
+	}
+}
+
+// Recording the second address is a note, not a second polling target: NetInv
+// polls one address, and polling twice would double a device's load for two
+// identical sets of graphs.
+func TestAddAltAddressIsIdempotent(t *testing.T) {
+	repo, dr, ctx := newSiteRepo(t)
+	site := addSite(t, repo, ctx, "alt-site")
+	addDevice(t, dr, ctx, site.ID, "10.99.0.1", domain.DevicePending)
+	var id string
+	if err := dr.Pool.QueryRow(ctx,
+		`SELECT id FROM inventory.devices WHERE host(mgmt_ip)='10.99.0.1'`).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dr.AddAltAddress(ctx, id, "10.99.0.2"); err != nil {
+		t.Fatalf("add: %v", err)
+	}
+	addrs, err := dr.AddAltAddress(ctx, id, "10.99.0.2")
+	if err != nil {
+		t.Fatalf("re-add: %v", err)
+	}
+	// Sweeps repeat, so the same address arrives again; recording it twice
+	// would grow the list without bound.
+	if len(addrs) != 1 || addrs[0] != "10.99.0.2" {
+		t.Fatalf("alt addresses = %v after adding the same one twice", addrs)
+	}
+	if _, err := dr.AddAltAddress(ctx, "d_missing", "10.99.0.3"); err == nil {
+		t.Fatal("accepted an address for a device that does not exist")
+	}
+}

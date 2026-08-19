@@ -141,6 +141,14 @@ Four properties are deliberate. Every query is anchored at the **end of the wind
 | GET | `/devices/{id}/alerts` | `alerts:read` | 200 |
 | GET | `/device-groups` + CRUD | `devices:read/write` | 200/201/204 |
 | GET | `/devices/{id}/sync-runs?limit=…` (sync history + failure reason) | `devices:read` | 200 |
+| GET | `/devices/duplicates` (suspected same device, two addresses) | `devices:read` | 200 |
+| POST | `/devices/{id}/addresses` (record another address it answers on) | `devices:write` | 200 |
+**Duplicate identity.** A device reachable on two management addresses is discovered twice and onboarded twice — two records, two schedules, two sets of graphs and a history split down the middle. The addresses differ, so the unique constraint on `mgmt_ip` never sees it: the duplication is in the identity the device *reports*, not in how it is reached.
+
+Two signals, neither treated as proof. **serial_number** when both report one — two chassis do not share a serial. **sys_name**, case-insensitively — usually the hostname and usually unique, but two boxes can be misconfigured with the same one and a stack member sometimes inherits its master's. So `POST /discovery/found/{id}/approve` **refuses with 409 `duplicate_identity`** naming the existing device, its address and what matched, and the operator chooses: `attach_to` records the address on that device, or `force: true` onboards anyway. Nothing is ever merged automatically — folding two records together on the strength of a hostname is irreversible, and wrong exactly when a network is already misconfigured.
+
+Recording an address is a note, not a second polling target: NetInv polls one management address, and polling the same box twice doubles its load for two identical sets of graphs. `GET /devices/duplicates` reports pairs that already exist, strongest evidence first, with a serial-matched pair never repeated under its hostname.
+
 
 `GET /devices/{id}/sync-runs` replaces the `/sync-runs?device=…` collection this
 spec carried until 2026-08-18. It was never built, and the gap had a cost: a

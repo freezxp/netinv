@@ -38,6 +38,7 @@ func (h *DeviceHandler) Register(r chi.Router) {
 		// not know which device holds the port.
 		pr.Get("/interfaces", h.searchInterfaces)
 		pr.Get("/interfaces/customers", h.customers)
+		pr.Get("/devices/duplicates", h.duplicates)
 		pr.Get("/devices/{id}/history", h.history)
 		pr.Get("/devices/{id}/sync-runs", h.syncRuns)
 		pr.Get("/devices/{id}/neighbors", h.neighbors)
@@ -54,6 +55,7 @@ func (h *DeviceHandler) Register(r chi.Router) {
 		// Tagging is operator knowledge about the network, so it is a write
 		// even though it changes nothing the network can see.
 		pw.Post("/interfaces/tags", h.tagInterfaces)
+		pw.Post("/devices/{id}/addresses", h.addAddress)
 		// Live SNMP walk: read-only, but it loads the device, so operator+.
 		pw.Get("/devices/{id}/oids", h.oids)
 	})
@@ -406,6 +408,45 @@ func parseTagCSV(rd io.Reader) ([]postgres.TagAssignment, error) {
 		out = append(out, a)
 	}
 	return out, nil
+}
+
+// duplicates reports devices that look like one device reachable on two
+// addresses. It reports evidence and merges nothing: folding two records
+// together on the strength of a hostname is irreversible, and wrong exactly
+// when a network is already misconfigured.
+func (h *DeviceHandler) duplicates(w http.ResponseWriter, r *http.Request) {
+	repo := h.Svc.Repo.(*postgres.DeviceRepo)
+	groups, err := repo.Duplicates(r.Context())
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"data": groups})
+}
+
+// addAddress records another address a device answers on, so discovery stops
+// proposing it as a new device and a search for it finds the right one.
+func (h *DeviceHandler) addAddress(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Address string `json:"address"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Address) == "" {
+		httpx.WriteError(w, r, errx.New(errx.KindInvalid, "address is required"))
+		return
+	}
+	repo := h.Svc.Repo.(*postgres.DeviceRepo)
+	id := chi.URLParam(r, "id")
+	addrs, err := repo.AddAltAddress(r.Context(), id, strings.TrimSpace(req.Address))
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	h.Svc.Audit.Write(r.Context(), audit.Event{
+		ActorKind: "user", ActorID: httpx.ClaimsFrom(r.Context()).Subject,
+		Action: "device.address.add", ResourceKind: "device", ResourceID: id,
+		After: map[string]any{"alt_addresses": addrs},
+	})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"alt_addresses": addrs})
 }
 
 func (h *DeviceHandler) neighbors(w http.ResponseWriter, r *http.Request) {

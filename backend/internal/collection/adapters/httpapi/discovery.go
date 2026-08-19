@@ -17,6 +17,14 @@ import (
 type DiscoveryHandler struct {
 	Svc     *app.DiscoveryService
 	Checker authz.Checker
+	// IdentityMatch reports a managed device already reporting the identity a
+	// find claims, so a device reachable on two addresses is not onboarded
+	// twice. Wired in cmd; nil disables the check rather than failing closed —
+	// a duplicate is a nuisance, being unable to onboard anything is an outage.
+	IdentityMatch func(ctx context.Context, sysName, serial string) (id, name, ip, match string, err error)
+	// AttachAddress records the find's address on the existing device instead
+	// of creating a second record for it.
+	AttachAddress func(ctx context.Context, deviceID, addr string) error
 	// Onboard creates a managed device from an approved find; wired in cmd to
 	// the inventory service (cross-context via function, doc 13 rule 3).
 	Onboard func(ctx context.Context, in OnboardInput) (deviceID string, err error)
@@ -110,6 +118,13 @@ func (h *DiscoveryHandler) approve(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Name   string `json:"name"`
 		SiteID string `json:"site_id"`
+		// Force onboards anyway when the identity check objects. Two devices
+		// can legitimately share a hostname, so the check informs a decision
+		// rather than making it.
+		Force bool `json:"force"`
+		// AttachTo records this address on an existing device instead of
+		// creating a new one — the answer when the check is right.
+		AttachTo string `json:"attach_to"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&req)
 
@@ -123,6 +138,47 @@ func (h *DiscoveryHandler) approve(w http.ResponseWriter, r *http.Request) {
 			"a device with that management IP is already managed"))
 		return
 	}
+	if req.AttachTo != "" {
+		if h.AttachAddress == nil {
+			httpx.WriteError(w, r, errx.New(errx.KindTransient, "attaching addresses is unavailable"))
+			return
+		}
+		if err := h.AttachAddress(r.Context(), req.AttachTo, found.IP); err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
+		// The find is settled either way: it has been dealt with, and leaving
+		// it pending would offer the same address again on the next sweep.
+		if err := h.Svc.Repo.SetFoundState(r.Context(), found.ID, "approved"); err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
+		httpx.WriteJSON(w, http.StatusOK, map[string]string{
+			"attached_to": req.AttachTo, "address": found.IP})
+		return
+	}
+
+	// The check runs before anything is created, which is the only moment a
+	// duplicate is cheap to avoid: afterwards it is two records, two schedules
+	// and a history split down the middle.
+	if !req.Force && h.IdentityMatch != nil && found.SysName != "" {
+		id, dname, dip, match, err := h.IdentityMatch(r.Context(), found.SysName, "")
+		if err == nil && id != "" {
+			httpx.WriteJSON(w, http.StatusConflict, map[string]any{
+				"error": map[string]any{
+					"code": "duplicate_identity",
+					"message": found.IP + " reports the same " + match + " as " +
+						dname + " (" + dip + "), so it is probably the same device on a second address",
+					"existing_device_id": id,
+					"existing_device":    dname,
+					"existing_mgmt_ip":   dip,
+					"matched_on":         match,
+				},
+			})
+			return
+		}
+	}
+
 	name := req.Name
 	if name == "" {
 		name = found.SysName
