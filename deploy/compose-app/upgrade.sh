@@ -22,6 +22,7 @@
 # Usage:
 #   ./deploy/compose-app/upgrade.sh                     # pull the latest, then deploy
 #   ./deploy/compose-app/upgrade.sh --no-pull           # deploy the working tree as it is
+#   ./deploy/compose-app/upgrade.sh --no-prune          # keep the build cache
 #   ./deploy/compose-app/upgrade.sh --latest            # pull, and fail if it cannot
 #   ./deploy/compose-app/upgrade.sh --ref v1.1.0        # deploy a tag, branch or commit
 #   ./deploy/compose-app/upgrade.sh --skip-backup       # you already have one
@@ -49,6 +50,12 @@ REF=""
 # an upgrade — while --latest asks for the pull explicitly and therefore fails
 # instead of quietly deploying something older.
 PULL=1
+# Clearing the build cache after a successful deploy, because it is what fills
+# the disk: on the pilot it reached 34 GB of cache against 40 GB of images and
+# took the root filesystem to 94%, which then blocked the next upgrade. The
+# cost is an honest one — the next build starts cold — so BUILD_CACHE_KEEP
+# switches to a bounded prune that keeps recent layers instead.
+PRUNE=1
 LATEST=0
 KEEP="${KEEP:-3}"
 SKIP_BACKUP=0
@@ -62,6 +69,7 @@ while [ $# -gt 0 ]; do
 	--ref) REF="${2:?--ref needs a git ref}"; shift 2 ;;
 	--latest) LATEST=1; PULL=1; shift ;;
 	--no-pull) PULL=0; shift ;;
+	--no-prune) PRUNE=0; shift ;;
 	--skip-backup) SKIP_BACKUP=1; shift ;;
 	--keep) KEEP="${2:?--keep needs a count}"; shift 2 ;;
 	--dry-run) DRY_RUN=1; shift ;;
@@ -587,6 +595,27 @@ if [ "$ui_ok" = 1 ]; then
 	echo "  UI is answering on https://localhost:$ui_port"
 else
 	echo "  UI did not answer on :$ui_port — check the frontend service." >&2
+fi
+
+# Reclaim after the deploy has been verified, never before it. Pruning first
+# would clear the cache the build about to run could have used, and pruning on
+# the way out of a failure would destroy the evidence.
+#
+# Dangling images only — `docker image prune -af` would delete the *previous*
+# release's images, and those are exactly what the rollback path starts the
+# stack from when a recreate fails. Reclaiming a gigabyte by removing the way
+# back is a bad trade.
+if [ "$PRUNE" = 1 ]; then
+	say "Reclaiming build cache"
+	if [ -n "${BUILD_CACHE_KEEP:-}" ]; then
+		echo "  keeping up to $BUILD_CACHE_KEEP of recent cache"
+		docker builder prune -f --keep-storage "$BUILD_CACHE_KEEP" 2>&1 |
+			tail -1 | sed 's/^/  /'
+	else
+		docker builder prune -af 2>&1 | tail -1 | sed 's/^/  /'
+	fi
+	docker image prune -f 2>&1 | tail -1 | sed 's/^/  /'
+	echo "  docker root now: $(free_mb "$docker_root") MB free"
 fi
 
 after_version="$(git -C "$ROOT" describe --tags --always --dirty 2>/dev/null || echo unknown)"
