@@ -56,9 +56,10 @@ func main() {
 
 		eval := &app.Evaluator{
 			Rules: store, Instances: store, Silences: store, Ifaces: store,
-			Metrics: vm.New(vmURL),
-			Publish: &alertamqp.Publisher{Client: mq, BaseURL: os.Getenv("NETINV_UI_URL")},
-			Log:     rt.Log,
+			Exporters: store,
+			Metrics:   vm.New(vmURL),
+			Publish:   &alertamqp.Publisher{Client: mq, BaseURL: os.Getenv("NETINV_UI_URL")},
+			Log:       rt.Log,
 		}
 		rt.Health.SetReady(true)
 		rt.Log.Info("alerter running", "vm", vmURL)

@@ -524,6 +524,20 @@ naive "is any flow arriving" check misses entirely.
 
 Two built-in rules cover it (FR-ALR-07, migration 0012):
 
+**A firing flow alert names a host, not just an address.** Flow series carry
+only `exporter` and `if_index` — no `device`, `device_id` or `site`, unlike every
+other metric family — so without help the alert most likely to reach someone at
+3am is the one that says least, and the alert list can offer no graph link
+because the instance has no device. The alerter resolves the exporter address
+before firing: first against `devices.attrs->'flow_exporters'` (§3.1), then
+falling back to the management address, which is what a gateway exports from
+when the collector sits on its own LAN. `device` is set either way — to the
+claiming device, or to the raw address when nothing claims it — so an unclaimed
+exporter shows up as an address where a name should be, which is itself the
+thing to fix. Resolution happens **after** fingerprinting, so claiming an
+exporter onto a device while an alert is live does not resolve it and fire a
+duplicate.
+
 - **`ar_flow_exporter_stale`** (primary) —
   `count by (exporter) (last_over_time(netinv_flow_bytes[7d])) unless count by (exporter) (last_over_time(netinv_flow_bytes[20m]))`.
   One alert per stale exporter, labelled with `exporter`, which

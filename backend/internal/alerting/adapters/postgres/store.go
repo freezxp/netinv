@@ -306,6 +306,34 @@ func (s *Store) Interfaces(ctx context.Context, deviceID string) map[string]app.
 	return out
 }
 
+// DeviceByExporter implements app.ExporterResolver (best-effort).
+//
+// Two ways an address maps to a device, tried in that order:
+//
+//  1. an explicit claim in devices.attrs->'flow_exporters'. Gateways export
+//     from their WAN address rather than their management IP (doc 34 §3.1), so
+//     the claim list is the only thing that can connect the two.
+//  2. the management address itself, which is what a device exports from when
+//     the collector sits on its own LAN. Without this fallback the most common
+//     single-site deployment resolves nothing at all.
+//
+// Retired devices are excluded: an address reassigned to a live device must not
+// keep resolving to the one that used to hold it.
+func (s *Store) DeviceByExporter(ctx context.Context, addr string) (string, string) {
+	var id, name string
+	err := s.Pool.QueryRow(ctx, `
+		SELECT id, name FROM inventory.devices
+		WHERE status <> 'retired'
+		  AND (attrs->'flow_exporters' @> to_jsonb($1::text)
+		       OR host(mgmt_ip) = $1)
+		ORDER BY (attrs->'flow_exporters' @> to_jsonb($1::text)) DESC
+		LIMIT 1`, addr).Scan(&id, &name)
+	if err != nil {
+		return "", ""
+	}
+	return id, name
+}
+
 // Silenced implements app.SilenceChecker: any active silence whose scope
 // labels are all present in the alert labels suppresses it.
 func (s *Store) Silenced(ctx context.Context, labels map[string]string) (bool, error) {

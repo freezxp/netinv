@@ -274,3 +274,89 @@ func TestNameLabelDoesNotChangeFingerprint(t *testing.T) {
 		t.Errorf("fingerprint changed once if_name was added: %s", got)
 	}
 }
+
+// stubExporters resolves a fixed set of exporter addresses to devices.
+type stubExporters struct{ byAddr map[string][2]string }
+
+func (s stubExporters) DeviceByExporter(_ context.Context, addr string) (string, string) {
+	if v, ok := s.byAddr[addr]; ok {
+		return v[0], v[1]
+	}
+	return "", ""
+}
+
+func runFlow(t *testing.T, ex ExporterResolver, series []Series) *stubInstances {
+	t.Helper()
+	inst := &stubInstances{}
+	e := &Evaluator{
+		Instances: inst, Metrics: stubMetrics{series: series}, Exporters: ex,
+		Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	if err := e.evalRule(context.Background(), &domain.Rule{
+		ID: "ar_flow_exporter_stale", Name: "Flow exporter stopped exporting", Expr: "x",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return inst
+}
+
+func flowSeries(exporter string) Series {
+	return Series{Labels: map[string]string{"exporter": exporter}, Value: 1}
+}
+
+// A flow alert must name a host. Flow series carry only the exporter address
+// (doc 34 §3.1), so without resolution the summary reads "No flow from
+// 192.0.2.7" — an address, to whoever is on call, with no graph link because
+// the instance carries no device_id either.
+func TestFlowAlertNamesTheDeviceBehindTheExporter(t *testing.T) {
+	ex := stubExporters{byAddr: map[string][2]string{
+		"192.0.2.7": {"d_fn", "FN gw"},
+	}}
+	inst := runFlow(t, ex, []Series{flowSeries("192.0.2.7")})
+	if len(inst.fired) != 1 {
+		t.Fatalf("fired %d, want 1", len(inst.fired))
+	}
+	got := inst.fired[0]
+	if got.Labels["device"] != "FN gw" {
+		t.Errorf("device label = %q, want %q — the summary renders {{device}}",
+			got.Labels["device"], "FN gw")
+	}
+	if got.DeviceID != "d_fn" {
+		t.Errorf("DeviceID = %q, want d_fn — without it the alert list shows no graph link",
+			got.DeviceID)
+	}
+	if got.Labels["exporter"] != "192.0.2.7" {
+		t.Errorf("exporter label lost: %q", got.Labels["exporter"])
+	}
+}
+
+// An exporter nothing claims still has to produce a readable summary, so
+// `device` falls back to the address rather than being left empty — an empty
+// {{device}} renders as a blank and reads like a bug in the alert.
+func TestFlowAlertFallsBackToAddressWhenUnclaimed(t *testing.T) {
+	inst := runFlow(t, stubExporters{}, []Series{flowSeries("192.0.2.9")})
+	if len(inst.fired) != 1 {
+		t.Fatalf("fired %d, want 1", len(inst.fired))
+	}
+	if got := inst.fired[0].Labels["device"]; got != "192.0.2.9" {
+		t.Errorf("device label = %q, want the address as a fallback", got)
+	}
+	if got := inst.fired[0].DeviceID; got != "" {
+		t.Errorf("DeviceID = %q, want empty when nothing claims the exporter", got)
+	}
+}
+
+// Resolution must not change alert identity. Claiming an exporter onto a device
+// while an alert is live would otherwise resolve it and fire a duplicate — the
+// same reason if_name is added after fingerprinting.
+func TestFlowAlertFingerprintIgnoresResolvedDevice(t *testing.T) {
+	unclaimed := runFlow(t, stubExporters{}, []Series{flowSeries("192.0.2.7")})
+	claimed := runFlow(t, stubExporters{byAddr: map[string][2]string{
+		"192.0.2.7": {"d_fn", "FN gw"},
+	}}, []Series{flowSeries("192.0.2.7")})
+	if unclaimed.fired[0].Fingerprint != claimed.fired[0].Fingerprint {
+		t.Errorf("fingerprint changed when the exporter was claimed (%s vs %s); "+
+			"the live alert would resolve and re-fire as a duplicate",
+			unclaimed.fired[0].Fingerprint, claimed.fired[0].Fingerprint)
+	}
+}

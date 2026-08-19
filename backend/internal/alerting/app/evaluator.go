@@ -66,6 +66,17 @@ type InterfaceResolver interface {
 	Interfaces(ctx context.Context, deviceID string) map[string]InterfaceInfo
 }
 
+// ExporterResolver maps a flow exporter address to the device that claims it.
+//
+// Flow series are keyed by the datagram's source address and carry no device
+// labels (doc 34 §3.1). Every other alert family carries `device`, which is
+// what lets an operator act on an alert without a lookup; this closes that gap.
+type ExporterResolver interface {
+	// DeviceByExporter returns the device id and name claiming an exporter
+	// address, or empty strings when nothing claims it.
+	DeviceByExporter(ctx context.Context, addr string) (id, name string)
+}
+
 type Evaluator struct {
 	Rules     RuleRepo
 	Instances InstanceRepo
@@ -73,6 +84,7 @@ type Evaluator struct {
 	Silences  SilenceChecker
 	Publish   AlertPublisher
 	Ifaces    InterfaceResolver
+	Exporters ExporterResolver
 	Log       *slog.Logger
 	Now       func() time.Time
 }
@@ -139,20 +151,49 @@ func (e *Evaluator) evalRule(ctx context.Context, rule *domain.Rule) error {
 			DeviceID: s.Labels["device_id"], Labels: s.Labels, Value: s.Value,
 			FiredAt: now, FlapCount: flapCount,
 		}
+		// Everything below adds labels for readability only, and all of it runs
+		// *after* fingerprinting, so alert identity stays metric identity:
+		// renaming an interface, or claiming an exporter onto a device, must not
+		// resolve the old alert and fire a new one in its place.
+		enriched := false
+		enrich := func(k, v string) {
+			if v == "" {
+				return
+			}
+			if !enriched {
+				cp := make(map[string]string, len(s.Labels)+2)
+				for lk, lv := range s.Labels {
+					cp[lk] = lv
+				}
+				inst.Labels = cp
+				enriched = true
+			}
+			inst.Labels[k] = v
+		}
 		if e.Ifaces != nil && s.Labels["if_index"] != "" && inst.DeviceID != "" {
 			inst.InterfaceID = e.Ifaces.InterfaceID(ctx, inst.DeviceID, s.Labels["if_index"])
 			// Annotations say "Interface {{if_name}} on {{device}}", but the
-			// metric only carries if_index, so summaries read as a blank. Added
-			// after fingerprinting so alert identity stays metric identity and
-			// a rename doesn't re-fire the alert.
-			if name := ifaces[inst.DeviceID][s.Labels["if_index"]].Name; name != "" {
-				labels := make(map[string]string, len(s.Labels)+1)
-				for k, v := range s.Labels {
-					labels[k] = v
+			// metric only carries if_index, so summaries read as a blank.
+			enrich("if_name", ifaces[inst.DeviceID][s.Labels["if_index"]].Name)
+		}
+		// Flow series carry an exporter address and no device labels at all, so a
+		// flow alert can name an address and nothing else. Resolve it to the
+		// device that claims it, so the alert names a host like every other
+		// family and the UI can offer a graph link. `device` is set either way —
+		// to the claiming device when there is one, otherwise to the address —
+		// so a summary written around {{device}} still reads correctly when
+		// nothing claims the exporter, which is itself worth seeing (doc 34 §3.1).
+		if exporter := s.Labels["exporter"]; exporter != "" && inst.DeviceID == "" {
+			name := exporter
+			if e.Exporters != nil {
+				if id, devName := e.Exporters.DeviceByExporter(ctx, exporter); id != "" {
+					inst.DeviceID = id
+					if devName != "" {
+						name = devName
+					}
 				}
-				labels["if_name"] = name
-				inst.Labels = labels
 			}
+			enrich("device", name)
 		}
 		if err := e.Instances.Fire(ctx, inst); err != nil {
 			e.Log.Error("fire failed", "rule", rule.ID, "err", err)
