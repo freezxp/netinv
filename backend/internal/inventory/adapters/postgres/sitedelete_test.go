@@ -463,3 +463,72 @@ func TestFindInterfacesCanExcludeDownPorts(t *testing.T) {
 		}
 	}
 }
+
+// Sorting is server-side for inventory columns so the order spans the whole
+// result rather than the hundred rows on screen — and the key is whitelisted,
+// because this string is concatenated into the query and an ORDER BY taken
+// from a URL parameter is how a search box becomes an injection.
+func TestFindInterfacesSortsAndRejectsUnknownKeys(t *testing.T) {
+	repo, dr, ctx := newSiteRepo(t)
+	site := addSite(t, repo, ctx, "sort-site")
+	addDevice(t, dr, ctx, site.ID, "10.96.0.1", domain.DevicePending)
+
+	var deviceID string
+	if err := dr.Pool.QueryRow(ctx,
+		`SELECT id FROM inventory.devices WHERE site_id = $1`, site.ID).Scan(&deviceID); err != nil {
+		t.Fatal(err)
+	}
+	for _, i := range []struct {
+		idx   int
+		name  string
+		speed int64
+	}{{1, "slow", 100_000_000}, {2, "fast", 10_000_000_000}, {3, "unknown", 0}} {
+		var sp any = i.speed
+		if i.speed == 0 {
+			sp = nil // an interface whose speed was never reported
+		}
+		if _, err := dr.Pool.Exec(ctx, `
+			INSERT INTO inventory.interfaces (id, device_id, if_index, name, speed_bps, state)
+			VALUES ($1,$2,$3,$4,$5,'present')`,
+			id.New("if"), deviceID, i.idx, i.name, sp); err != nil {
+			t.Fatalf("seed interface: %v", err)
+		}
+	}
+
+	fastest, _, err := dr.FindInterfaces(ctx, InterfaceFilter{Sort: "speed", Desc: true}, 0, 0)
+	if err != nil {
+		t.Fatalf("sort by speed: %v", err)
+	}
+	if len(fastest) != 3 || fastest[0].Name != "fast" {
+		t.Fatalf("descending speed put %q first: %+v", fastest[0].Name, fastest)
+	}
+	// Missing information belongs at the end of a list someone reads
+	// top-down, not at the top of a descending one.
+	if fastest[2].Name != "unknown" {
+		t.Errorf("unknown speed sorted to position 2, want last: %+v", fastest)
+	}
+
+	asc, _, err := dr.FindInterfaces(ctx, InterfaceFilter{Sort: "speed"}, 0, 0)
+	if err != nil {
+		t.Fatalf("ascending: %v", err)
+	}
+	if asc[0].Name != "slow" || asc[2].Name != "unknown" {
+		t.Errorf("ascending speed order is %v", []string{asc[0].Name, asc[1].Name, asc[2].Name})
+	}
+
+	// An unknown key falls back to the default order rather than erroring or,
+	// far worse, reaching the query.
+	def, _, err := dr.FindInterfaces(ctx,
+		InterfaceFilter{Sort: "speed_bps; DROP TABLE inventory.interfaces --"}, 0, 0)
+	if err != nil {
+		t.Fatalf("unknown sort key: %v", err)
+	}
+	if len(def) != 3 || def[0].IfIndex != 1 {
+		t.Fatalf("unknown key did not fall back to the default order: %+v", def)
+	}
+	var still int
+	if err := dr.Pool.QueryRow(ctx,
+		`SELECT count(*) FROM inventory.interfaces`).Scan(&still); err != nil || still != 3 {
+		t.Fatalf("interfaces table is %d rows after an injection attempt (err %v)", still, err)
+	}
+}

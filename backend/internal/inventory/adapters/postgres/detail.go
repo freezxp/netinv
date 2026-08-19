@@ -270,9 +270,32 @@ type InterfaceSearchRow struct {
 // match rather than a substring: a report says what one customer used, and
 // "Acme" quietly including "Acme Holdings" is the kind of error that reaches
 // an invoice.
+// orderInterfaces renders the ORDER BY clause, always ending in a stable
+// tiebreak. Without one, two interfaces with the same alias can swap places
+// between pages and a row is seen twice or missed entirely while paging.
+func orderInterfaces(f InterfaceFilter) string {
+	col, ok := sortableInterfaceCols[f.Sort]
+	if !ok {
+		return "d.name, i.if_index"
+	}
+	dir := "ASC"
+	if f.Desc {
+		dir = "DESC"
+	}
+	// NULLS LAST in both directions: an interface with no alias or no speed is
+	// missing information, and missing information belongs at the end of a
+	// list someone is reading top-down, not at the top of a descending one.
+	return col + " " + dir + " NULLS LAST, d.name, i.if_index"
+}
+
 type InterfaceFilter struct {
 	Q        string
 	Customer string
+	// Sort names a column to order by; Desc reverses it. Only inventory
+	// columns can be sorted here — utilisation and traffic live in the metrics
+	// store, so the caller sorts those over the rows it has.
+	Sort string
+	Desc bool
 	// UpOnly excludes interfaces whose last synced oper status is not up.
 	// It filters on the same column the list displays, so what is hidden is
 	// exactly what was showing as down — including the staleness that comes
@@ -282,6 +305,19 @@ type InterfaceFilter struct {
 
 func (r *DeviceRepo) SearchInterfaces(ctx context.Context, q string, limit, offset int) ([]InterfaceSearchRow, int, error) {
 	return r.FindInterfaces(ctx, InterfaceFilter{Q: q}, limit, offset)
+}
+
+// sortableInterfaceCols maps a caller's sort key to SQL. A whitelist rather
+// than interpolation: this string is concatenated into the query, and taking
+// an ORDER BY from a URL parameter is how a search box becomes an injection.
+var sortableInterfaceCols = map[string]string{
+	"device":   "d.name",
+	"name":     "i.name",
+	"alias":    "i.alias",
+	"descr":    "i.descr",
+	"customer": "i.customer",
+	"speed":    "i.speed_bps",
+	"state":    "i.oper_status",
 }
 
 func (r *DeviceRepo) FindInterfaces(ctx context.Context, f InterfaceFilter, limit, offset int) ([]InterfaceSearchRow, int, error) {
@@ -317,7 +353,7 @@ func (r *DeviceRepo) FindInterfaces(ctx context.Context, f InterfaceFilter, limi
 		FROM inventory.interfaces i
 		JOIN inventory.devices d ON d.id = i.device_id
 		WHERE `+where+`
-		ORDER BY d.name, i.if_index
+		ORDER BY `+orderInterfaces(f)+`
 		LIMIT $5 OFFSET $6`, f.Q, pattern, f.Customer, f.UpOnly, limit, offset)
 	if err != nil {
 		return nil, 0, errx.Wrap(errx.KindTransient, err, "interface search")

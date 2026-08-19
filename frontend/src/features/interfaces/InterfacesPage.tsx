@@ -29,6 +29,40 @@ import { rateWindow } from "../../api/timerange";
 
 const PAGE = 100;
 
+type SortKey =
+  | "device"
+  | "name"
+  | "customer"
+  | "alias"
+  | "descr"
+  | "speed"
+  | "state"
+  | "util";
+
+// Which columns the database can order by. The rest are derived from metrics
+// and can only be ranked over the rows already fetched.
+const SERVER_SORTS = new Set<SortKey>([
+  "device",
+  "name",
+  "customer",
+  "alias",
+  "descr",
+  "speed",
+  "state",
+]);
+const METRIC_SORTS = new Set<SortKey>(["util"]);
+
+const COLUMNS: Array<{ key: SortKey; label: string }> = [
+  { key: "device", label: "Device" },
+  { key: "name", label: "Interface" },
+  { key: "customer", label: "Customer" },
+  { key: "alias", label: "Alias" },
+  { key: "descr", label: "Description" },
+  { key: "speed", label: "Speed" },
+  { key: "state", label: "State" },
+  { key: "util", label: "Utilization" },
+];
+
 export function InterfacesPage() {
   const [typed, setTyped] = useState("");
   const [customer, setCustomer] = useState("");
@@ -38,7 +72,24 @@ export function InterfacesPage() {
   const [busyOnly, setBusyOnly] = useState(false);
   const q = useDebounced(typed, 300);
   const customers = useCustomers();
-  const search = useInterfaceSearch(q, customer, upOnly, PAGE, page * PAGE);
+  // One sort control for the whole table, even though the columns resolve in
+  // two different places: inventory columns sort in the database (whole result
+  // set), traffic and utilisation over the rows already fetched, because they
+  // come from the metrics store per page. The header says which is which.
+  const [sort, setSort] = useState<{ key: SortKey; desc: boolean }>({
+    key: "device",
+    desc: false,
+  });
+  const serverSort = SERVER_SORTS.has(sort.key) ? sort.key : "";
+  const search = useInterfaceSearch(
+    q,
+    customer,
+    upOnly,
+    serverSort,
+    sort.desc,
+    PAGE,
+    page * PAGE,
+  );
   const rows = search.data?.data ?? [];
   const total = search.data?.total ?? 0;
 
@@ -59,7 +110,6 @@ export function InterfacesPage() {
     return m;
   }, [util.data]);
 
-  const [sortByUtil, setSortByUtil] = useState(false);
   // Idle is filtered client-side because traffic lives in the metrics store,
   // not the database — there is no column to filter on. It therefore applies
   // to the rows already fetched, which the footer says out loud rather than
@@ -79,17 +129,17 @@ export function InterfacesPage() {
           (r) => (bpsByIf.get(`${r.device_id}|${r.if_index}`) ?? 0) > 0,
         )
       : rows;
-    if (!sortByUtil) return base;
-    // Sorting is over the current page only, and says so in the UI: the server
-    // orders by device and ifIndex, and re-ranking the whole estate by
-    // utilization would mean asking the metrics store first and the database
-    // second. Claiming "busiest interfaces" while showing the busiest hundred
-    // alphabetically would be a lie.
-    return [...base].sort(
-      (a, b) =>
-        pct(b, bpsByIf) - pct(a, bpsByIf) || bps(b, bpsByIf) - bps(a, bpsByIf),
+    if (!METRIC_SORTS.has(sort.key)) return base;
+    // Metric columns are sorted here and nowhere else: the database has no
+    // traffic to order by. It therefore ranks this page, which the footer
+    // states rather than letting "busiest" quietly mean "busiest of the
+    // hundred that happened to load".
+    const val = (r: InterfaceSearchRow) =>
+      sort.key === "util" ? pct(r, bpsByIf) : bps(r, bpsByIf);
+    return [...base].sort((a, b) =>
+      sort.desc ? val(b) - val(a) : val(a) - val(b),
     );
-  }, [rows, busyOnly, sortByUtil, bpsByIf]);
+  }, [rows, busyOnly, sort, bpsByIf]);
 
   return (
     <div className="mx-auto flex max-w-6xl flex-col gap-4">
@@ -115,13 +165,6 @@ export function InterfacesPage() {
           title="Exclude interfaces carrying no measurable traffic in the current window"
         >
           {busyOnly ? "Hiding idle" : "Hide idle"}
-        </Button>
-        <Button
-          variant="ghost"
-          onClick={() => setSortByUtil((v) => !v)}
-          title="Sort the interfaces on this page by how busy they are"
-        >
-          {sortByUtil ? "Sorted by utilization" : "Sort by utilization"}
         </Button>
         <Button variant="ghost" onClick={() => setImporting(true)}>
           Import customers
@@ -189,18 +232,31 @@ export function InterfacesPage() {
           <table className="w-full min-w-[52rem] text-sm">
             <thead>
               <tr className="border-b border-slate-200 text-left text-xs uppercase text-slate-500 dark:border-slate-800">
-                {[
-                  "Device",
-                  "Interface",
-                  "Customer",
-                  "Alias",
-                  "Description",
-                  "Speed",
-                  "State",
-                  "Utilization",
-                ].map((h) => (
-                  <th key={h} className="px-3 py-2 font-medium">
-                    {h}
+                {COLUMNS.map((c) => (
+                  <th key={c.key} className="px-3 py-2 font-medium">
+                    <button
+                      className="flex items-center gap-1 uppercase hover:text-slate-700 dark:hover:text-slate-300"
+                      title={
+                        METRIC_SORTS.has(c.key)
+                          ? "Sorts the interfaces on this page — traffic is not a database column"
+                          : "Sorts every matching interface, not just this page"
+                      }
+                      onClick={() => {
+                        setPage(0);
+                        setSort((s) =>
+                          s.key === c.key
+                            ? { key: c.key, desc: !s.desc }
+                            : // Busiest-first is what anyone opening a traffic
+                              // column wants; names read better ascending.
+                              { key: c.key, desc: METRIC_SORTS.has(c.key) },
+                        );
+                      }}
+                    >
+                      {c.label}
+                      {sort.key === c.key && (
+                        <span aria-hidden>{sort.desc ? "▼" : "▲"}</span>
+                      )}
+                    </button>
                   </th>
                 ))}
               </tr>
@@ -234,7 +290,7 @@ export function InterfacesPage() {
             {page * PAGE + 1}–{Math.min((page + 1) * PAGE, total)} of {total}
             {upOnly && " · down excluded"}
             {busyOnly && ` · ${idleHidden} idle hidden on this page`}
-            {sortByUtil && " · sorted within this page"}
+            {METRIC_SORTS.has(sort.key) && " · sorted within this page"}
           </span>
           <Button
             variant="ghost"

@@ -256,11 +256,13 @@ export function useInterfaceSearch(
   q: string,
   customer = "",
   upOnly = false,
+  sort = "",
+  desc = false,
   limit = 100,
   offset = 0,
 ) {
   return useQuery({
-    queryKey: ["interfaces", q, customer, upOnly, limit, offset],
+    queryKey: ["interfaces", q, customer, upOnly, sort, desc, limit, offset],
     queryFn: () => {
       const p = new URLSearchParams({
         q,
@@ -272,6 +274,12 @@ export function useInterfaceSearch(
       // are excluded by the database rather than dropped from the page after
       // it arrives, which would leave "100 of 4000" describing a page of 12.
       if (upOnly) p.set("up", "1");
+      // Inventory columns sort in the database, so the ordering spans the
+      // whole result rather than the hundred rows on screen.
+      if (sort) {
+        p.set("sort", sort);
+        p.set("dir", desc ? "desc" : "asc");
+      }
       return api<{ data: InterfaceSearchRow[]; total: number }>(
         `/interfaces?${p}`,
       );

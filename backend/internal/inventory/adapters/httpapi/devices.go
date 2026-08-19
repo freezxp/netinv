@@ -270,6 +270,8 @@ func (h *DeviceHandler) searchInterfaces(w http.ResponseWriter, r *http.Request)
 		Q:        strings.TrimSpace(q.Get("q")),
 		Customer: strings.TrimSpace(q.Get("customer")),
 		UpOnly:   q.Get("up") == "1",
+		Sort:     q.Get("sort"),
+		Desc:     q.Get("dir") == "desc",
 	}, limit, offset)
 	if err != nil {
 		httpx.WriteError(w, r, err)

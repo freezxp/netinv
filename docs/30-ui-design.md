@@ -116,7 +116,9 @@ Three decisions worth keeping:
 
 The maps list carries **Generate from topology** next to Create (operator+): one click produces a draft laid out from the LLDP neighbours the devices already report, and reports what it drew — "6 devices and 7 links" — because a generated map that drew nothing looks exactly like a button that did nothing. When there is no drawable topology it says so and why, rather than creating an empty map.
 
-Two exclusions sit next to the sort: **Hide down** and **Hide idle**. They work differently and the page says so rather than pretending otherwise. Hide down filters in the database, so the total and paging follow it and it can be combined with paging honestly. Hide idle can only filter the rows already fetched — traffic lives in the metrics store, not a column — so the footer reports how many it removed on this page, the same honesty the utilisation sort uses.
+Every column header sorts. Inventory columns sort in the database, so the order spans every matching interface rather than the hundred on screen; **Utilization** can only rank the rows already fetched, since traffic is not a database column, and both the header tooltip and the footer say which is which. Clicking a traffic column defaults to **descending** — busiest first is the only reason anyone opens it — while name-like columns default to ascending.
+
+Two exclusions sit beside it: **Hide down** and **Hide idle**. They work differently and the page says so rather than pretending otherwise. Hide down filters in the database, so the total and paging follow it and it can be combined with paging honestly. Hide idle can only filter the rows already fetched — traffic lives in the metrics store, not a column — so the footer reports how many it removed on this page, the same honesty the utilisation sort uses.
 
 Interfaces also carries a **Customer** column, a customer filter, and **Import customers** — a CSV paste or file upload assigning customers and tags in bulk, reporting every row that matched nothing or matched ambiguously rather than applying what it could and staying quiet about the rest.
 
