@@ -12,6 +12,7 @@ import (
 	"github.com/freezxp/netinv/backend/internal/platform/amqpx"
 	"github.com/freezxp/netinv/backend/internal/platform/pgx"
 	"github.com/freezxp/netinv/backend/internal/platform/service"
+	"github.com/freezxp/netinv/backend/internal/platform/vmwrite"
 )
 
 func main() {
@@ -37,8 +38,12 @@ func main() {
 		defer mq.Close()
 		ing := &app.Ingester{
 			Labels: &postgres.LabelSource{Pool: pool},
-			Writer: victoriametrics.New(vmURL),
-			Log:    rt.Log,
+			// NETINV_VM_MIRROR_URL copies every batch to one or more backup
+			// instances, best-effort: a mirror that is down must never stall
+			// or fail production ingest (see internal/platform/vmwrite).
+			Writer: victoriametrics.NewMirrored(vmURL,
+				vmwrite.ParseMirrors(os.Getenv("NETINV_VM_MIRROR_URL")), rt.Log),
+			Log: rt.Log,
 		}
 		rt.Health.SetReady(true)
 		// Consume with reconnect: the delivery stream closes on broker

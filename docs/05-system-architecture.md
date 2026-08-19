@@ -117,6 +117,10 @@ Cardinality rules (enforced in ingester): label values bounded (no timestamps/er
 
 ## 8. Event-driven synchronization
 
+**Metric mirroring (`NETINV_VM_MIRROR_URL`).** Both writers to VictoriaMetrics — the ingester for collected samples and `netinv-flow` for aggregates — can copy every import batch to one or more backup instances. It is deliberately best-effort: the primary write is what collection depends on, so a mirror that is slow, full or switched off must never delay it, fail it, or cause a batch to be redelivered. A backup target that can stop production ingest is a liability rather than a backup.
+
+The honest consequence is that the copy is complete only for the time the mirror was reachable; nothing backfills a window it missed. Those gaps are counted rather than left to be discovered — `netinv_vm_mirror_failed_total` and `netinv_vm_mirror_samples_total`, per target — and the failure log is rate-limited to one line a minute per target so an hour-long outage does not bury the service's real output. **For a guaranteed-complete copy, put vmagent in front**: it has a persistent queue and replays what it could not deliver, which is a different and larger promise than this makes.
+
 Domain events (JSON, CloudEvents-style envelope: `id`, `type`, `source`, `time`, `subject`, `data`, `trace_id`) on `events.domain`:
 
 | Event | Producer | Consumers (v1) |

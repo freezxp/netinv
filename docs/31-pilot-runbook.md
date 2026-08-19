@@ -109,6 +109,25 @@ the site (step 4).
 - [ ] **Availability**: confirm ICMP RTT/loss graphs and the dashboard
       availability % look sane for a known-good and a known-flaky link.
 
+## 6a. Mirroring metrics to a second VictoriaMetrics
+
+`NETINV_VM_MIRROR_URL` (comma-separated) makes the ingester and `netinv-flow` copy every import batch to one or more backup instances:
+
+```bash
+# deploy/compose-app/.env
+NETINV_VM_MIRROR_URL=http://vm-backup.example.internal:8428
+```
+
+Recreate `ingester` and `flow` afterwards. Confirm it is working from the counters on either service's `/metrics`, not from the absence of errors:
+
+```bash
+docker exec netinv-ingester-1 wget -qO- localhost:8080/metrics | grep netinv_vm_mirror
+```
+
+`netinv_vm_mirror_samples_total` rising and `netinv_vm_mirror_failed_total` flat is a healthy mirror. A rising failure counter is a hole in the copy that **nothing backfills** — the mirror is best-effort by design, because a backup target that can stall production ingest is worse than no backup at all. Judge it by the counters; the log is rate-limited to one line a minute per target so an hour-long outage cannot bury the rest of the service's output.
+
+What this is not: a guaranteed-complete copy. It holds what arrived while the mirror was reachable. If you need every sample, put **vmagent** in front — it has a persistent queue and replays what it could not deliver. Mirroring here is for a warm standby or a longer-retention archive, and it composes with `scripts/backup.sh`, which snapshots the primary rather than streaming it.
+
 ## 7. Backup schedule
 
 Wire `scripts/backup.sh` (or its k8s equivalent) into a nightly CronJob to

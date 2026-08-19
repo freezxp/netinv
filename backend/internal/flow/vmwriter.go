@@ -5,9 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
+
+	"github.com/freezxp/netinv/backend/internal/platform/vmwrite"
 )
 
 // VMWriter publishes aggregates to VictoriaMetrics via its import endpoint,
@@ -15,10 +18,23 @@ import (
 type VMWriter struct {
 	BaseURL string
 	HTTP    *http.Client
+	// Target mirrors flow aggregates to backup instances. Flow writes its own
+	// series rather than going through the ingester, so without this a mirror
+	// would hold everything except the traffic composition — a copy that looks
+	// complete and is not.
+	Target *vmwrite.Target
 }
 
 func NewVMWriter(baseURL string) *VMWriter {
 	return &VMWriter{BaseURL: baseURL, HTTP: &http.Client{Timeout: 15 * time.Second}}
+}
+
+func NewMirroredVMWriter(baseURL string, mirrors []string, log *slog.Logger) *VMWriter {
+	w := NewVMWriter(baseURL)
+	if len(mirrors) > 0 {
+		w.Target = vmwrite.New(baseURL, mirrors, log)
+	}
+	return w
 }
 
 type importLine struct {
@@ -71,6 +87,9 @@ func (w *VMWriter) WriteFlow(ctx context.Context, at time.Time, buckets []Bucket
 				return fmt.Errorf("flow: encode: %w", err)
 			}
 		}
+	}
+	if w.Target != nil {
+		return w.Target.Import(ctx, buf.Bytes())
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		w.BaseURL+"/api/v1/import", &buf)

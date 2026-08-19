@@ -102,6 +102,10 @@ services:
       # a large one — the cost is series (doc 34 §1).
       NETINV_FLOW_TOPN: "${NETINV_FLOW_TOPN:-}"
       NETINV_FLOW_ALLOW: ${NETINV_FLOW_ALLOW:-}
+      # Flow writes its own series rather than going through the ingester, so
+      # it mirrors too — otherwise a backup holds everything except the
+      # traffic composition.
+      NETINV_VM_MIRROR_URL: ${NETINV_VM_MIRROR_URL:-}
 
   ingester:
     restart: unless-stopped
@@ -110,6 +114,13 @@ services:
       NETINV_AMQP_URL: amqp://netinv:${RABBIT_PASSWORD}@rabbitmq:5672/
       NETINV_PG_DSN: postgres://netinv:${PG_PASSWORD}@postgres:5432/netinv
       NETINV_VM_URL: http://victoriametrics:8428
+      # Comma-separated backup VictoriaMetrics instances. Every batch is
+      # copied to each, best-effort: a mirror that is down or slow never
+      # delays or fails production ingest. The copy is therefore complete only
+      # for the time the mirror was reachable — nothing backfills a gap, and
+      # netinv_vm_mirror_failed_total counts them. For a guaranteed copy put
+      # vmagent in front, which has a persistent queue and replays.
+      NETINV_VM_MIRROR_URL: ${NETINV_VM_MIRROR_URL:-}
 
   alerter:
     restart: unless-stopped

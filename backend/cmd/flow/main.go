@@ -12,6 +12,7 @@ import (
 
 	"github.com/freezxp/netinv/backend/internal/flow"
 	"github.com/freezxp/netinv/backend/internal/platform/service"
+	"github.com/freezxp/netinv/backend/internal/platform/vmwrite"
 )
 
 func main() {
@@ -45,10 +46,14 @@ func main() {
 		rt.Log.Info("flow aggregation", "top_n", agg.TopN)
 
 		c := &flow.Collector{
-			Addr:  addr,
-			Agg:   agg,
-			Write: flow.NewVMWriter(vmURL),
-			Log:   rt.Log,
+			Addr: addr,
+			Agg:  agg,
+			// Flow writes its own series rather than going through the
+			// ingester, so it has to mirror too — otherwise a backup holds
+			// everything except the traffic composition.
+			Write: flow.NewMirroredVMWriter(vmURL,
+				vmwrite.ParseMirrors(os.Getenv("NETINV_VM_MIRROR_URL")), rt.Log),
+			Log: rt.Log,
 		}
 		// Empty means accept from anywhere, which is right on a management
 		// network and wrong on an untrusted one. Listing sources is the

@@ -10,17 +10,34 @@ import (
 	"net/http"
 	"time"
 
+	"log/slog"
+
 	"github.com/freezxp/netinv/backend/internal/metrics/app"
 	"github.com/freezxp/netinv/backend/internal/platform/errx"
+	"github.com/freezxp/netinv/backend/internal/platform/vmwrite"
 )
 
 type Writer struct {
 	BaseURL string // e.g. http://victoriametrics:8428
 	HTTP    *http.Client
+	// Target carries the primary plus any backup instances. When set it owns
+	// the POST, so mirroring covers every sample the ingester writes rather
+	// than a subset someone has to reason about.
+	Target *vmwrite.Target
 }
 
 func New(baseURL string) *Writer {
 	return &Writer{BaseURL: baseURL, HTTP: &http.Client{Timeout: 10 * time.Second}}
+}
+
+// NewMirrored writes to baseURL and copies every batch to each mirror,
+// best-effort — see package vmwrite for what that does and does not promise.
+func NewMirrored(baseURL string, mirrors []string, log *slog.Logger) *Writer {
+	w := New(baseURL)
+	if len(mirrors) > 0 {
+		w.Target = vmwrite.New(baseURL, mirrors, log)
+	}
+	return w
 }
 
 // importLine is VM's /api/v1/import format: one JSON object per line.
@@ -47,6 +64,9 @@ func (w *Writer) Write(ctx context.Context, samples []app.EnrichedSample) error 
 		}); err != nil {
 			return errx.Wrap(errx.KindInternal, err, "vm: encode")
 		}
+	}
+	if w.Target != nil {
+		return w.Target.Import(ctx, buf.Bytes())
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		w.BaseURL+"/api/v1/import", &buf)
