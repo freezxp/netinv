@@ -56,6 +56,7 @@ func (h *DeviceHandler) Register(r chi.Router) {
 		// even though it changes nothing the network can see.
 		pw.Post("/interfaces/tags", h.tagInterfaces)
 		pw.Post("/devices/{id}/addresses", h.addAddress)
+		pw.Post("/devices/{id}/merge", h.merge)
 		// Live SNMP walk: read-only, but it loads the device, so operator+.
 		pw.Get("/devices/{id}/oids", h.oids)
 	})
@@ -447,6 +448,38 @@ func (h *DeviceHandler) addAddress(w http.ResponseWriter, r *http.Request) {
 		After: map[string]any{"alt_addresses": addrs},
 	})
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"alt_addresses": addrs})
+}
+
+// merge folds a duplicate into this device: its addresses and tags move here,
+// it is retired, and its schedules stop. Metrics and history are not moved —
+// see the repository for why, and the response says so rather than letting
+// "merged" imply more than happened.
+func (h *DeviceHandler) merge(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		DuplicateID string `json:"duplicate_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.DuplicateID == "" {
+		httpx.WriteError(w, r, errx.New(errx.KindInvalid, "duplicate_id is required"))
+		return
+	}
+	repo := h.Svc.Repo.(*postgres.DeviceRepo)
+	keep := chi.URLParam(r, "id")
+	res, err := repo.Merge(r.Context(), keep, req.DuplicateID)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	// Retiring a device on the strength of an identity guess is exactly the
+	// kind of act someone needs to be able to reconstruct later.
+	h.Svc.Audit.Write(r.Context(), audit.Event{
+		ActorKind: "user", ActorID: httpx.ClaimsFrom(r.Context()).Subject,
+		Action: "device.merge", ResourceKind: "device", ResourceID: keep,
+		Before: map[string]any{"retired_device_id": res.RetiredID,
+			"retired_device": res.RetiredName},
+		After: map[string]any{"kept_device": res.KeptName,
+			"alt_addresses": res.AltAddresses, "tags": res.TagsAdded},
+	})
+	httpx.WriteJSON(w, http.StatusOK, res)
 }
 
 func (h *DeviceHandler) neighbors(w http.ResponseWriter, r *http.Request) {

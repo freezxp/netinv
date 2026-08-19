@@ -191,6 +191,54 @@ export function useDeviceInterfaces(id: string) {
   });
 }
 
+export interface DuplicateMatch {
+  id: string;
+  name: string;
+  mgmt_ip: string;
+  sys_name?: string;
+  serial_number?: string;
+  status: string;
+  site_id: string;
+}
+
+export interface DuplicateGroup {
+  match: "serial" | "sys_name";
+  value: string;
+  devices: DuplicateMatch[];
+}
+
+/** Suspected duplicates: one device reachable on two management addresses.
+ *  Polled rarely — identity only changes when a device syncs. */
+export function useDuplicateDevices() {
+  return useQuery({
+    queryKey: ["devices", "duplicates"],
+    queryFn: () => api<{ data: DuplicateGroup[] }>("/devices/duplicates"),
+    staleTime: 60_000,
+  });
+}
+
+export interface MergeResult {
+  kept_name: string;
+  retired_name: string;
+  alt_addresses: string[];
+  metrics_moved: boolean;
+  history_moved: boolean;
+}
+
+export function useMergeDevices() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ keepID, dupID }: { keepID: string; dupID: string }) =>
+      api<MergeResult>(`/devices/${keepID}/merge`, {
+        method: "POST",
+        body: JSON.stringify({ duplicate_id: dupID }),
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["devices"] });
+    },
+  });
+}
+
 export interface CustomerCount {
   customer: string;
   interfaces: number;

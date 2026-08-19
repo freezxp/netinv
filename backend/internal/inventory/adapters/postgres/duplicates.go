@@ -7,6 +7,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/freezxp/netinv/backend/internal/platform/errx"
+	pgxp "github.com/freezxp/netinv/backend/internal/platform/pgx"
 )
 
 func isNoRows(err error) bool { return errors.Is(err, pgx.ErrNoRows) }
@@ -179,6 +180,147 @@ func (r *DeviceRepo) AddAltAddress(ctx context.Context, deviceID, addr string) (
 	if isNoRows(err) {
 		return nil, errx.New(errx.KindNotFound, "device not found")
 	}
+	if err != nil {
+		return nil, errx.Wrap(errx.KindTransient, err, "record alternate address")
+	}
+	return addrs, nil
+}
+
+// MergeResult reports what a merge actually did, which matters because the
+// word promises more than any monitoring system can deliver.
+type MergeResult struct {
+	KeptID       string   `json:"kept_id"`
+	KeptName     string   `json:"kept_name"`
+	RetiredID    string   `json:"retired_id"`
+	RetiredName  string   `json:"retired_name"`
+	AltAddresses []string `json:"alt_addresses"`
+	TagsAdded    []string `json:"tags_added"`
+	MetricsMoved bool     `json:"metrics_moved"`
+	HistoryMoved bool     `json:"history_moved"`
+}
+
+// Merge folds a duplicate device into the one being kept.
+//
+// What it does: the duplicate's management address and any alternates are
+// recorded on the survivor, its tags are unioned in, and the duplicate is
+// **retired** — soft-deleted, keeping its history and its metrics.
+//
+// What it deliberately does not do: move metrics or history. Every series is
+// keyed by device_id in VictoriaMetrics, so "moving" them would mean rewriting
+// the metrics store; and asset history, topology links and map bindings point
+// at the duplicate's own interface rows, which have their own series. A merge
+// that silently relabelled a year of data would be inventing continuity that
+// never existed — two records were collected separately and that is a fact
+// about the past, not a defect to paper over.
+//
+// So the honest outcome is: from now on everything is collected under the
+// survivor; what was collected under the duplicate stays readable under the
+// duplicate, which is retired rather than purged. MetricsMoved and
+// HistoryMoved are returned as false so a caller states this rather than
+// implying otherwise.
+func (r *DeviceRepo) Merge(ctx context.Context, keepID, dupID string) (*MergeResult, error) {
+	if keepID == dupID {
+		return nil, errx.New(errx.KindInvalid, "a device cannot be merged into itself")
+	}
+	res := &MergeResult{KeptID: keepID, RetiredID: dupID}
+	err := pgxp.InTx(ctx, r.Pool, func(tx pgx.Tx) error {
+		var keepIP, dupIP string
+		var dupStatus string
+		if err := tx.QueryRow(ctx, `
+			SELECT name, host(mgmt_ip) FROM inventory.devices
+			WHERE id = $1 AND status != 'retired'`, keepID).
+			Scan(&res.KeptName, &keepIP); err != nil {
+			if isNoRows(err) {
+				return errx.New(errx.KindNotFound, "the device to keep was not found")
+			}
+			return errx.Wrap(errx.KindTransient, err, "load survivor")
+		}
+		var dupTags []string
+		var dupAlt []string
+		if err := tx.QueryRow(ctx, `
+			SELECT name, host(mgmt_ip), status::text,
+			       coalesce(array(SELECT jsonb_array_elements_text(tags)), '{}'),
+			       coalesce(array(SELECT jsonb_array_elements_text(attrs->'alt_addresses')), '{}')
+			FROM inventory.devices WHERE id = $1`, dupID).
+			Scan(&res.RetiredName, &dupIP, &dupStatus, &dupTags, &dupAlt); err != nil {
+			if isNoRows(err) {
+				return errx.New(errx.KindNotFound, "the duplicate was not found")
+			}
+			return errx.Wrap(errx.KindTransient, err, "load duplicate")
+		}
+		if dupStatus == "retired" {
+			return errx.New(errx.KindConflict, "that device is already retired")
+		}
+
+		// Every address the duplicate answered on moves to the survivor, so
+		// discovery stops proposing them and a search for either finds the
+		// device that is actually being polled.
+		addrs := append([]string{dupIP}, dupAlt...)
+		for _, a := range addrs {
+			got, err := addAltAddressTx(ctx, tx, keepID, a)
+			if err != nil {
+				return err
+			}
+			res.AltAddresses = got
+		}
+
+		// Tags are unioned rather than replaced: they are operator knowledge,
+		// and whichever record someone happened to label is an accident of
+		// which address was discovered first.
+		if len(dupTags) > 0 {
+			var added []string
+			if err := tx.QueryRow(ctx, `
+				UPDATE inventory.devices d SET tags = (
+					SELECT coalesce(jsonb_agg(DISTINCT t), '[]'::jsonb)
+					FROM (SELECT jsonb_array_elements_text(d.tags) AS t
+					      UNION SELECT unnest($2::text[])) u
+				), updated_at = now()
+				WHERE d.id = $1
+				RETURNING coalesce(array(SELECT jsonb_array_elements_text(tags)), '{}')`,
+				keepID, dupTags).Scan(&added); err != nil {
+				return errx.Wrap(errx.KindTransient, err, "merge tags")
+			}
+			res.TagsAdded = added
+		}
+
+		// Retired, not purged: purging would destroy the history and the
+		// interfaces the duplicate's own metrics are keyed to, which is the
+		// one thing a merge must not do.
+		if _, err := tx.Exec(ctx, `
+			UPDATE inventory.devices
+			SET status = 'retired', retired_at = now(), updated_at = now(),
+			    notes = trim(both E'\n' from coalesce(notes,'') ||
+			            E'\nMerged into ' || $2 || ' on ' || to_char(now(),'YYYY-MM-DD'))
+			WHERE id = $1`, dupID, res.KeptName); err != nil {
+			return errx.Wrap(errx.KindTransient, err, "retire duplicate")
+		}
+		// Its schedules stop immediately; leaving them would keep polling a
+		// device the operator has just said does not separately exist.
+		if _, err := tx.Exec(ctx,
+			`UPDATE platform.polling_schedule SET enabled = false WHERE device_id = $1`,
+			dupID); err != nil {
+			return errx.Wrap(errx.KindTransient, err, "disable duplicate schedules")
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return res, nil
+}
+
+func addAltAddressTx(ctx context.Context, tx pgx.Tx, deviceID, addr string) ([]string, error) {
+	var addrs []string
+	err := tx.QueryRow(ctx, `
+		UPDATE inventory.devices
+		SET attrs = jsonb_set(attrs, '{alt_addresses}',
+			coalesce(attrs->'alt_addresses', '[]'::jsonb) ||
+			CASE WHEN coalesce(attrs->'alt_addresses','[]'::jsonb) @> to_jsonb($2::text)
+			     THEN '[]'::jsonb ELSE jsonb_build_array($2::text) END),
+			updated_at = now()
+		WHERE id = $1
+		RETURNING coalesce(array(SELECT jsonb_array_elements_text(attrs->'alt_addresses')), '{}')`,
+		deviceID, addr).Scan(&addrs)
 	if err != nil {
 		return nil, errx.Wrap(errx.KindTransient, err, "record alternate address")
 	}

@@ -647,3 +647,95 @@ func TestAddAltAddressIsIdempotent(t *testing.T) {
 		t.Fatal("accepted an address for a device that does not exist")
 	}
 }
+
+// Merge folds a duplicate into the survivor. What it must not do is invent
+// continuity: every series is keyed to the device that collected it, so the
+// duplicate is retired rather than purged and its data stays readable.
+func TestMergeRetiresTheDuplicateAndKeepsItsAddresses(t *testing.T) {
+	repo, dr, ctx := newSiteRepo(t)
+	site := addSite(t, repo, ctx, "merge-site")
+	addDevice(t, dr, ctx, site.ID, "10.100.0.1", domain.DevicePending)
+	addDevice(t, dr, ctx, site.ID, "10.100.0.2", domain.DevicePending)
+
+	var keepID, dupID string
+	if err := dr.Pool.QueryRow(ctx,
+		`SELECT id FROM inventory.devices WHERE host(mgmt_ip)='10.100.0.1'`).Scan(&keepID); err != nil {
+		t.Fatal(err)
+	}
+	if err := dr.Pool.QueryRow(ctx,
+		`SELECT id FROM inventory.devices WHERE host(mgmt_ip)='10.100.0.2'`).Scan(&dupID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dr.Pool.Exec(ctx,
+		`UPDATE inventory.devices SET tags='["edge"]' WHERE id=$1`, dupID); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := dr.Merge(ctx, keepID, dupID)
+	if err != nil {
+		t.Fatalf("merge: %v", err)
+	}
+	if res.MetricsMoved || res.HistoryMoved {
+		t.Error("merge claimed to move metrics or history, which it cannot")
+	}
+
+	// The duplicate's address moves so discovery stops proposing it and a
+	// search for either address finds the device actually being polled.
+	var alt []string
+	var tags []string
+	if err := dr.Pool.QueryRow(ctx, `
+		SELECT coalesce(array(SELECT jsonb_array_elements_text(attrs->'alt_addresses')),'{}'),
+		       coalesce(array(SELECT jsonb_array_elements_text(tags)),'{}')
+		FROM inventory.devices WHERE id=$1`, keepID).Scan(&alt, &tags); err != nil {
+		t.Fatal(err)
+	}
+	if len(alt) != 1 || alt[0] != "10.100.0.2" {
+		t.Fatalf("survivor's alt addresses = %v", alt)
+	}
+	if len(tags) != 1 || tags[0] != "edge" {
+		t.Fatalf("tags were not merged: %v", tags)
+	}
+
+	// Retired, not deleted: purging would destroy the history and the
+	// interfaces its own metrics are keyed to.
+	var status string
+	if err := dr.Pool.QueryRow(ctx,
+		`SELECT status::text FROM inventory.devices WHERE id=$1`, dupID).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != "retired" {
+		t.Fatalf("duplicate is %q, want retired", status)
+	}
+	// And it stops being polled, or the merge changed nothing operationally.
+	var enabled int
+	if err := dr.Pool.QueryRow(ctx,
+		`SELECT count(*) FROM platform.polling_schedule WHERE device_id=$1 AND enabled`,
+		dupID).Scan(&enabled); err != nil {
+		t.Fatal(err)
+	}
+	if enabled != 0 {
+		t.Fatalf("%d schedules still enabled on the retired duplicate", enabled)
+	}
+
+	// It disappears from the duplicate report, so the list empties as an
+	// operator works through it.
+	groups, err := dr.Duplicates(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, g := range groups {
+		for _, d := range g.Devices {
+			if d.ID == dupID {
+				t.Fatalf("retired duplicate still reported: %+v", g)
+			}
+		}
+	}
+
+	// Merging the same pair twice is a mistake, not an idempotent no-op.
+	if _, err := dr.Merge(ctx, keepID, dupID); errx.KindOf(err) != errx.KindConflict {
+		t.Fatalf("second merge gave %v, want conflict", errx.KindOf(err))
+	}
+	if _, err := dr.Merge(ctx, keepID, keepID); errx.KindOf(err) != errx.KindInvalid {
+		t.Fatal("merging a device into itself was accepted")
+	}
+}
