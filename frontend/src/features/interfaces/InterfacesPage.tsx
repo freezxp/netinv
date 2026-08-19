@@ -34,9 +34,11 @@ export function InterfacesPage() {
   const [customer, setCustomer] = useState("");
   const [page, setPage] = useState(0);
   const [importing, setImporting] = useState(false);
+  const [upOnly, setUpOnly] = useState(false);
+  const [busyOnly, setBusyOnly] = useState(false);
   const q = useDebounced(typed, 300);
   const customers = useCustomers();
-  const search = useInterfaceSearch(q, customer, PAGE, page * PAGE);
+  const search = useInterfaceSearch(q, customer, upOnly, PAGE, page * PAGE);
   const rows = search.data?.data ?? [];
   const total = search.data?.total ?? 0;
 
@@ -58,18 +60,36 @@ export function InterfacesPage() {
   }, [util.data]);
 
   const [sortByUtil, setSortByUtil] = useState(false);
+  // Idle is filtered client-side because traffic lives in the metrics store,
+  // not the database — there is no column to filter on. It therefore applies
+  // to the rows already fetched, which the footer says out loud rather than
+  // letting "12 of 4000" look like a broken page.
+  const idleHidden = useMemo(
+    () =>
+      busyOnly
+        ? rows.filter(
+            (r) => (bpsByIf.get(`${r.device_id}|${r.if_index}`) ?? 0) <= 0,
+          ).length
+        : 0,
+    [busyOnly, rows, bpsByIf],
+  );
   const shown = useMemo(() => {
-    if (!sortByUtil) return rows;
+    const base = busyOnly
+      ? rows.filter(
+          (r) => (bpsByIf.get(`${r.device_id}|${r.if_index}`) ?? 0) > 0,
+        )
+      : rows;
+    if (!sortByUtil) return base;
     // Sorting is over the current page only, and says so in the UI: the server
     // orders by device and ifIndex, and re-ranking the whole estate by
     // utilization would mean asking the metrics store first and the database
     // second. Claiming "busiest interfaces" while showing the busiest hundred
     // alphabetically would be a lie.
-    return [...rows].sort(
+    return [...base].sort(
       (a, b) =>
         pct(b, bpsByIf) - pct(a, bpsByIf) || bps(b, bpsByIf) - bps(a, bpsByIf),
     );
-  }, [rows, sortByUtil, bpsByIf]);
+  }, [rows, busyOnly, sortByUtil, bpsByIf]);
 
   return (
     <div className="mx-auto flex max-w-6xl flex-col gap-4">
@@ -79,6 +99,23 @@ export function InterfacesPage() {
           {search.isLoading ? "…" : `${total} matching`}
         </span>
         <div className="flex-1" />
+        <Button
+          variant={upOnly ? "primary" : "ghost"}
+          onClick={() => {
+            setUpOnly((v) => !v);
+            setPage(0);
+          }}
+          title="Exclude interfaces whose last synced oper status is down"
+        >
+          {upOnly ? "Hiding down" : "Hide down"}
+        </Button>
+        <Button
+          variant={busyOnly ? "primary" : "ghost"}
+          onClick={() => setBusyOnly((v) => !v)}
+          title="Exclude interfaces carrying no measurable traffic in the current window"
+        >
+          {busyOnly ? "Hiding idle" : "Hide idle"}
+        </Button>
         <Button
           variant="ghost"
           onClick={() => setSortByUtil((v) => !v)}
@@ -125,6 +162,14 @@ export function InterfacesPage() {
             </span>
           )}
         </div>
+        <p className="mt-2 text-xs text-slate-500">
+          <strong>Hide down</strong> filters in the database, so the total and
+          the paging follow it — it uses the oper status recorded by the last
+          sync, which is the same value the State column shows.{" "}
+          <strong>Hide idle</strong> can only filter the rows already fetched,
+          because traffic lives in the metrics store and there is no column to
+          filter on; the footer says how many it removed.
+        </p>
         <p className="mt-2 text-xs text-slate-500">
           Case-insensitive substring across alias, description, name and
           customer. The customer picker is an exact match instead: a billing run
@@ -187,6 +232,8 @@ export function InterfacesPage() {
           </Button>
           <span className="text-slate-500">
             {page * PAGE + 1}–{Math.min((page + 1) * PAGE, total)} of {total}
+            {upOnly && " · down excluded"}
+            {busyOnly && ` · ${idleHidden} idle hidden on this page`}
             {sortByUtil && " · sorted within this page"}
           </span>
           <Button

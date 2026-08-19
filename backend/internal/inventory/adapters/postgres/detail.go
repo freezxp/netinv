@@ -273,6 +273,11 @@ type InterfaceSearchRow struct {
 type InterfaceFilter struct {
 	Q        string
 	Customer string
+	// UpOnly excludes interfaces whose last synced oper status is not up.
+	// It filters on the same column the list displays, so what is hidden is
+	// exactly what was showing as down — including the staleness that comes
+	// with it, since oper status is a sync snapshot and sync is hours apart.
+	UpOnly bool
 }
 
 func (r *DeviceRepo) SearchInterfaces(ctx context.Context, q string, limit, offset int) ([]InterfaceSearchRow, int, error) {
@@ -293,13 +298,14 @@ func (r *DeviceRepo) FindInterfaces(ctx context.Context, f InterfaceFilter, limi
 	where := `i.state != 'removed' AND d.status != 'retired'
 		  AND ($1 = '' OR i.alias ILIKE $2 OR i.descr ILIKE $2 OR i.name ILIKE $2
 		       OR i.customer ILIKE $2)
-		  AND ($3 = '' OR lower(i.customer) = lower($3))`
+		  AND ($3 = '' OR lower(i.customer) = lower($3))
+		  AND (NOT $4::bool OR i.oper_status = 1)`
 	var total int
 	if err := r.Pool.QueryRow(ctx, `
 		SELECT count(*)
 		FROM inventory.interfaces i
 		JOIN inventory.devices d ON d.id = i.device_id
-		WHERE `+where, f.Q, pattern, f.Customer).Scan(&total); err != nil {
+		WHERE `+where, f.Q, pattern, f.Customer, f.UpOnly).Scan(&total); err != nil {
 		return nil, 0, errx.Wrap(errx.KindTransient, err, "count interface search")
 	}
 	rows, err := r.Pool.Query(ctx, `
@@ -312,7 +318,7 @@ func (r *DeviceRepo) FindInterfaces(ctx context.Context, f InterfaceFilter, limi
 		JOIN inventory.devices d ON d.id = i.device_id
 		WHERE `+where+`
 		ORDER BY d.name, i.if_index
-		LIMIT $4 OFFSET $5`, f.Q, pattern, f.Customer, limit, offset)
+		LIMIT $5 OFFSET $6`, f.Q, pattern, f.Customer, f.UpOnly, limit, offset)
 	if err != nil {
 		return nil, 0, errx.Wrap(errx.KindTransient, err, "interface search")
 	}

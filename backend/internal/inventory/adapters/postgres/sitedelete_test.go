@@ -411,3 +411,55 @@ func TestSyncDoesNotClearCustomerOrTags(t *testing.T) {
 		t.Errorf("sync cleared the tags: %v", tags)
 	}
 }
+
+// "Hide down" filters in the database so the total and the paging follow it.
+// Dropping down interfaces from the page after it arrives would leave a
+// footer reading "100 of 4000" above a list of twelve.
+func TestFindInterfacesCanExcludeDownPorts(t *testing.T) {
+	repo, dr, ctx := newSiteRepo(t)
+	site := addSite(t, repo, ctx, "updown-site")
+	addDevice(t, dr, ctx, site.ID, "10.95.0.1", domain.DevicePending)
+
+	var deviceID string
+	if err := dr.Pool.QueryRow(ctx,
+		`SELECT id FROM inventory.devices WHERE site_id = $1`, site.ID).
+		Scan(&deviceID); err != nil {
+		t.Fatal(err)
+	}
+	for _, i := range []struct {
+		idx  int
+		name string
+		oper int
+	}{{1, "up-port", 1}, {2, "down-port", 2}, {3, "unknown-port", 0}} {
+		if _, err := dr.Pool.Exec(ctx, `
+			INSERT INTO inventory.interfaces (id, device_id, if_index, name, oper_status, state)
+			VALUES ($1,$2,$3,$4,$5,'present')`,
+			id.New("if"), deviceID, i.idx, i.name, i.oper); err != nil {
+			t.Fatalf("seed interface: %v", err)
+		}
+	}
+
+	all, total, err := dr.FindInterfaces(ctx, InterfaceFilter{}, 0, 0)
+	if err != nil {
+		t.Fatalf("unfiltered: %v", err)
+	}
+	if total != 3 || len(all) != 3 {
+		t.Fatalf("unfiltered returned %d rows (total %d), want 3", len(all), total)
+	}
+
+	up, upTotal, err := dr.FindInterfaces(ctx, InterfaceFilter{UpOnly: true}, 0, 0)
+	if err != nil {
+		t.Fatalf("up only: %v", err)
+	}
+	// The count has to move with the filter, or paging lies.
+	if upTotal != 1 || len(up) != 1 || up[0].Name != "up-port" {
+		t.Fatalf("up-only returned %d rows (total %d): %+v", len(up), upTotal, up)
+	}
+	// An interface whose oper status was never recorded is not "up". Treating
+	// unknown as up would quietly reintroduce exactly what the filter removes.
+	for _, r := range up {
+		if r.OperStatus != 1 {
+			t.Errorf("row %s has oper %d in an up-only result", r.Name, r.OperStatus)
+		}
+	}
+}

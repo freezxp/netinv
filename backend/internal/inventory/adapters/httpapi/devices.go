@@ -269,6 +269,7 @@ func (h *DeviceHandler) searchInterfaces(w http.ResponseWriter, r *http.Request)
 	rows, total, err := repo.FindInterfaces(r.Context(), postgres.InterfaceFilter{
 		Q:        strings.TrimSpace(q.Get("q")),
 		Customer: strings.TrimSpace(q.Get("customer")),
+		UpOnly:   q.Get("up") == "1",
 	}, limit, offset)
 	if err != nil {
 		httpx.WriteError(w, r, err)

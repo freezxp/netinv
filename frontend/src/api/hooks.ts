@@ -255,11 +255,12 @@ export interface InterfaceSearchRow {
 export function useInterfaceSearch(
   q: string,
   customer = "",
+  upOnly = false,
   limit = 100,
   offset = 0,
 ) {
   return useQuery({
-    queryKey: ["interfaces", q, customer, limit, offset],
+    queryKey: ["interfaces", q, customer, upOnly, limit, offset],
     queryFn: () => {
       const p = new URLSearchParams({
         q,
@@ -267,6 +268,10 @@ export function useInterfaceSearch(
         limit: String(limit),
         offset: String(offset),
       });
+      // Server-side, so the total and the paging reflect it. Down interfaces
+      // are excluded by the database rather than dropped from the page after
+      // it arrives, which would leave "100 of 4000" describing a page of 12.
+      if (upOnly) p.set("up", "1");
       return api<{ data: InterfaceSearchRow[]; total: number }>(
         `/interfaces?${p}`,
       );
