@@ -2,6 +2,7 @@ package reports
 
 import (
 	"context"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -256,14 +257,16 @@ func TestByCustomerSumsInsideTheQuery(t *testing.T) {
 	if !strings.Contains(expr, "sum by (dir)") {
 		t.Errorf("expression does not sum inside the query:\n%s", expr)
 	}
-	for _, want := range []string{`device_id="d_a"`, `device_id="d_b"`, `if_index="7"`} {
+	for _, want := range []string{`device_id="d_a"`, `device_id="d_b"`, `if_index=~"7"`} {
 		if !strings.Contains(expr, want) {
 			t.Errorf("expression is missing %s:\n%s", want, expr)
 		}
 	}
-	// A regex over both label sets would match the cross product, sweeping one
-	// customer's port on another customer's device into the total — invisible
-	// in the output, and it lands on an invoice.
+	// device_id stays an exact match while if_index is a regex. That asymmetry
+	// is the correctness property: pinning the device makes the index pattern
+	// safe, whereas patterns on both sides match the cross product and would
+	// sweep one customer's port on another customer's device into the total —
+	// invisible in the output, and it lands on an invoice.
 	if strings.Contains(expr, `device_id=~`) {
 		t.Errorf("expression uses a regex across device_id, which matches the cross product:\n%s", expr)
 	}
@@ -322,5 +325,55 @@ func TestByCustomerKeepsUntaggedInterfaces(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("untagged group missing from %+v", rep.Rows)
+	}
+}
+
+// VictoriaMetrics refuses queries over -search.maxQueryLen (16 KiB by
+// default), and a fleet-wide grouped report first hit that at 49 KiB. Groups
+// are independent, so batching them across queries changes no number —
+// unlike splitting one group, which would break the sum the aggregate depends
+// on, so a group is never split.
+func TestBatchGroupsStaysUnderTheQueryLimit(t *testing.T) {
+	groups := map[string][]postgres.InterfaceSearchRow{}
+	var names []string
+	// Spread across devices on purpose. Collapsing a customer's ports on one
+	// device into a single indexed selector is what keeps these expressions
+	// small, so a fixture with everything on one device would never reach the
+	// limit — 1200 such interfaces fit in one query.
+	for c := range 120 {
+		name := "Customer " + strconv.Itoa(c)
+		names = append(names, name)
+		for d := range 4 {
+			for i := range 5 {
+				groups[name] = append(groups[name], postgres.InterfaceSearchRow{
+					DeviceID: "d_01KZFQPJKD9GWDB3ESXNN9RE" + strconv.Itoa(d),
+					IfIndex:  i + 1, Customer: name,
+				})
+			}
+		}
+	}
+	series := func(sel string) string {
+		return "label_set(rate(netinv_if_in_octets_total{" + sel + "}[300s]) * 8, \"dir\", \"in\")"
+	}
+	batches := batchGroups(names, groups, series)
+	if len(batches) < 2 {
+		t.Fatalf("1200 interfaces packed into %d batch(es) — the limit is not being applied", len(batches))
+	}
+	seen := map[string]bool{}
+	for _, b := range batches {
+		if len(b) > maxQueryLen {
+			t.Errorf("batch is %d bytes, over the %d limit", len(b), maxQueryLen)
+		}
+		for _, n := range names {
+			if strings.Contains(b, `"`+n+`"`) {
+				if seen[n] {
+					t.Errorf("group %q appears in more than one batch — its sum is split", n)
+				}
+				seen[n] = true
+			}
+		}
+	}
+	if len(seen) != len(names) {
+		t.Errorf("%d of %d groups made it into a batch", len(seen), len(names))
 	}
 }
