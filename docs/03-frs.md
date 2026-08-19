@@ -2,7 +2,7 @@
 
 **Status:** review · **Depends on:** 02
 
-Requirement IDs: `FR-<MODULE>-<nn>`. Every requirement is testable; acceptance criteria are implied by the MUST/SHOULD phrasing and verified per doc 24. Modules: AUTH, RBAC, DEV (device/inventory), CRED, COLL (collection), MET (metrics), SYNC, ALR (alerting), NOT (notification), MAP (weathermap), DASH, EXP (export), AUD (audit), SET (settings), PLT (platform mgmt), API.
+Requirement IDs: `FR-<MODULE>-<nn>`. Every requirement is testable; acceptance criteria are implied by the MUST/SHOULD phrasing and verified per doc 24. Modules: AUTH, RBAC, DEV (device/inventory), RPT (reporting), CRED, COLL (collection), MET (metrics), SYNC, ALR (alerting), NOT (notification), MAP (weathermap), DASH, EXP (export), AUD (audit), SET (settings), PLT (platform mgmt), API.
 
 ## AUTH — Authentication
 
@@ -33,6 +33,14 @@ Requirement IDs: `FR-<MODULE>-<nn>`. Every requirement is testable; acceptance c
 - **FR-DEV-07** Asset history MUST record every detected change (field, old, new, detected-at, source sync run) retained ≥ 12 months.
 - **FR-DEV-08** Deleting a device MUST be soft (state `retired`) preserving history and metrics; hard purge is an Admin action with confirmation, cascading per doc 08.
 - **FR-DEV-09** Interfaces MUST be tracked as first-class records keyed by device + ifIndex with rename survival (match on ifName/ifAlias when ifIndex shifts after reboot — doc 11 §identity).
+- **FR-DEV-10** Interfaces MUST be searchable across the whole fleet by ifAlias, ifDescr, ifName or customer, independently of which device owns them. Alias is the field operators actually curate — circuit ids, customer names, the far end of a link — and reading it one device at a time made "which port is the London circuit on" answerable only by someone who already knew.
+- **FR-DEV-11** Interfaces MUST carry an operator-owned `customer` and free-form `tags`, assignable in bulk by CSV import, and **never written by sync**. ifAlias is the device's field: a reprovision or a different engineer overwrites it and the next sync follows, so anything derived from an ifAlias substring stops being derivable without warning. The import MUST resolve devices by name or management address and interfaces by name or ifIndex, report rows that match nothing or match ambiguously rather than guessing, and apply atomically — a half-applied import cannot be safely re-run, and a wrong guess lands on an invoice.
+
+## RPT — Reporting
+
+- **FR-RPT-01** A bandwidth report MUST answer what a *set* of interfaces did over a closed period: average, 95th percentile and peak bits/second per direction, bytes transferred, and utilization of the busier direction. Selection is by the FR-DEV-10 search, including by customer. Utilization MUST be reported as unknown, not zero, where ifSpeed is absent — a PPPoE session has none, and 0% reads as idle.
+- **FR-RPT-02** Reports MUST be groupable per customer, and the aggregate MUST be summed **before** it is rolled up. Adding per-interface peaks assumes every circuit peaked at the same instant and overstates; adding per-interface 95th percentiles is not a percentile of anything. Interfaces with no customer are grouped as untagged rather than omitted — an invoice-shaped report that silently drops what nobody has tagged is how a circuit goes unbilled for a year.
+- **FR-RPT-03** Every report MUST be exportable as CSV carrying its own window, because its destination is a spreadsheet, an invoice or a capacity meeting, and a report that cannot leave the tool is one somebody retypes.
 
 ## CRED — Credential management
 

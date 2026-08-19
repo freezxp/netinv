@@ -65,6 +65,8 @@ real network appears in them.*
 - **Stores** metrics in VictoriaMetrics for **2 years by default** (`NETINV_VM_RETENTION`), inventory/config/audit in PostgreSQL. A capacity view reports what the disk actually sustains against what retention asks for, measured rather than estimated.
 - **Shows** a single dashboard: status summary, inbound and outbound bandwidth per site, active alerts, Top-N lists, capacity watchlist, and an editable utilization-colored weathermap. Every chart shares one time range — **Cacti's graph timespans**, from Half Hour to 2 Years.
 - **Tunes** collection cadence fleet-wide from the UI (1/5/10/15 minutes), with query resolution and `rate()` windows following automatically.
+- **Finds** any interface in the fleet by what someone wrote on it — ifAlias, description, name or customer — and tags interfaces with a customer in bulk from CSV, kept clear of sync so a reprovision cannot quietly erase it.
+- **Reports** interface bandwidth over a period — average, 95th percentile, peak and totals per direction — filtered by customer and optionally grouped one row per customer, exportable as CSV. The aggregate is summed before the percentile is taken, so a customer's figures are of their combined traffic rather than a sum of per-circuit numbers.
 - **Alerts** via Email, Webhook, and Slack with severity-based routing, ack/silence workflow.
 - **Scales** from a single site to 100k devices across multiple datacenters via site-local pollers phoning home over RabbitMQ.
 
