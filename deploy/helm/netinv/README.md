@@ -11,8 +11,10 @@ the database without rotating its password. Every manifest also passes
 `helm lint` and `kubeconform --strict` across six value sets in CI.
 
 What that install is *not*: a soak. It has not run for 72 hours, nothing has
-been killed underneath it, and it has never held a real fleet. The chart version
-stays below 1.0.0 until it has. Expect to find problems on cluster shapes other
+been killed underneath it, and it has never held a real fleet. That gate is open
+in ADR-023, and **the chart version does not track it** — the chart shares the
+product's release version, so a 1.x chart means the product is at 1.x and says
+nothing about soak coverage. Expect to find problems on cluster shapes other
 than this one; please report them.
 
 ## Install

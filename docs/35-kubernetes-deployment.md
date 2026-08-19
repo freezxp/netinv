@@ -12,7 +12,9 @@ wrong the first time it was run for real.
 >
 > **What that is not: a soak.** It has not run for 72 hours, nothing has been
 > killed underneath it, and it has never held a real fleet. That gate is still
-> open (ADR-023) and the chart version stays below 1.0.0 until it closes. On a
+> open (ADR-023). **The chart version no longer says anything about it**: chart,
+> appVersion and the app now share one release version, so a 1.x chart means the
+> product is at 1.x and nothing more. Track the soak in ADR-023, not here. On a
 > cluster unlike the one above, expect to find things — and please report them.
 
 ## 1. What you need

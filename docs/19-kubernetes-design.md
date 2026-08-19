@@ -29,7 +29,7 @@ Workload notes:
 
 ```
 deploy/helm/netinv/
-  Chart.yaml                   # chart version trails appVersion until installed on a cluster
+  Chart.yaml                   # version == appVersion == the product's release version
   values.yaml                  # every option documented (NFR-54)
   values-prod.example.yaml     # external data tier, pinned digest, real cert
   README.md                    # install + upgrade/rollback runbook (§7)
