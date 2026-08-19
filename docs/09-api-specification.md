@@ -109,6 +109,15 @@ Below, one full worked example per resource family; sibling endpoints share shap
 | GET | `/interfaces?q=…&customer=…&up=1&sort=…&dir=…&limit=…&offset=…` (fleet-wide search) | `devices:read` | 200 |
 | GET | `/reports/bandwidth?q=…&customer=…&group=customer&from=…&to=…&format=csv` | `devices:read` | 200, 422 (backwards window) |
 | GET | `/interfaces/customers` (assigned names + counts) | `devices:read` | 200 |
+| GET | `/settings/metrics-mirror` | `platform:read` | 200 |
+| PUT | `/settings/metrics-mirror` | `settings:write` | 200, 422 (bad destination) |
+| POST | `/settings/metrics-mirror/test` | `settings:write` | 200 `{ok,detail}` |
+**Metrics copy** stores where collected metrics are duplicated (`config.settings`, key `metrics.mirror`) so an operator can point it at another VictoriaMetrics without editing a file and restarting a service. The ingester reads it through a 30-second cache, so a change applies on the next batch; `NETINV_VM_MIRROR_URL` remains a floor that the UI cannot switch off, for a copy that is a requirement rather than a convenience.
+
+Destinations are validated on the way in rather than discovered later: a missing scheme, a wrong scheme, no host, or a path all fail the write — `vm-backup:8428` reads as correct in a text box and produces a request to a relative path that fails on every batch, and a path is wrong because the writer appends `/api/v1/import` itself. Duplicates collapse, since the same instance twice is the same copy and twice the work. `enabled` is stored separately from the list so switching copying off for maintenance does not lose the addresses. The test endpoint POSTs an **empty** import body: a real sample would leave a fabricated series in the operator's backup, which is a strange thing for a test button to do.
+
+**`netinv-flow` cannot read this setting** — it has no database access by design (doc 05), and it writes its own aggregates directly, so flow is mirrored only by `NETINV_VM_MIRROR_URL` on that container. The UI says so where the setting is, because a copy that silently omits traffic composition is exactly the kind of backup someone discovers the shape of during an incident.
+
 | POST | `/interfaces/tags` (CSV or JSON bulk assignment) | `devices:write` | 200 `{matched,updated,unmatched,ambiguous}` |
 **Interface customer and tags** are operator-owned columns that sync never writes. ifAlias is where this information usually lives, and it is the *device's* field: a reprovision or a different engineer overwrites it and the next sync dutifully follows, so reporting a customer's usage off an ifAlias substring works right up until it doesn't. `customer` is a column rather than a tag because it is the axis reports group by; `tags` stay free-form with no vocabulary.
 

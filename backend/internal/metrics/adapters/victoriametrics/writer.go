@@ -40,6 +40,16 @@ func NewMirrored(baseURL string, mirrors []string, log *slog.Logger) *Writer {
 	return w
 }
 
+// NewMirroredDynamic takes the destination list as a function, so a change
+// made in the UI takes effect on the next batch rather than the next restart.
+// The target is always installed: the list is allowed to be empty now and
+// non-empty a minute later.
+func NewMirroredDynamic(baseURL string, mirrors func() []string, log *slog.Logger) *Writer {
+	w := New(baseURL)
+	w.Target = vmwrite.NewDynamic(baseURL, mirrors, log)
+	return w
+}
+
 // importLine is VM's /api/v1/import format: one JSON object per line.
 type importLine struct {
 	Metric     map[string]string `json:"metric"`

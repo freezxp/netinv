@@ -12,6 +12,7 @@ import (
 	"github.com/freezxp/netinv/backend/internal/platform/amqpx"
 	"github.com/freezxp/netinv/backend/internal/platform/pgx"
 	"github.com/freezxp/netinv/backend/internal/platform/service"
+	"github.com/freezxp/netinv/backend/internal/platform/settings"
 	"github.com/freezxp/netinv/backend/internal/platform/vmwrite"
 )
 
@@ -36,13 +37,17 @@ func main() {
 			return err
 		}
 		defer mq.Close()
+		// Destinations come from the UI setting, with NETINV_VM_MIRROR_URL as a
+		// floor that cannot be switched off from a browser — for a copy that is
+		// a requirement rather than an operator's convenience. Read per batch
+		// through a cache, so a change made in the UI applies without a restart.
+		mirrors := settings.NewCache(&settings.Store{Pool: pool}, 30*time.Second)
+		fixed := vmwrite.ParseMirrors(os.Getenv("NETINV_VM_MIRROR_URL"))
 		ing := &app.Ingester{
 			Labels: &postgres.LabelSource{Pool: pool},
-			// NETINV_VM_MIRROR_URL copies every batch to one or more backup
-			// instances, best-effort: a mirror that is down must never stall
-			// or fail production ingest (see internal/platform/vmwrite).
-			Writer: victoriametrics.NewMirrored(vmURL,
-				vmwrite.ParseMirrors(os.Getenv("NETINV_VM_MIRROR_URL")), rt.Log),
+			Writer: victoriametrics.NewMirroredDynamic(vmURL, func() []string {
+				return append(append([]string{}, fixed...), mirrors.Targets(ctx)...)
+			}, rt.Log),
 			Log: rt.Log,
 		}
 		rt.Health.SetReady(true)

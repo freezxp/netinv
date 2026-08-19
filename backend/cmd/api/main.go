@@ -55,6 +55,7 @@ import (
 	"github.com/freezxp/netinv/backend/internal/platform/pgx"
 	"github.com/freezxp/netinv/backend/internal/platform/redisx"
 	"github.com/freezxp/netinv/backend/internal/platform/service"
+	"github.com/freezxp/netinv/backend/internal/platform/settings"
 	"github.com/freezxp/netinv/backend/internal/platform/wire"
 	"github.com/freezxp/netinv/backend/internal/reports"
 )
@@ -386,6 +387,11 @@ func main() {
 						},
 					},
 					Checker: checker,
+				}).Register(g)
+				(&settings.Handler{
+					Store:   &settings.Store{Pool: pool},
+					Checker: checker,
+					Audit:   auditor,
 				}).Register(g)
 				mapStore := &maps.Store{Pool: pool}
 				(&maps.Handler{

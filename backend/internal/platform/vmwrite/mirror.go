@@ -45,9 +45,13 @@ var (
 // Target is a primary VictoriaMetrics plus zero or more mirrors.
 type Target struct {
 	Primary string
-	Mirrors []string
-	Log     *slog.Logger
-	HTTP    *http.Client
+	// MirrorsFn is read per batch rather than captured once, so a mirror
+	// configured in the UI takes effect without restarting the service that
+	// writes the metrics. A setting that needs a restart to apply is a setting
+	// people change in a config file instead.
+	MirrorsFn func() []string
+	Log       *slog.Logger
+	HTTP      *http.Client
 	// MirrorHTTP is separate on purpose: a mirror gets a short timeout of its
 	// own so a wedged backup cannot hold a goroutine open for the primary's
 	// much longer one.
@@ -70,8 +74,14 @@ func ParseMirrors(v string) []string {
 }
 
 func New(primary string, mirrors []string, log *slog.Logger) *Target {
+	return NewDynamic(primary, func() []string { return mirrors }, log)
+}
+
+// NewDynamic takes the mirror list as a function, for callers that read it
+// from configuration that can change while the process runs.
+func NewDynamic(primary string, mirrors func() []string, log *slog.Logger) *Target {
 	return &Target{
-		Primary: primary, Mirrors: mirrors, Log: log,
+		Primary: primary, MirrorsFn: mirrors, Log: log,
 		HTTP:       &http.Client{Timeout: 15 * time.Second},
 		MirrorHTTP: &http.Client{Timeout: 10 * time.Second},
 	}
@@ -87,10 +97,17 @@ func (t *Target) Import(ctx context.Context, body []byte) error {
 	if err := post(ctx, t.HTTP, t.Primary, body); err != nil {
 		return err
 	}
-	for _, m := range t.Mirrors {
+	for _, m := range t.mirrors() {
 		t.mirror(ctx, m, body)
 	}
 	return nil
+}
+
+func (t *Target) mirrors() []string {
+	if t.MirrorsFn == nil {
+		return nil
+	}
+	return t.MirrorsFn()
 }
 
 // mirror writes to one backup target, swallowing every failure.

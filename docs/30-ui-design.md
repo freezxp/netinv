@@ -128,6 +128,8 @@ Interface bandwidth over a period: search by alias, description, name or custome
 
 The report runs on an explicit action rather than as you type: each one rolls up every matching series across the whole period, which is expensive enough to be something an operator asks for on purpose. Periods stop at 24 hours on the short end — anything shorter is a graph question. **One row per customer** is a checkbox, not a separate page: the same search and period, collapsed. The copy states that the figures are of combined traffic, summed before the percentile and peak are taken rather than added afterwards — it is the difference between a defensible invoice line and an inflated one, and nothing in the numbers themselves would reveal which you were looking at. CSV export goes through a token-authorized fetch, not a plain link, because the session is a bearer token and a link would download a 401 page named like a report.
 
+Settings also carries **Metrics copy**: enable, a destination list one per line, and a test button that probes the address the way the writers use it, so a typo is found while someone is looking at the form rather than an hour later in a counter nobody watches. The card states the two things that are easy to assume and wrong — the copy is best-effort so it holds only what arrived while the destination was reachable, and flow aggregates come from a service with no database access, so this setting cannot reach them.
+
 ## 6. Alerts `/alerts`
 
 Tabs: Active (default: firing+acked, severity→recency), History, Silences, Rules.
