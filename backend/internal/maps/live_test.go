@@ -292,10 +292,17 @@ func TestLinkLiveCarriesTheDataAge(t *testing.T) {
 			t.Errorf("payload missing %s: %s", want, raw)
 		}
 	}
-	// staleAfter has to be longer than a poll cycle at the default cadence, or
-	// every link flickers to stale between samples.
-	if staleAfter <= 60 {
-		t.Errorf("staleAfter = %ds, shorter than the default poll cycle", staleAfter)
+	// The threshold has to scale with the cadence. A fixed two minutes was
+	// wrong the moment traffic polling moved to five minutes from the UI — a
+	// supported setting — because every healthy link is then older than the
+	// threshold for most of every cycle and reports itself stale.
+	fast := &LiveAssembler{}
+	if got := fast.staleAfter(); got != 120 {
+		t.Errorf("staleAfter at the default cadence = %d, want the 120s floor", got)
+	}
+	slow := &LiveAssembler{PollInterval: func() time.Duration { return 5 * time.Minute }}
+	if got := slow.staleAfter(); got != 600 {
+		t.Errorf("staleAfter at a 5m cadence = %d, want 600 (two cycles)", got)
 	}
 }
 

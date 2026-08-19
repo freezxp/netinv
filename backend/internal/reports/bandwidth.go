@@ -26,12 +26,15 @@ import (
 type Row struct {
 	DeviceID   string `json:"device_id"`
 	DeviceName string `json:"device_name"`
-	Customer   string `json:"customer,omitempty"`
-	IfIndex    int    `json:"if_index"`
-	Name       string `json:"name"`
-	Alias      string `json:"alias"`
-	Descr      string `json:"descr"`
-	SpeedBPS   int64  `json:"speed_bps"`
+	// Not omitempty: on a grouped row this *is* the row's identity, and the
+	// untagged group's name is the empty string — omitting it left a consumer
+	// unable to tell "the untagged group" from "this field is missing".
+	Customer string `json:"customer"`
+	IfIndex  int    `json:"if_index"`
+	Name     string `json:"name"`
+	Alias    string `json:"alias"`
+	Descr    string `json:"descr"`
+	SpeedBPS int64  `json:"speed_bps"`
 	// Interfaces is set only on a grouped row: how many circuits it sums.
 	Interfaces int `json:"interfaces,omitempty"`
 

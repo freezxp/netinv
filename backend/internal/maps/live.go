@@ -68,10 +68,29 @@ type LiveAssembler struct {
 	PollInterval func() time.Duration
 }
 
-// staleAfter is when a carried value stops being described as current. Two
-// minutes is longer than a poll cycle at the default cadence and shorter than
-// anyone would call a link "live" without qualification.
-const staleAfter = 120
+// staleAfter is when a carried value stops being described as current.
+//
+// It has to scale with the fleet's cadence. A fixed two minutes was wrong the
+// moment an operator moved traffic polling to five minutes from the UI, which
+// is a supported setting: every healthy link then reported itself stale for
+// most of every cycle, because its newest sample is legitimately older than
+// the threshold. Twice the cadence tolerates one missed poll — the point at
+// which a reading genuinely stops describing now — with a floor for fast
+// cadences where two samples apart is still no time at all.
+func (a *LiveAssembler) staleAfter() int {
+	var poll time.Duration
+	if a.PollInterval != nil {
+		poll = a.PollInterval()
+	}
+	if poll <= 0 {
+		poll = 60 * time.Second
+	}
+	s := int((2 * poll).Seconds())
+	if s < 120 {
+		s = 120
+	}
+	return s
+}
 
 // windows returns the rate window and how far back a value may be carried.
 //
@@ -245,6 +264,7 @@ func (a *LiveAssembler) Live(ctx context.Context, mapID string) (*LiveData, erro
 		out.Nodes = append(out.Nodes, NodeLive{ID: n.ID, State: state})
 	}
 	wan := a.wanCapacities(ctx, def)
+	stale := a.staleAfter()
 	for _, l := range def.Links {
 		ll := LinkLive{ID: l.ID, State: "nodata"}
 		ep, mirrored := linkEndpoint(l)
@@ -284,7 +304,7 @@ func (a *LiveAssembler) Live(ctx context.Context, mapID string) (*LiveData, erro
 			if ts, ok := lastSeen[k]; ok {
 				if age := int(time.Since(time.Unix(int64(ts), 0)).Seconds()); age > 0 {
 					ll.DataAgeS = age
-					if age > staleAfter && ll.State != "down" {
+					if age > stale && ll.State != "down" {
 						ll.State = "stale"
 					}
 				}
