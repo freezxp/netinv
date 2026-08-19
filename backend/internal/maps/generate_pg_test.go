@@ -146,3 +146,97 @@ func TestGenerateFromTopologyCreatesNothingWhenThereIsNoTopology(t *testing.T) {
 		t.Fatalf("%d maps created despite the refusal", n)
 	}
 }
+
+// ifIndex is a snapshot of the moment a link was drawn, and agents renumber:
+// a pilot gateway moved ppp2 from 76 to 41 across a reboot. The live view has
+// resolved through maps.map_links' stable row id since that bug, but publish
+// still checked the document's index — so a correct map became unpublishable
+// and the operator was told an endpoint "does not resolve" while the link was
+// drawing traffic perfectly.
+func TestPublishSurvivesAnIfIndexRenumber(t *testing.T) {
+	_, pool := pgxtest.Throwaway(t)
+	ctx := context.Background()
+	store := &Store{Pool: pool}
+
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO platform.connectors
+			(id, vendor, display_name, version, capabilities, sys_object_id_prefixes, enabled)
+		VALUES ('generic','Generic','Generic SNMP','test','[]','[]',true)
+		ON CONFLICT (id) DO NOTHING`); err != nil {
+		t.Fatalf("seed connector: %v", err)
+	}
+	credID := id.New("cr")
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO inventory.credentials (id, tenant_id, name, kind, enc_payload, enc_dek, key_version)
+		VALUES ($1,'t_default',$2,'snmp_v2c','\x00','\x00',1)`, credID, "renum-"+credID); err != nil {
+		t.Fatalf("seed credential: %v", err)
+	}
+	devA, devB := id.New("d"), id.New("d")
+	ifA, ifB := id.New("if"), id.New("if")
+	for i, d := range []struct{ dev, iface, ip string }{{devA, ifA, "10.210.0.1"}, {devB, ifB, "10.210.0.2"}} {
+		if _, err := pool.Exec(ctx, `
+			INSERT INTO inventory.devices
+				(id, tenant_id, site_id, connector_id, credential_id, profile_id, name, mgmt_ip, status)
+			VALUES ($1,'t_default','s_default','generic',$2,'pp_default',$3,$4::inet,'active')`,
+			d.dev, credID, "renum-dev-"+d.dev, d.ip); err != nil {
+			t.Fatalf("seed device: %v", err)
+		}
+		if _, err := pool.Exec(ctx, `
+			INSERT INTO inventory.interfaces (id, device_id, if_index, name, state)
+			VALUES ($1,$2,$3,'ppp2','present')`, d.iface, d.dev, 76+i); err != nil {
+			t.Fatalf("seed interface: %v", err)
+		}
+	}
+
+	meta, err := store.Create(ctx, "renumber map", "")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	def := Definition{Schema: "netinv.map/1",
+		Nodes: []Node{{ID: "n1", Kind: "device", DeviceID: devA},
+			{ID: "n2", Kind: "device", DeviceID: devB}},
+		Links: []Link{{ID: "l1", From: "n1", To: "n2",
+			AEndpoint: &Endpoint{DeviceID: devA, IfIndex: 76},
+			BEndpoint: &Endpoint{DeviceID: devB, IfIndex: 77}}},
+	}
+	if err := store.SaveDraft(ctx, meta.ID, &def, ""); err != nil {
+		t.Fatalf("save draft: %v", err)
+	}
+	// The first publish binds the link to the interfaces' own row ids.
+	if _, err := store.Publish(ctx, meta.ID, ""); err != nil {
+		t.Fatalf("first publish: %v", err)
+	}
+
+	// The device reboots and renumbers: same interface row, new ifIndex.
+	if _, err := pool.Exec(ctx,
+		`UPDATE inventory.interfaces SET if_index = 41 WHERE id = $1`, ifA); err != nil {
+		t.Fatalf("renumber: %v", err)
+	}
+
+	// Publishing again must succeed, resolving through the stable binding
+	// rather than the index the document remembers.
+	if _, err := store.Publish(ctx, meta.ID, ""); err != nil {
+		t.Fatalf("publish after renumber: %v", err)
+	}
+
+	// And the document is healed, so the next reader is not left correcting
+	// the same stale value.
+	got, _, err := store.Load(ctx, meta.ID, "draft")
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if got.Links[0].AEndpoint.IfIndex != 41 {
+		t.Fatalf("document still says ifIndex %d after publish",
+			got.Links[0].AEndpoint.IfIndex)
+	}
+
+	// An endpoint whose interface is genuinely gone still fails: a stale
+	// binding is no better evidence than a stale index.
+	if _, err := pool.Exec(ctx,
+		`UPDATE inventory.interfaces SET state='removed' WHERE id=$1`, ifB); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Publish(ctx, meta.ID, ""); err == nil {
+		t.Fatal("published with an endpoint whose interface no longer exists")
+	}
+}

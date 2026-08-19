@@ -254,6 +254,8 @@ Built-in rules (`is_builtin`, the FR-ALR-07 pack) are **fully editable** — thr
 | GET | `/maps/{id}/live` | `maps:read` | 200 (≤30 s cache) |
 | POST | `/maps/generate` (draft from LLDP topology) | `maps:write` | 201 `{id,name,nodes,links}`, 400 (nothing to draw) |
 
+`POST /maps/{id}/publish` resolves each endpoint through `maps.map_links`' stable interface row id before falling back to the ifIndex saved in the document, and writes the current index back when they disagree. The saved index is a snapshot of the moment the link was drawn and ifIndex is not stable — a pilot gateway moved `ppp2` from 76 to 41 across a reboot. The live view has resolved this way since that bug, but publish did not, so a renumbered interface made a correct map unpublishable and reported that its endpoint "does not resolve" while the link was drawing traffic perfectly. A stable binding whose interface row has since been *removed* is not preferred: that is no better evidence than a stale index, and the publish still fails.
+
 `POST /maps/generate` builds a **draft** from the LLDP adjacencies between managed devices — the same data `/maps/{id}/suggestions` offers one link at a time (FR-MAP-06). Hand-drawing stays the flagship, but the first map is the expensive one: placing every device and binding every link before seeing anything, when the devices already report the topology. Four rules make the output trustworthy rather than merely present:
 
 - **Both LLDP directions collapse into one link.** A↔B is reported twice, and each row carries the ifIndex of *its own* end, so the two rows are merged to bind both endpoints. Treating them as separate links draws the topology twice; keeping only the first leaves one side graphing nothing.

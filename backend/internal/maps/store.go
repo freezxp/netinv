@@ -244,11 +244,48 @@ func (s *Store) Publish(ctx context.Context, mapID, actor string) (int, error) {
 		ifID    string
 		side    string
 	}
+	// The ifIndex saved in the document is a snapshot of the moment the link
+	// was drawn, and ifIndex is not stable: a pilot gateway moved ppp2 from 76
+	// to 41 across a reboot. maps.map_links already carries the interface's
+	// own row id, which does not move, and the live view has resolved through
+	// it since that bug — but publish still checked the document's index, so a
+	// renumbered interface made a correct map unpublishable and told the
+	// operator its endpoint "does not resolve" while the link was drawing
+	// traffic perfectly.
+	prior, err := s.linkBindings(ctx, mapID)
+	if err != nil {
+		return 0, err
+	}
 	var bindings []binding
-	for _, l := range def.Links {
+	healed := false
+	for li := range def.Links {
+		l := &def.Links[li]
 		for side, ep := range map[string]*Endpoint{"a": l.AEndpoint, "b": l.BEndpoint} {
 			if ep == nil {
 				continue
+			}
+			// The stable id first, and only for an interface still present.
+			// A binding to a row that has since been removed is no better
+			// evidence than a stale index.
+			if ifID := prior[l.ID+"/"+side]; ifID != "" {
+				var dev string
+				var idx int
+				err := s.Pool.QueryRow(ctx, `
+					SELECT device_id, if_index FROM inventory.interfaces
+					WHERE id = $1 AND state != 'removed'`, ifID).Scan(&dev, &idx)
+				if err == nil {
+					if idx != ep.IfIndex || dev != ep.DeviceID {
+						// Write the current index back so the document stops
+						// carrying a value every later reader has to correct.
+						ep.DeviceID, ep.IfIndex = dev, idx
+						healed = true
+					}
+					bindings = append(bindings, binding{linkKey: l.ID, ifID: ifID, side: side})
+					continue
+				}
+				if !errors.Is(err, pgx.ErrNoRows) {
+					return 0, errx.Wrap(errx.KindTransient, err, "resolve stable binding")
+				}
 			}
 			var ifID string
 			err := s.Pool.QueryRow(ctx, `
@@ -267,6 +304,19 @@ func (s *Store) Publish(ctx context.Context, mapID, actor string) (int, error) {
 		}
 	}
 	err = pgxp.InTx(ctx, s.Pool, func(tx pgx.Tx) error {
+		if healed {
+			// Publishing a document that still names a dead ifIndex would
+			// leave the next publish depending on the same rescue.
+			raw, err := json.Marshal(def)
+			if err != nil {
+				return err
+			}
+			if _, err := tx.Exec(ctx,
+				`UPDATE maps.map_revisions SET definition=$3 WHERE map_id=$1 AND rev=$2`,
+				mapID, rev, raw); err != nil {
+				return err
+			}
+		}
 		if _, err := tx.Exec(ctx, `
 			UPDATE maps.map_revisions SET state='published', saved_at=now()
 			WHERE map_id=$1 AND rev=$2`, mapID, rev); err != nil {
@@ -361,6 +411,33 @@ func (s *Store) Suggestions(ctx context.Context) ([]Suggestion, error) {
 			return nil, err
 		}
 		out = append(out, sg)
+	}
+	return out, rows.Err()
+}
+
+// linkBindings returns each link's stable interface row ids, keyed
+// "<linkKey>/<side>". These survive an ifIndex renumber; the ifIndex saved in
+// the map document does not.
+func (s *Store) linkBindings(ctx context.Context, mapID string) (map[string]string, error) {
+	rows, err := s.Pool.Query(ctx,
+		`SELECT link_key, coalesce(a_if_id,''), coalesce(b_if_id,'')
+		 FROM maps.map_links WHERE map_id = $1`, mapID)
+	if err != nil {
+		return nil, errx.Wrap(errx.KindTransient, err, "load link bindings")
+	}
+	defer rows.Close()
+	out := map[string]string{}
+	for rows.Next() {
+		var key, a, b string
+		if err := rows.Scan(&key, &a, &b); err != nil {
+			return nil, err
+		}
+		if a != "" {
+			out[key+"/a"] = a
+		}
+		if b != "" {
+			out[key+"/b"] = b
+		}
 	}
 	return out, rows.Err()
 }
