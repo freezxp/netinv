@@ -70,15 +70,43 @@ export function MapEditorPage() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  // Autosave: debounce 2s after last change (doc 30 §3).
+  // Autosave: debounce 2s after the last change (doc 30 §3).
+  //
+  // Two things here were unreliable, and both are the kind that lose work
+  // quietly rather than loudly.
+  //
+  // The effect used to depend on `save`, whose identity changes on every
+  // render — so any re-render inside the two-second window cleared the pending
+  // timer and started it again. While dragging a node, or with any other query
+  // refetching underneath, the timer could be reset indefinitely and the draft
+  // was never written. It now depends on the document and the dirty flag
+  // alone, with the mutation reached through a ref.
+  //
+  // And `dirty` was cleared when the save was *dispatched* rather than when it
+  // succeeded, so a rejected save left the indicator reading "draft saved"
+  // over unsaved work, with nothing to retry it.
+  const saveRef = useRef(save);
+  saveRef.current = save;
+  const saveNow = useCallback(() => {
+    if (!def) return;
+    saveRef.current.mutate(def, { onSuccess: () => setDirty(false) });
+  }, [def]);
+
   useEffect(() => {
     if (!dirty || !def) return;
-    const t = setTimeout(() => {
-      save.mutate(def);
-      setDirty(false);
-    }, 2000);
+    const t = setTimeout(saveNow, 2000);
     return () => clearTimeout(t);
-  }, [def, dirty, save]);
+  }, [def, dirty, saveNow]);
+
+  // A draft still inside its debounce window is lost on navigation, and the
+  // browser is the only thing that can ask. Cheap, and the alternative is
+  // someone rearranging a map for ten minutes and closing the tab.
+  useEffect(() => {
+    if (!dirty) return;
+    const warn = (e: BeforeUnloadEvent) => e.preventDefault();
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [dirty]);
 
   const flow = useMemo(
     () => (def ? toFlow(def) : { nodes: [], edges: [] }),
@@ -162,7 +190,7 @@ export function MapEditorPage() {
           )}
         >
           {save.isError
-            ? "not saved"
+            ? "not saved — changes are still here, press Save draft"
             : save.isPending
               ? "saving…"
               : dirty
@@ -173,6 +201,18 @@ export function MapEditorPage() {
         <Link to={`/maps/${id}`}>
           <Button variant="ghost">View live</Button>
         </Link>
+        {/* An explicit save, because a timer is a promise the user cannot
+            see. Enabled even when nothing is pending: someone who has just
+            moved a node and wants it written now should not have to work out
+            whether the debounce already fired. */}
+        <Button
+          variant="ghost"
+          disabled={save.isPending}
+          onClick={saveNow}
+          title="Write the draft now instead of waiting for autosave"
+        >
+          {save.isPending ? "Saving…" : "Save draft"}
+        </Button>
         <Button onClick={() => publish.mutate()} disabled={publish.isPending}>
           {publish.isPending ? "Publishing…" : "Publish"}
         </Button>
