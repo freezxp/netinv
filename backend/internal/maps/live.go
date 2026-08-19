@@ -150,7 +150,13 @@ func (a *LiveAssembler) Live(ctx context.Context, mapID string) (*LiveData, erro
 		{fmt.Sprintf(`last_over_time(netinv_if_oper_status[%s])`, dur(carry)), oper},
 		// The age of the newest raw sample, which is what makes the carried
 		// value honest rather than merely present.
-		{fmt.Sprintf(`timestamp(last_over_time(netinv_if_in_octets_total[%s]))`,
+		//
+		// tlast_over_time, not timestamp(last_over_time(...)). The latter
+		// returns the timestamp of the rollup's own result — computed on
+		// VictoriaMetrics' evaluation grid — which came back as a uniform 270s
+		// for every series on a fleet whose newest samples were 14 to 64
+		// seconds old. Every link on a healthy map reported itself stale.
+		{fmt.Sprintf(`tlast_over_time(netinv_if_in_octets_total[%s])`,
 			dur(carry)), lastSeen},
 	}
 	for _, q := range queries {

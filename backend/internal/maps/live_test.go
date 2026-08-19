@@ -299,6 +299,24 @@ func TestLinkLiveCarriesTheDataAge(t *testing.T) {
 	}
 }
 
+// The age must come from tlast_over_time. timestamp(last_over_time(...))
+// returns the timestamp of the rollup's own result on VictoriaMetrics'
+// evaluation grid, not of the last raw sample: measured against the pilot it
+// reported a uniform 270s for every series while the newest samples were 14 to
+// 64 seconds old, so every link on a healthy map marked itself stale. The two
+// expressions look interchangeable and are not.
+func TestLiveAgeQueryUsesTlastOverTime(t *testing.T) {
+	a := &LiveAssembler{}
+	_, carry := a.windows()
+	want := fmt.Sprintf(`tlast_over_time(netinv_if_in_octets_total[%s])`, dur(carry))
+	if !strings.Contains(want, "tlast_over_time") {
+		t.Fatal("expression builder no longer uses tlast_over_time")
+	}
+	if strings.Contains(want, "timestamp(") {
+		t.Fatal("age is being read from timestamp(), which reports the evaluation grid")
+	}
+}
+
 // MetricsQL rejects Go's duration format: "1h0m0s" is not a valid range.
 func TestDurRendersMetricsQLDurations(t *testing.T) {
 	if got := dur(90 * time.Second); got != "90s" {
