@@ -3,6 +3,7 @@ package snmptest
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/gosnmp/gosnmp"
@@ -19,34 +20,77 @@ import (
 // makes it work everywhere.
 func (Tester) Walk(ctx context.Context, target string, port int,
 	kind domain.CredentialKind, secret domain.Secret, root string, limit int,
-) ([]invapp.OIDValue, error) {
+) (invapp.WalkResult, error) {
 	// Defensive only: the caller (invapp.ClampWalkLimit) owns the policy. This
 	// must never rewrite a large limit down to a small one — doing so produced
 	// a truncated walk that the handler then reported as complete.
 	limit = invapp.ClampWalkLimit(limit)
+	if strings.TrimSpace(root) == "" {
+		root = ".1.3.6.1.2.1"
+	}
 	g := newClient(ctx, target, port, kind, secret, 5*time.Second)
 	if err := g.Connect(); err != nil {
-		return nil, errx.Wrap(errx.KindTransient, err, "snmp connect")
+		return invapp.WalkResult{}, errx.Wrap(errx.KindTransient, err, "snmp connect")
 	}
 	defer g.Conn.Close()
 
-	out := make([]invapp.OIDValue, 0, 64)
-	err := g.BulkWalk(root, func(p gosnmp.SnmpPDU) error {
+	// A hand-rolled GETBULK loop rather than gosnmp's BulkWalk, for one reason:
+	// BulkWalk reports that it finished and gives no way to tell "walked the
+	// subtree to its end" from "the agent stopped talking half way down". Both
+	// look like success. This loop knows which happened, because it sees the
+	// varbind that ends the walk.
+	out := make([]invapp.OIDValue, 0, 256)
+	next := root
+	for {
 		if len(out) >= limit {
-			return fmt.Errorf("limit reached")
+			return invapp.WalkResult{Values: out, Stopped: fmt.Sprintf(
+				"reached the %d-object ceiling", limit)}, nil
 		}
-		out = append(out, invapp.OIDValue{
-			OID:   p.Name,
-			Type:  snmpTypeName(p.Type),
-			Value: renderValue(p),
-		})
-		return nil
-	})
-	// Hitting the cap is a normal stop, not a failure.
-	if err != nil && len(out) < limit {
-		return out, errx.Wrap(errx.KindTransient, err, "snmp walk")
+		resp, err := g.GetBulk([]string{next}, 0, uint32(g.MaxRepetitions))
+		if err != nil {
+			if len(out) == 0 {
+				return invapp.WalkResult{}, errx.Wrap(errx.KindTransient, err, "snmp walk")
+			}
+			// Partial data is worth returning — it is still a dump, as long as
+			// nobody is told it is a whole one.
+			return invapp.WalkResult{Values: out, Stopped: "agent stopped responding: " +
+				err.Error()}, nil
+		}
+		if len(resp.Variables) == 0 {
+			return invapp.WalkResult{Values: out,
+				Stopped: "agent returned an empty response before the end of the subtree"}, nil
+		}
+		for _, v := range resp.Variables {
+			switch v.Type {
+			case gosnmp.EndOfMibView:
+				// Nothing further exists anywhere on the agent, so the subtree
+				// is finished by definition.
+				return invapp.WalkResult{Values: out, Complete: true}, nil
+			case gosnmp.NoSuchObject, gosnmp.NoSuchInstance:
+				return invapp.WalkResult{Values: out, Complete: true}, nil
+			}
+			if !underRoot(v.Name, root) {
+				// Walked past the far edge of the subtree: the only genuinely
+				// complete outcome.
+				return invapp.WalkResult{Values: out, Complete: true}, nil
+			}
+			if compareOID(v.Name, next) <= 0 && len(out) > 0 {
+				// A conformant agent always answers GETBULK with a greater OID.
+				// One that does not would loop this walk forever.
+				return invapp.WalkResult{Values: out, Stopped: fmt.Sprintf(
+					"agent returned a non-increasing OID (%s after %s)", v.Name, next)}, nil
+			}
+			out = append(out, invapp.OIDValue{
+				OID:   v.Name,
+				Type:  snmpTypeName(v.Type),
+				Value: renderValue(v),
+			})
+			next = v.Name
+			if len(out) >= limit {
+				break
+			}
+		}
 	}
-	return out, nil
 }
 
 func snmpTypeName(t gosnmp.Asn1BER) string {

@@ -503,14 +503,21 @@ func (h *DeviceHandler) oids(w http.ResponseWriter, r *http.Request) {
 	// Clamp here so `truncated` below is measured against the limit that was
 	// actually applied, not the one the caller hoped for.
 	limit = app.ClampWalkLimit(limit)
-	values, err := h.Svc.WalkOIDs(r.Context(), chi.URLParam(r, "id"),
+	res, err := h.Svc.WalkOIDs(r.Context(), chi.URLParam(r, "id"),
 		q.Get("root"), limit, h.meta(r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
+	// `truncated` used to be inferred from the object count, which only ever
+	// caught our own ceiling: a walk the agent abandoned half way down returned
+	// fewer objects than the limit and was therefore reported complete. The
+	// walker now says which happened, and this reports what it said.
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"data": values, "truncated": len(values) >= limit,
+		"data":      res.Values,
+		"complete":  res.Complete,
+		"truncated": !res.Complete,
+		"stopped":   res.Stopped,
 	})
 }
 

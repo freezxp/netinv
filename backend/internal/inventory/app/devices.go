@@ -318,10 +318,27 @@ type OIDValue struct {
 	Value string `json:"value"`
 }
 
+// WalkResult is what a walk returned and, just as importantly, whether it
+// finished.
+//
+// Complete is not a nicety. A dump is used to conclude that a device does *not*
+// implement something — "no CISCO-PROCESS-MIB, so no CPU" — and that inference
+// is only sound if the subtree was walked to its end. Reporting a walk that
+// stopped early as complete turns a missing branch into false evidence, which
+// is how a Cisco ASR 900 came to be described as having no CPU OID when the
+// walk had simply never reached one.
+type WalkResult struct {
+	Values   []OIDValue
+	Complete bool
+	// Stopped explains an incomplete walk in terms an operator can act on.
+	// Empty when Complete.
+	Stopped string
+}
+
 // OIDWalker performs a live walk against a device.
 type OIDWalker interface {
 	Walk(ctx context.Context, target string, port int, kind domain.CredentialKind,
-		secret domain.Secret, root string, limit int) ([]OIDValue, error)
+		secret domain.Secret, root string, limit int) (WalkResult, error)
 }
 
 // WalkOIDs dumps what a device actually exposes — the tool for working out
@@ -354,37 +371,42 @@ func ClampWalkLimit(n int) int {
 }
 
 func (s *DeviceService) WalkOIDs(ctx context.Context, deviceID, root string,
-	limit int, m Meta) ([]OIDValue, error) {
+	limit int, m Meta) (WalkResult, error) {
 	if s.Walker == nil || s.Vault == nil {
-		return nil, errx.New(errx.KindTransient, "OID browsing is not configured")
+		return WalkResult{}, errx.New(errx.KindTransient, "OID browsing is not configured")
 	}
 	if root == "" {
 		root = ".1.3.6.1.2.1" // mib-2: the standard starting point
 	}
 	d, err := s.Repo.Get(ctx, deviceID)
 	if err != nil {
-		return nil, err
+		return WalkResult{}, err
 	}
 	cred, err := s.Vault.Get(ctx, d.CredentialID)
 	if err != nil {
-		return nil, err
+		return WalkResult{}, err
 	}
 	secret, err := s.Vault.Decrypt(ctx, d.CredentialID)
 	if err != nil {
-		return nil, err
+		return WalkResult{}, err
 	}
 	port := 161
 	if v, ok := d.Attrs["snmp_port"].(float64); ok && v > 0 {
 		port = int(v)
 	}
-	values, err := s.Walker.Walk(ctx, d.MgmtIP, port, cred.Kind, secret, root, limit)
-	if err != nil && len(values) == 0 {
-		return nil, err
+	res, err := s.Walker.Walk(ctx, d.MgmtIP, port, cred.Kind, secret, root, limit)
+	if err != nil && len(res.Values) == 0 {
+		return WalkResult{}, err
 	}
 	// Walking is a read, but it puts load on the device — worth an audit trail.
+	// The completeness verdict is audited too: it is the difference between a
+	// dump that can be reasoned from and one that cannot.
 	s.Audit.Write(ctx, m.event("device.oid_walk", "device", deviceID, nil,
-		map[string]any{"root": root, "returned": len(values)}))
-	return values, nil
+		map[string]any{
+			"root": root, "returned": len(res.Values),
+			"complete": res.Complete, "stopped": res.Stopped,
+		}))
+	return res, nil
 }
 
 // cleanFlowExporters validates and normalises the extra source addresses a

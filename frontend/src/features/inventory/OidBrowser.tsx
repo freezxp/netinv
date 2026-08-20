@@ -40,7 +40,7 @@ export function OidBrowser({
   const walk = useQuery({
     queryKey: ["oids", device.id, root],
     queryFn: () =>
-      api<{ data: OIDValue[]; truncated: boolean }>(
+      api<{ data: OIDValue[]; truncated: boolean; complete: boolean; stopped: string }>(
         `/devices/${device.id}/oids?root=${encodeURIComponent(root)}&limit=2000`,
       ),
     retry: false,
@@ -134,6 +134,7 @@ export function OidBrowser({
     const collected: OIDValue[] = [];
     const perRoot: string[] = [];
     let anyTruncated = false;
+    const stopReasons: string[] = [];
     let stopped = "";
 
     try {
@@ -141,14 +142,26 @@ export function OidBrowser({
         setExportNote(
           `walking ${r} — ${collected.length} objects, ${Math.round((Date.now() - started) / 1000)}s`,
         );
-        const part = await api<{ data: OIDValue[]; truncated: boolean }>(
+        const part = await api<{
+          data: OIDValue[];
+          truncated: boolean;
+          complete: boolean;
+          stopped: string;
+        }>(
           `/devices/${device.id}/oids?root=${encodeURIComponent(r)}&limit=${EXPORT_LIMIT}`,
           { signal: ctl.signal },
         );
         collected.push(...part.data);
-        anyTruncated = anyTruncated || part.truncated;
+        // The server now distinguishes "walked to the end of the subtree" from
+        // "the agent stopped part-way", and says which. Trusting a count
+        // against our own ceiling was what let a walk that died inside
+        // .1.3.6.1.2.1.10 be written up as the whole tree.
+        if (!part.complete) {
+          anyTruncated = true;
+          if (part.stopped) stopReasons.push(`${r}: ${part.stopped}`);
+        }
         perRoot.push(
-          `#   ${r.padEnd(6)} ${part.data.length}${part.truncated ? "  (CEILING HIT)" : ""}`,
+          `#   ${r.padEnd(6)} ${part.data.length}${part.complete ? "" : "  (INCOMPLETE)"}`,
         );
       }
     } catch (e) {
@@ -184,9 +197,7 @@ export function OidBrowser({
             "# PARTIAL:   this dump is INCOMPLETE. Do not read an absent OID",
             "#            here as evidence the device does not implement it.",
             ...(stopped ? [`#            reason: ${stopped}`] : []),
-            ...(anyTruncated
-              ? [`#            reason: hit the ${EXPORT_LIMIT}-object ceiling`]
-              : []),
+            ...stopReasons.map((r) => `#            ${r}`),
             `#            roots walked: ${perRoot.length} of ${roots.length}`,
           ]),
       "",
