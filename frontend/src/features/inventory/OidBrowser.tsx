@@ -64,14 +64,21 @@ export function OidBrowser({
     void navigator.clipboard?.writeText(asText(walk.data?.data ?? []));
   };
 
-  // The export re-walks rather than saving what is on screen. The browser asks
-  // for 2000 objects because that is a sensible amount to scroll; a file that
-  // silently stopped at the same place would be the worse kind of wrong, since
-  // its whole purpose is to be read somewhere else — attached to an issue, or
-  // sent to someone who cannot re-run the walk. If even the larger limit is
-  // reached the file says so in its header rather than ending mid-tree without
-  // comment.
-  const EXPORT_LIMIT = 20000;
+  // The export re-walks the *whole tree*, not the subtree being browsed and not
+  // what is on screen. Its purpose is to hand somebody everything a device
+  // exposes — for connector work, or for a question nobody has asked yet — so a
+  // file that stopped early would be the worse kind of wrong: it is read
+  // somewhere else, by someone who cannot re-run the walk and cannot tell a
+  // device that ends at object 1000 from a file that does.
+  //
+  // The root is `.1`, not `.1.3.6.1`. LLDP lives at .1.0.8802.1.1.2, outside the
+  // internet subtree, so walking from .1.3.6.1 quietly drops neighbour data —
+  // which is exactly the kind of thing the dump is wanted for.
+  //
+  // This is slow by nature: tens of thousands of objects at a 5s SNMP timeout,
+  // minutes rather than seconds on a large device.
+  const EXPORT_ROOT = ".1";
+  const EXPORT_LIMIT = 500000;
   const [exporting, setExporting] = useState(false);
   const [exportNote, setExportNote] = useState("");
 
@@ -80,22 +87,22 @@ export function OidBrowser({
     setExportNote("");
     try {
       const full = await api<{ data: OIDValue[]; truncated: boolean }>(
-        `/devices/${device.id}/oids?root=${encodeURIComponent(root)}&limit=${EXPORT_LIMIT}`,
+        `/devices/${device.id}/oids?root=${encodeURIComponent(EXPORT_ROOT)}&limit=${EXPORT_LIMIT}`,
       );
       const at = new Date();
       const header = [
         "# NetInv — SNMP object dump",
         `# device:    ${device.sys_name || device.name}`,
         `# address:   ${device.mgmt_ip}`,
-        `# root OID:  ${root}`,
+        `# root OID:  ${EXPORT_ROOT}  (whole tree, including .1.0.8802 LLDP)`,
         `# walked at: ${at.toISOString()}`,
         `# objects:   ${full.data.length}`,
         ...(full.truncated
           ? [
-              `# WARNING:   truncated at ${EXPORT_LIMIT} objects — this is NOT the`,
-              "#            whole subtree. Walk a narrower root to capture the rest.",
+              `# WARNING:   stopped at the ${EXPORT_LIMIT}-object ceiling — this is`,
+              "#            NOT the whole tree. Export subtrees separately.",
             ]
-          : []),
+          : ["# complete:  whole tree walked, nothing truncated"]),
         "",
       ].join("\n");
       const blob = new Blob([header + asText(full.data) + "\n"], {
@@ -114,8 +121,8 @@ export function OidBrowser({
       URL.revokeObjectURL(url);
       setExportNote(
         full.truncated
-          ? `exported ${full.data.length} — truncated`
-          : `exported ${full.data.length}`,
+          ? `exported ${full.data.length} — HIT CEILING, incomplete`
+          : `exported ${full.data.length} (whole tree)`,
       );
     } catch (e) {
       setExportNote(`export failed: ${(e as Error).message}`);
@@ -175,10 +182,10 @@ export function OidBrowser({
           <Button
             variant="ghost"
             onClick={() => void exportTxt()}
-            disabled={exporting || !walk.data?.data.length}
-            title="Re-walk this subtree and download every object as a .txt file"
+            disabled={exporting}
+            title="Walk the device's whole OID tree and download every object as a .txt file. Takes minutes on a large device."
           >
-            {exporting ? "Exporting…" : "Export .txt"}
+            {exporting ? "Walking whole tree…" : "Export all (.txt)"}
           </Button>
           <Button variant="ghost" onClick={onClose}>
             Close

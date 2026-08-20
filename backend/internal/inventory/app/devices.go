@@ -326,6 +326,33 @@ type OIDWalker interface {
 
 // WalkOIDs dumps what a device actually exposes — the tool for working out
 // which MIBs a new platform supports before writing a connector for it.
+// Walk limits. The ceiling exists to stop a runaway or hostile agent filling
+// memory, not to trim results — it is far above any real device, where a full
+// tree runs to tens of thousands of objects.
+//
+// The policy lives here rather than in the walker because the handler has to
+// report whether a result was truncated, and it can only do that honestly if it
+// knows the limit that was actually applied. Previously the walker silently
+// rewrote any limit above 5000 down to 1000 while the handler compared the
+// result against the number it had asked for, so a capped walk reported itself
+// complete — the one thing a dump must never do.
+const (
+	DefaultWalkObjects = 1000
+	MaxWalkObjects     = 500000
+)
+
+// ClampWalkLimit applies the walk policy to a requested limit.
+func ClampWalkLimit(n int) int {
+	switch {
+	case n <= 0:
+		return DefaultWalkObjects
+	case n > MaxWalkObjects:
+		return MaxWalkObjects
+	default:
+		return n
+	}
+}
+
 func (s *DeviceService) WalkOIDs(ctx context.Context, deviceID, root string,
 	limit int, m Meta) ([]OIDValue, error) {
 	if s.Walker == nil || s.Vault == nil {

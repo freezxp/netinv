@@ -83,6 +83,12 @@ server {
         # The API reads this to decide whether the connection was secure, which
         # is what lets it set Secure cookies from behind a terminating proxy.
         proxy_set_header X-Forwarded-Proto $scheme;
+        # A full SNMP walk is the one endpoint that legitimately takes minutes:
+        # tens of thousands of objects, at a 5s per-request SNMP timeout. nginx
+        # defaults to a 60s read timeout, which cut those exports off as a 504
+        # partway through the tree — indistinguishable, from the browser, from a
+        # device that stopped answering.
+        proxy_read_timeout 300s;
     }
     location /assets/ {
         add_header Cache-Control "public, max-age=31536000, immutable";

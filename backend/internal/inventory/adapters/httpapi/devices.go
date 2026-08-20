@@ -496,10 +496,13 @@ func (h *DeviceHandler) neighbors(w http.ResponseWriter, r *http.Request) {
 // tool for discovering which MIBs a platform supports.
 func (h *DeviceHandler) oids(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	limit := 1000
-	if n, err := strconv.Atoi(q.Get("limit")); err == nil && n > 0 {
+	limit := 0
+	if n, err := strconv.Atoi(q.Get("limit")); err == nil {
 		limit = n
 	}
+	// Clamp here so `truncated` below is measured against the limit that was
+	// actually applied, not the one the caller hoped for.
+	limit = app.ClampWalkLimit(limit)
 	values, err := h.Svc.WalkOIDs(r.Context(), chi.URLParam(r, "id"),
 		q.Get("root"), limit, h.meta(r))
 	if err != nil {

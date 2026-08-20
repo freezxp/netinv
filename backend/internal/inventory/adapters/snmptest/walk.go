@@ -20,9 +20,10 @@ import (
 func (Tester) Walk(ctx context.Context, target string, port int,
 	kind domain.CredentialKind, secret domain.Secret, root string, limit int,
 ) ([]invapp.OIDValue, error) {
-	if limit <= 0 || limit > 5000 {
-		limit = 1000
-	}
+	// Defensive only: the caller (invapp.ClampWalkLimit) owns the policy. This
+	// must never rewrite a large limit down to a small one — doing so produced
+	// a truncated walk that the handler then reported as complete.
+	limit = invapp.ClampWalkLimit(limit)
 	g := newClient(ctx, target, port, kind, secret, 5*time.Second)
 	if err := g.Connect(); err != nil {
 		return nil, errx.Wrap(errx.KindTransient, err, "snmp connect")
