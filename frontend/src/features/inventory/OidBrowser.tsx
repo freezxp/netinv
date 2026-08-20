@@ -71,13 +71,22 @@ export function OidBrowser({
   // somewhere else, by someone who cannot re-run the walk and cannot tell a
   // device that ends at object 1000 from a file that does.
   //
-  // The root is `.1`, not `.1.3.6.1`. LLDP lives at .1.0.8802.1.1.2, outside the
-  // internet subtree, so walking from .1.3.6.1 quietly drops neighbour data —
-  // which is exactly the kind of thing the dump is wanted for.
+  // Four roots, not one. `.1` cannot be walked at all: BER packs the first two
+  // arcs of an OID into a single byte, so a one-arc OID has no encoding and
+  // gosnmp rejects it with "unable to marshal OID". Every child of iso is
+  // walked instead, which is both encodable and exhaustive. `.1.0` is the one
+  // that matters in practice — LLDP lives at .1.0.8802.1.1.2, outside the
+  // internet subtree, so walking only `.1.3` silently drops neighbour data,
+  // which is exactly what a dump gets wanted for. `.1.1` and `.1.2` are almost
+  // always empty and cost one round trip each to prove it.
+  //
+  // Sequential, not parallel: four concurrent walks against one agent is a
+  // sure way to make a device drop responses and produce a short file that
+  // looks complete.
   //
   // This is slow by nature: tens of thousands of objects at a 5s SNMP timeout,
   // minutes rather than seconds on a large device.
-  const EXPORT_ROOT = ".1";
+  const EXPORT_ROOTS = [".1.0", ".1.1", ".1.2", ".1.3"];
   const EXPORT_LIMIT = 500000;
   const [exporting, setExporting] = useState(false);
   const [exportNote, setExportNote] = useState("");
@@ -86,15 +95,26 @@ export function OidBrowser({
     setExporting(true);
     setExportNote("");
     try {
-      const full = await api<{ data: OIDValue[]; truncated: boolean }>(
-        `/devices/${device.id}/oids?root=${encodeURIComponent(EXPORT_ROOT)}&limit=${EXPORT_LIMIT}`,
-      );
+      const collected: OIDValue[] = [];
+      const perRoot: string[] = [];
+      let anyTruncated = false;
+      for (const r of EXPORT_ROOTS) {
+        setExportNote(`walking ${r}…`);
+        const part = await api<{ data: OIDValue[]; truncated: boolean }>(
+          `/devices/${device.id}/oids?root=${encodeURIComponent(r)}&limit=${EXPORT_LIMIT}`,
+        );
+        collected.push(...part.data);
+        anyTruncated = anyTruncated || part.truncated;
+        perRoot.push(`#   ${r.padEnd(6)} ${part.data.length}${part.truncated ? "  (CEILING HIT)" : ""}`);
+      }
+      const full = { data: collected, truncated: anyTruncated };
       const at = new Date();
       const header = [
         "# NetInv — SNMP object dump",
         `# device:    ${device.sys_name || device.name}`,
         `# address:   ${device.mgmt_ip}`,
-        `# root OID:  ${EXPORT_ROOT}  (whole tree, including .1.0.8802 LLDP)`,
+        "# roots:     every child of iso — .1 itself has no BER encoding",
+        ...perRoot,
         `# walked at: ${at.toISOString()}`,
         `# objects:   ${full.data.length}`,
         ...(full.truncated
