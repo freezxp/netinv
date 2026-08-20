@@ -57,11 +57,71 @@ export function OidBrowser({
     );
   });
 
+  const asText = (vs: OIDValue[]) =>
+    vs.map((v) => `${v.oid} = ${v.type}: ${v.value}`).join("\n");
+
   const copyAll = () => {
-    const text = (walk.data?.data ?? [])
-      .map((v) => `${v.oid} = ${v.type}: ${v.value}`)
-      .join("\n");
-    void navigator.clipboard?.writeText(text);
+    void navigator.clipboard?.writeText(asText(walk.data?.data ?? []));
+  };
+
+  // The export re-walks rather than saving what is on screen. The browser asks
+  // for 2000 objects because that is a sensible amount to scroll; a file that
+  // silently stopped at the same place would be the worse kind of wrong, since
+  // its whole purpose is to be read somewhere else — attached to an issue, or
+  // sent to someone who cannot re-run the walk. If even the larger limit is
+  // reached the file says so in its header rather than ending mid-tree without
+  // comment.
+  const EXPORT_LIMIT = 20000;
+  const [exporting, setExporting] = useState(false);
+  const [exportNote, setExportNote] = useState("");
+
+  const exportTxt = async () => {
+    setExporting(true);
+    setExportNote("");
+    try {
+      const full = await api<{ data: OIDValue[]; truncated: boolean }>(
+        `/devices/${device.id}/oids?root=${encodeURIComponent(root)}&limit=${EXPORT_LIMIT}`,
+      );
+      const at = new Date();
+      const header = [
+        "# NetInv — SNMP object dump",
+        `# device:    ${device.sys_name || device.name}`,
+        `# address:   ${device.mgmt_ip}`,
+        `# root OID:  ${root}`,
+        `# walked at: ${at.toISOString()}`,
+        `# objects:   ${full.data.length}`,
+        ...(full.truncated
+          ? [
+              `# WARNING:   truncated at ${EXPORT_LIMIT} objects — this is NOT the`,
+              "#            whole subtree. Walk a narrower root to capture the rest.",
+            ]
+          : []),
+        "",
+      ].join("\n");
+      const blob = new Blob([header + asText(full.data) + "\n"], {
+        type: "text/plain;charset=utf-8",
+      });
+      const name = (device.sys_name || device.name || "device")
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-|-$/g, "");
+      const stamp = at.toISOString().slice(0, 19).replace(/[:T]/g, "-");
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `snmp-${name}-${stamp}.txt`;
+      a.click();
+      URL.revokeObjectURL(url);
+      setExportNote(
+        full.truncated
+          ? `exported ${full.data.length} — truncated`
+          : `exported ${full.data.length}`,
+      );
+    } catch (e) {
+      setExportNote(`export failed: ${(e as Error).message}`);
+    } finally {
+      setExporting(false);
+    }
   };
 
   return (
@@ -107,9 +167,18 @@ export function OidBrowser({
           <span className="text-xs text-slate-500">
             {walk.data ? `${rows.length} of ${walk.data.data.length}` : ""}
             {walk.data?.truncated && " (truncated)"}
+            {exportNote && ` · ${exportNote}`}
           </span>
           <Button variant="ghost" onClick={copyAll} disabled={!walk.data?.data.length}>
             Copy all
+          </Button>
+          <Button
+            variant="ghost"
+            onClick={() => void exportTxt()}
+            disabled={exporting || !walk.data?.data.length}
+            title="Re-walk this subtree and download every object as a .txt file"
+          >
+            {exporting ? "Exporting…" : "Export .txt"}
           </Button>
           <Button variant="ghost" onClick={onClose}>
             Close
