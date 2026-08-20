@@ -1,6 +1,6 @@
 // Live weathermap viewer (doc 30 §3): published definition + ≤30s live
 // coloring; every viewer shares the server-side cached payload.
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { ReactFlow, Background, ConnectionMode, Controls } from "@xyflow/react";
 import { useMapDef, useMapLive, utilLegend } from "./api";
@@ -14,11 +14,44 @@ export function MapViewPage() {
   const def = useMapDef(id, "published");
   const live = useMapLive(id, !!def.data);
 
+  // The card is pinned where the link was entered, not dragged along under the
+  // cursor. Following the mouse made it impossible to reach: the moment you
+  // moved toward the graph it moved too, and it could not be read from anyway
+  // because it ignored pointer events. Pinned and interactive, uPlot's legend
+  // reports the value under the cursor, which is the whole reason to look at a
+  // graph on a map rather than a colour on a line.
   const [hover, setHover] = useState<{
     id: string;
     x: number;
     y: number;
   } | null>(null);
+
+  // Leaving the link does not close the card immediately: there is a gap of
+  // dead space between the line and the card, and closing on the first
+  // mouseleave makes the card unreachable. The grace period is cancelled the
+  // moment the pointer lands on the card itself.
+  const closeTimer = useRef<number | null>(null);
+  const cancelClose = useCallback(() => {
+    if (closeTimer.current !== null) {
+      clearTimeout(closeTimer.current);
+      closeTimer.current = null;
+    }
+  }, []);
+  const scheduleClose = useCallback(() => {
+    cancelClose();
+    closeTimer.current = window.setTimeout(() => setHover(null), 220);
+  }, [cancelClose]);
+  useEffect(() => cancelClose, [cancelClose]);
+
+  // A pinned card needs a way out that does not involve finding its edge.
+  useEffect(() => {
+    if (!hover) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setHover(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [hover]);
 
   const flow = useMemo(
     () =>
@@ -38,10 +71,9 @@ export function MapViewPage() {
             : "…"}
         </span>
         <div className="flex-1" />
-        {/* The hover graph follows the shared range, but the card itself is a
-            transient overlay with pointer events disabled — so the control to
-            change it has to live on the page chrome, or the map would be the
-            one place showing a range you cannot adjust. */}
+        {/* The link graph follows the shared range. The control lives on the
+            page chrome rather than in the card so that changing the range does
+            not mean keeping a card open while reaching for a picker inside it. */}
         <RangePicker ariaLabel="Link graph time range" />
         <div className="flex items-center gap-1 text-[10px] text-slate-500">
           {utilLegend.map(([max, color]) => (
@@ -61,13 +93,18 @@ export function MapViewPage() {
           edges={flow.edges}
           nodeTypes={nodeTypes}
           edgeTypes={edgeTypes}
-          onEdgeMouseEnter={(e, edge) =>
-            setHover({ id: edge.id, x: e.clientX, y: e.clientY })
-          }
-          onEdgeMouseMove={(e, edge) =>
-            setHover({ id: edge.id, x: e.clientX, y: e.clientY })
-          }
-          onEdgeMouseLeave={() => setHover(null)}
+          onEdgeMouseEnter={(e, edge) => {
+            cancelClose();
+            // Only reposition when it is a different link: re-pinning on every
+            // enter would make the card jump while the pointer crosses the same
+            // line twice.
+            setHover((prev) =>
+              prev?.id === edge.id
+                ? prev
+                : { id: edge.id, x: e.clientX, y: e.clientY },
+            );
+          }}
+          onEdgeMouseLeave={scheduleClose}
           // Must match the editor: nodes declare every handle as a source, and
           // under the default Strict mode edge rendering cannot resolve a
           // target handle — so links silently vanish from the published map.
@@ -88,6 +125,9 @@ export function MapViewPage() {
           live={live.data}
           linkID={hover.id}
           at={{ x: hover.x, y: hover.y }}
+          onPointerEnter={cancelClose}
+          onPointerLeave={scheduleClose}
+          onClose={() => setHover(null)}
         />
       )}
     </div>
