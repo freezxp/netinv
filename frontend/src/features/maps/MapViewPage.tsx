@@ -6,6 +6,8 @@ import { ReactFlow, Background, ConnectionMode, Controls } from "@xyflow/react";
 import { useMapDef, useMapLive, utilLegend } from "./api";
 import { edgeTypes, nodeTypes, toFlow } from "./canvas";
 import { LinkGraph } from "./LinkGraph";
+import { NodeAlerts } from "./NodeAlerts";
+import { useAlerts } from "../../api/hooks";
 import { Button } from "../../components/ui";
 import { RangePicker } from "../../components/RangePicker";
 
@@ -20,7 +22,11 @@ export function MapViewPage() {
   // because it ignored pointer events. Pinned and interactive, uPlot's legend
   // reports the value under the cursor, which is the whole reason to look at a
   // graph on a map rather than a colour on a line.
+  // One card at a time. Links and nodes share the slot: two overlapping cards
+  // is not a state worth supporting, and it keeps one grace timer rather than
+  // two that can each cancel the other's close.
   const [hover, setHover] = useState<{
+    kind: "link" | "node";
     id: string;
     x: number;
     y: number;
@@ -52,6 +58,27 @@ export function MapViewPage() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [hover]);
+
+  // The fleet-wide list rather than a per-device query on hover: it is already
+  // polled every 15s for the alert panels, so react-query serves this from
+  // cache and hovering costs no request.
+  const alerts = useAlerts();
+  const alertsByNode = useMemo(() => {
+    const rows = alerts.data?.data ?? [];
+    const byDevice = new Map<string, typeof rows>();
+    for (const a of rows) {
+      if (!a.device_id) continue;
+      const list = byDevice.get(a.device_id);
+      if (list) list.push(a);
+      else byDevice.set(a.device_id, [a]);
+    }
+    const out = new Map<string, typeof rows>();
+    for (const n of def.data?.definition.nodes ?? []) {
+      const list = n.device_id ? byDevice.get(n.device_id) : undefined;
+      if (list?.length) out.set(n.id, list);
+    }
+    return out;
+  }, [alerts.data, def.data]);
 
   const flow = useMemo(
     () =>
@@ -99,12 +126,25 @@ export function MapViewPage() {
             // enter would make the card jump while the pointer crosses the same
             // line twice.
             setHover((prev) =>
-              prev?.id === edge.id
+              prev?.kind === "link" && prev.id === edge.id
                 ? prev
-                : { id: edge.id, x: e.clientX, y: e.clientY },
+                : { kind: "link", id: edge.id, x: e.clientX, y: e.clientY },
             );
           }}
           onEdgeMouseLeave={scheduleClose}
+          onNodeMouseEnter={(e, node) => {
+            // Only nodes that actually have something to report open a card.
+            // A card that says "no alerts" on every healthy device turns the
+            // whole map into a minefield of popups while you pan across it.
+            if (!(alertsByNode.get(node.id)?.length ?? 0)) return;
+            cancelClose();
+            setHover((prev) =>
+              prev?.kind === "node" && prev.id === node.id
+                ? prev
+                : { kind: "node", id: node.id, x: e.clientX, y: e.clientY },
+            );
+          }}
+          onNodeMouseLeave={scheduleClose}
           // Must match the editor: nodes declare every handle as a source, and
           // under the default Strict mode edge rendering cannot resolve a
           // target handle — so links silently vanish from the published map.
@@ -119,11 +159,22 @@ export function MapViewPage() {
           <Controls showInteractive={false} />
         </ReactFlow>
       </div>
-      {hover && def.data && (
+      {hover?.kind === "link" && def.data && (
         <LinkGraph
           def={def.data.definition}
           live={live.data}
           linkID={hover.id}
+          at={{ x: hover.x, y: hover.y }}
+          onPointerEnter={cancelClose}
+          onPointerLeave={scheduleClose}
+          onClose={() => setHover(null)}
+        />
+      )}
+      {hover?.kind === "node" && def.data && (
+        <NodeAlerts
+          def={def.data.definition}
+          nodeID={hover.id}
+          alerts={alertsByNode.get(hover.id) ?? []}
           at={{ x: hover.x, y: hover.y }}
           onPointerEnter={cancelClose}
           onPointerLeave={scheduleClose}
