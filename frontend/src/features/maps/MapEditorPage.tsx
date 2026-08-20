@@ -16,6 +16,7 @@ import {
   usePublish,
   useSaveDraft,
   useSuggestions,
+  type Suggestion,
   type MapDefinition,
   type MapLink,
   type MapNode,
@@ -28,6 +29,12 @@ import { ApiError } from "../../api/client";
 let nextId = 1;
 const genId = (prefix: string) =>
   `${prefix}${Date.now().toString(36)}${nextId++}`;
+
+// nodeDevice resolves a node id to the device it stands for, or "" for plain
+// label and cloud nodes.
+function nodeDevice(def: MapDefinition, nodeID: string): string {
+  return def.nodes.find((n) => n.id === nodeID)?.device_id ?? "";
+}
 
 export function MapEditorPage() {
   const { id = "" } = useParams();
@@ -313,6 +320,70 @@ function SidePanel({
 }) {
   const devices = useDevices({});
   const suggestions = useSuggestions(mapID);
+
+  // nodeDevice maps a map node back to the device it represents, so a
+  // suggestion can be tested against links that already exist.
+  const acceptSuggestion = useCallback(
+    (sg: Suggestion) => {
+      change((d) => {
+        const nodes = [...d.nodes];
+        // A suggestion names devices, but a map is made of nodes. Either end
+        // may be absent — accepting a link to a device that is not on the map
+        // has to place it, or the click appears to do nothing.
+        const ensure = (deviceID: string, label: string, i: number) => {
+          const found = nodes.find(
+            (n) => n.kind === "device" && n.device_id === deviceID,
+          );
+          if (found) return found.id;
+          const id = genId("n");
+          nodes.push({
+            id,
+            kind: "device",
+            device_id: deviceID,
+            label,
+            // Offset so two new nodes never land exactly on top of each other,
+            // which reads as one node and hides the link between them.
+            x: 80 + ((nodes.length + i) % 6) * 150,
+            y: 80 + Math.floor((nodes.length + i) / 6) * 120,
+          });
+          return id;
+        };
+        const from = ensure(sg.a_device_id, sg.a_device, 0);
+        const to = ensure(sg.b_device_id, sg.b_device || sg.b_sysname, 1);
+        return {
+          ...d,
+          nodes,
+          links: [
+            ...d.links,
+            {
+              id: genId("l"),
+              from,
+              to,
+              // Bind the endpoints we know. A both-ends suggestion binds both
+              // and graphs immediately; a one-sided one binds what it has and
+              // leaves the other for the operator, which is honest — guessing
+              // the far-end port would produce a link that silently graphs the
+              // wrong interface.
+              a_endpoint: {
+                device_id: sg.a_device_id,
+                if_index: sg.a_if_index,
+              },
+              ...(sg.b_if_index
+                ? {
+                    b_endpoint: {
+                      device_id: sg.b_device_id,
+                      if_index: sg.b_if_index,
+                    },
+                  }
+                : {}),
+            } satisfies MapLink,
+          ],
+        };
+      });
+    },
+    [change],
+  );
+
   const link = def.links.find((l) => l.id === selectedLink);
   const node = def.nodes.find((n) => n.id === selectedNode);
 
@@ -409,19 +480,81 @@ function SidePanel({
         />
       )}
 
-      <Card title="LLDP suggestions">
-        <div className="flex flex-col gap-1 text-xs">
+      <Card title="Suggested links">
+        <div className="flex flex-col gap-2 text-xs">
           {suggestions.data?.data.length === 0 && (
             <span className="text-slate-500">
-              No adjacencies discovered yet.
+              Nothing suggested — no LLDP adjacencies, and no interface
+              descriptions naming another managed device.
             </span>
           )}
-          {suggestions.data?.data.map((s, i) => (
-            <div key={i} className="text-slate-600 dark:text-slate-400">
-              {s.a_device} if {s.a_if_index} ⇄ {s.b_device || s.b_sysname} (
-              {s.b_port})
-            </div>
-          ))}
+          {suggestions.data?.data.map((s, i) => {
+            const already = def.links.some(
+              (l) =>
+                (nodeDevice(def, l.from) === s.a_device_id &&
+                  nodeDevice(def, l.to) === s.b_device_id) ||
+                (nodeDevice(def, l.from) === s.b_device_id &&
+                  nodeDevice(def, l.to) === s.a_device_id),
+            );
+            return (
+              <div
+                key={i}
+                className="flex flex-col gap-0.5 border-b border-slate-100 pb-2 last:border-0 dark:border-slate-800/60"
+              >
+                <div className="flex items-center gap-2">
+                  <span className="flex-1 text-slate-700 dark:text-slate-300">
+                    {s.a_device} {s.a_if_name || `if ${s.a_if_index}`} ⇄{" "}
+                    {s.b_device || s.b_sysname}{" "}
+                    {s.b_if_name ||
+                      (s.b_if_index ? `if ${s.b_if_index}` : s.b_port) || (
+                        <span className="italic text-slate-400">
+                          port unknown
+                        </span>
+                      )}
+                  </span>
+                  {/* LLDP is observed; a description is somebody's note, which
+                      may be stale. The badge is the difference between "accept"
+                      and "check first". */}
+                  <span
+                    className={cx(
+                      "rounded px-1 text-[10px]",
+                      s.source === "lldp"
+                        ? "bg-sky-500/15 text-sky-600 dark:text-sky-400"
+                        : s.confidence === "both-ends"
+                          ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
+                          : "bg-amber-500/15 text-amber-600 dark:text-amber-400",
+                    )}
+                    title={
+                      s.source === "lldp"
+                        ? "Reported by the device over LLDP"
+                        : s.confidence === "both-ends"
+                          ? "Both ports describe each other"
+                          : "Only one port names the other device — the far-end interface is a guess"
+                    }
+                  >
+                    {s.source === "lldp" ? "LLDP" : s.confidence}
+                  </span>
+                  <Button
+                    variant="ghost"
+                    disabled={already || !s.b_device_id}
+                    onClick={() => acceptSuggestion(s)}
+                    title={
+                      already
+                        ? "These two are already linked on this map"
+                        : "Add this link to the map"
+                    }
+                  >
+                    {already ? "on map" : "Add"}
+                  </Button>
+                </div>
+                {s.evidence && (
+                  <span className="text-[10px] text-slate-500">
+                    {s.evidence}
+                  </span>
+                )}
+              </div>
+            );
+          })}
         </div>
       </Card>
     </div>

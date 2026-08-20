@@ -383,10 +383,23 @@ type Suggestion struct {
 	ADeviceID string `json:"a_device_id"`
 	ADevice   string `json:"a_device"`
 	AIfIndex  int    `json:"a_if_index"`
+	AIfName   string `json:"a_if_name"`
 	BDeviceID string `json:"b_device_id"`
 	BDevice   string `json:"b_device"`
+	BIfIndex  int    `json:"b_if_index"`
+	BIfName   string `json:"b_if_name"`
 	BSysName  string `json:"b_sysname"`
 	BPort     string `json:"b_port"`
+	// Source is "lldp" or "description" — the operator should weigh a neighbour
+	// the device reported differently from one inferred from text somebody
+	// typed, possibly years ago.
+	Source string `json:"source"`
+	// Confidence is "both-ends" when each side's description names the other,
+	// "one-end" when only one does. Empty for LLDP, which is not a guess.
+	Confidence string `json:"confidence"`
+	// Evidence is the description text the suggestion came from, so the offer
+	// can be judged without going and looking the port up.
+	Evidence string `json:"evidence"`
 }
 
 func (s *Store) Suggestions(ctx context.Context) ([]Suggestion, error) {
@@ -410,9 +423,82 @@ func (s *Store) Suggestions(ctx context.Context) ([]Suggestion, error) {
 			&sg.BDeviceID, &sg.BDevice, &sg.BSysName, &sg.BPort); err != nil {
 			return nil, err
 		}
+		sg.Source = "lldp"
 		out = append(out, sg)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// Descriptions fill the gap LLDP leaves. Anything LLDP already reported
+	// wins: it is observed adjacency rather than inferred, so a description
+	// suggestion for the same pair would only be a duplicate to dismiss.
+	seen := map[[2]string]bool{}
+	for _, s := range out {
+		if s.BDeviceID != "" {
+			x, y, _ := pairKey(s.ADeviceID, s.BDeviceID)
+			seen[[2]string{x, y}] = true
+		}
+	}
+	described, err := s.describedSuggestions(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, d := range described {
+		x, y, _ := pairKey(d.ADeviceID, d.BDeviceID)
+		if seen[[2]string{x, y}] {
+			continue
+		}
+		out = append(out, d)
+	}
+	return out, nil
+}
+
+// describedSuggestions reads every present interface's alias and description
+// and infers adjacency from them (see describe.go for why).
+func (s *Store) describedSuggestions(ctx context.Context) ([]Suggestion, error) {
+	drows, err := s.Pool.Query(ctx, `
+		SELECT id, name, coalesce(sys_name,'')
+		FROM inventory.devices WHERE status <> 'retired'`)
+	if err != nil {
+		return nil, errx.Wrap(errx.KindTransient, err, "devices for suggestions")
+	}
+	defer drows.Close()
+	var devices []DeviceRef
+	for drows.Next() {
+		var d DeviceRef
+		if err := drows.Scan(&d.ID, &d.Name, &d.SysName); err != nil {
+			return nil, err
+		}
+		devices = append(devices, d)
+	}
+	if err := drows.Err(); err != nil {
+		return nil, err
+	}
+
+	irows, err := s.Pool.Query(ctx, `
+		SELECT i.device_id, i.if_index, coalesce(i.name,''),
+		       coalesce(i.alias,''), coalesce(i.descr,'')
+		FROM inventory.interfaces i
+		JOIN inventory.devices d ON d.id = i.device_id
+		WHERE i.state = 'present' AND d.status <> 'retired'
+		  AND (coalesce(i.alias,'') <> '' OR coalesce(i.descr,'') <> '')`)
+	if err != nil {
+		return nil, errx.Wrap(errx.KindTransient, err, "interfaces for suggestions")
+	}
+	defer irows.Close()
+	var ifaces []IfaceRef
+	for irows.Next() {
+		var i IfaceRef
+		if err := irows.Scan(&i.DeviceID, &i.IfIndex, &i.Name, &i.Alias, &i.Descr); err != nil {
+			return nil, err
+		}
+		ifaces = append(ifaces, i)
+	}
+	if err := irows.Err(); err != nil {
+		return nil, err
+	}
+	return SuggestFromDescriptions(devices, ifaces), nil
 }
 
 // linkBindings returns each link's stable interface row ids, keyed

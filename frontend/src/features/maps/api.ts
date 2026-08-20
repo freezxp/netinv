@@ -151,10 +151,19 @@ export interface Suggestion {
   a_device_id: string;
   a_device: string;
   a_if_index: number;
+  a_if_name: string;
   b_device_id: string;
   b_device: string;
+  b_if_index: number;
+  b_if_name: string;
   b_sysname: string;
   b_port: string;
+  /** "lldp" — the device reported it — or "description", inferred from text. */
+  source: string;
+  /** "both-ends" | "one-end" for description suggestions; empty for LLDP. */
+  confidence: string;
+  /** The description text behind the suggestion, so it can be judged in place. */
+  evidence: string;
 }
 
 export function useSuggestions(mapID: string) {
