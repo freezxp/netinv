@@ -1,7 +1,7 @@
 // OID browser (doc 30 §5): dump what a device actually exposes over SNMP.
 // This is the tool for working out which MIBs a new platform supports before
 // writing a connector for it — and for answering "why is this metric empty?".
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../../api/client";
 import type { Device } from "../../api/types";
@@ -88,67 +88,117 @@ export function OidBrowser({
   // minutes rather than seconds on a large device.
   const EXPORT_ROOTS = [".1.0", ".1.1", ".1.2", ".1.3"];
   const EXPORT_LIMIT = 500000;
+  // Below nginx's proxy_read_timeout so the request aborts with something we
+  // can explain, rather than becoming a 504 the user has to interpret.
+  const EXPORT_TIMEOUT_MS = 280_000;
+
   const [exporting, setExporting] = useState(false);
   const [exportNote, setExportNote] = useState("");
+  const abortRef = useRef<AbortController | null>(null);
 
-  const exportTxt = async () => {
+  const save = (text: string, suffix: string) => {
+    const name = (device.sys_name || device.name || "device")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-|-$/g, "");
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+    const url = URL.createObjectURL(
+      new Blob([text], { type: "text/plain;charset=utf-8" }),
+    );
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `snmp-${name}-${suffix}${stamp}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  // runExport walks a list of roots and downloads the result.
+  //
+  // Everything here exists because of one real export: 407271 objects, 33MB,
+  // dominated by an edge router's routing table (165k ipCidrRoute rows). A walk
+  // that size takes minutes, and with no count, no elapsed time and no way out
+  // it is indistinguishable from a hang — which is exactly how it was reported.
+  //
+  // So: progress after every root, a cancel button, a timeout below nginx's,
+  // and — the part that matters — whatever was collected is still offered as a
+  // file, clearly marked partial. A cancelled walk of a big router is usually
+  // still the most useful thing anyone has.
+  const runExport = async (roots: string[], what: string) => {
+    const ctl = new AbortController();
+    abortRef.current = ctl;
+    const timer = window.setTimeout(() => ctl.abort("timeout"), EXPORT_TIMEOUT_MS);
+    const started = Date.now();
     setExporting(true);
-    setExportNote("");
+    setExportNote("starting…");
+
+    const collected: OIDValue[] = [];
+    const perRoot: string[] = [];
+    let anyTruncated = false;
+    let stopped = "";
+
     try {
-      const collected: OIDValue[] = [];
-      const perRoot: string[] = [];
-      let anyTruncated = false;
-      for (const r of EXPORT_ROOTS) {
-        setExportNote(`walking ${r}…`);
+      for (const r of roots) {
+        setExportNote(
+          `walking ${r} — ${collected.length} objects, ${Math.round((Date.now() - started) / 1000)}s`,
+        );
         const part = await api<{ data: OIDValue[]; truncated: boolean }>(
           `/devices/${device.id}/oids?root=${encodeURIComponent(r)}&limit=${EXPORT_LIMIT}`,
+          { signal: ctl.signal },
         );
         collected.push(...part.data);
         anyTruncated = anyTruncated || part.truncated;
-        perRoot.push(`#   ${r.padEnd(6)} ${part.data.length}${part.truncated ? "  (CEILING HIT)" : ""}`);
+        perRoot.push(
+          `#   ${r.padEnd(6)} ${part.data.length}${part.truncated ? "  (CEILING HIT)" : ""}`,
+        );
       }
-      const full = { data: collected, truncated: anyTruncated };
-      const at = new Date();
-      const header = [
-        "# NetInv — SNMP object dump",
-        `# device:    ${device.sys_name || device.name}`,
-        `# address:   ${device.mgmt_ip}`,
-        "# roots:     every child of iso — .1 itself has no BER encoding",
-        ...perRoot,
-        `# walked at: ${at.toISOString()}`,
-        `# objects:   ${full.data.length}`,
-        ...(full.truncated
-          ? [
-              `# WARNING:   stopped at the ${EXPORT_LIMIT}-object ceiling — this is`,
-              "#            NOT the whole tree. Export subtrees separately.",
-            ]
-          : ["# complete:  whole tree walked, nothing truncated"]),
-        "",
-      ].join("\n");
-      const blob = new Blob([header + asText(full.data) + "\n"], {
-        type: "text/plain;charset=utf-8",
-      });
-      const name = (device.sys_name || device.name || "device")
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, "-")
-        .replace(/^-|-$/g, "");
-      const stamp = at.toISOString().slice(0, 19).replace(/[:T]/g, "-");
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `snmp-${name}-${stamp}.txt`;
-      a.click();
-      URL.revokeObjectURL(url);
-      setExportNote(
-        full.truncated
-          ? `exported ${full.data.length} — HIT CEILING, incomplete`
-          : `exported ${full.data.length} (whole tree)`,
-      );
     } catch (e) {
-      setExportNote(`export failed: ${(e as Error).message}`);
+      stopped =
+        ctl.signal.reason === "timeout"
+          ? `timed out after ${Math.round(EXPORT_TIMEOUT_MS / 1000)}s`
+          : ctl.signal.aborted
+            ? "cancelled"
+            : (e as Error).message;
     } finally {
-      setExporting(false);
+      clearTimeout(timer);
+      abortRef.current = null;
     }
+
+    if (!collected.length) {
+      setExporting(false);
+      setExportNote(stopped ? `export ${stopped}` : "nothing returned");
+      return;
+    }
+
+    const complete = !stopped && !anyTruncated;
+    const header = [
+      "# NetInv — SNMP object dump",
+      `# device:    ${device.sys_name || device.name}`,
+      `# address:   ${device.mgmt_ip}`,
+      `# scope:     ${what}`,
+      ...perRoot,
+      `# walked at: ${new Date().toISOString()}`,
+      `# objects:   ${collected.length}`,
+      ...(complete
+        ? ["# complete:  yes — every root walked to the end"]
+        : [
+            "# PARTIAL:   this dump is INCOMPLETE. Do not read an absent OID",
+            "#            here as evidence the device does not implement it.",
+            ...(stopped ? [`#            reason: ${stopped}`] : []),
+            ...(anyTruncated
+              ? [`#            reason: hit the ${EXPORT_LIMIT}-object ceiling`]
+              : []),
+            `#            roots walked: ${perRoot.length} of ${roots.length}`,
+          ]),
+      "",
+    ].join("\n");
+
+    save(header + asText(collected) + "\n", complete ? "" : "partial-");
+    setExporting(false);
+    setExportNote(
+      complete
+        ? `exported ${collected.length} objects`
+        : `exported ${collected.length} — PARTIAL (${stopped || "ceiling hit"})`,
+    );
   };
 
   return (
@@ -199,14 +249,40 @@ export function OidBrowser({
           <Button variant="ghost" onClick={copyAll} disabled={!walk.data?.data.length}>
             Copy all
           </Button>
+          {/* Subtree first: on a router, "everything" means the routing table
+              too — one real export ran to 407k objects and 33MB, most of it
+              ipCidrRoute. Someone chasing a CPU OID wants the branch they are
+              looking at, not the RIB. */}
           <Button
             variant="ghost"
-            onClick={() => void exportTxt()}
+            onClick={() => void runExport([root], `subtree ${root}`)}
             disabled={exporting}
-            title="Walk the device's whole OID tree and download every object as a .txt file. Takes minutes on a large device."
+            title={`Walk ${root} only and download it as a .txt file`}
           >
-            {exporting ? "Walking whole tree…" : "Export all (.txt)"}
+            Export subtree
           </Button>
+          <Button
+            variant="ghost"
+            onClick={() =>
+              void runExport(
+                EXPORT_ROOTS,
+                "whole tree — every child of iso (.1 itself has no BER encoding)",
+              )
+            }
+            disabled={exporting}
+            title="Walk the device's whole OID tree. Minutes on a large device; you can cancel and still keep what was collected."
+          >
+            Export all (.txt)
+          </Button>
+          {exporting && (
+            <Button
+              variant="ghost"
+              onClick={() => abortRef.current?.abort("cancelled")}
+              title="Stop walking and save what has been collected so far"
+            >
+              Cancel
+            </Button>
+          )}
           <Button variant="ghost" onClick={onClose}>
             Close
           </Button>
