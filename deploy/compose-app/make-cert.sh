@@ -27,6 +27,17 @@ for ip in $(hostname -I 2>/dev/null || true); do
 	alt="${alt},IP:${ip}"
 done
 
+# Extra names the machine cannot discover for itself. A reverse proxy or a
+# Cloudflare tunnel reaches this origin under the name its users type, not
+# under the host's own hostname, and it verifies the certificate against that
+# name — so a deployment fronted by one needs the public name in here or the
+# proxy rejects the origin with no symptom on this side. Comma-separated, and
+# each entry carries its own DNS:/IP: prefix:
+#   NETINV_TLS_SANS="DNS:netinv.example.com,IP:10.0.0.5" ./make-cert.sh
+if [ -n "${NETINV_TLS_SANS:-}" ]; then
+	alt="${alt},${NETINV_TLS_SANS}"
+fi
+
 openssl req -x509 -newkey rsa:2048 -sha256 -nodes \
 	-keyout "$dir/netinv.key" -out "$dir/netinv.crt" \
 	-days "$days" -subj "/CN=${host}" -addext "subjectAltName=${alt}" \
