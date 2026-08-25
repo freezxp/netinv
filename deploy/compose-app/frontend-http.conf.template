@@ -1,0 +1,36 @@
+# Single-host deployment, http mode: port 80 serves the app directly instead of
+# redirecting, so a TLS-terminating proxy in front of this host — a Cloudflare
+# tunnel, a load balancer, an existing reverse proxy — can reach an origin that
+# presents no certificate of its own. HTTPS on 443 stays available alongside it
+# for anyone reaching the host directly.
+#
+# Select it with NETINV_FRONTEND_MODE=http. See doc 20 §12.4, which sets out
+# what this costs: the hop between the proxy and this host carries the login
+# POST and the session cookie in cleartext, so it is only defensible when that
+# hop is trusted — a proxy on this same host, or a network segment you would
+# already be comfortable running plain HTTP across.
+#
+# This is a template, not a config: the nginx image substitutes environment
+# variables at start-up, and nginx's own $host and $uri survive untouched.
+
+server {
+    listen 80;
+    server_name _;
+
+    # Kept identical to tls mode so a later switch back does not need an ACME
+    # client reconfigured.
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    include /etc/nginx/snippets/app.conf;
+}
+
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name _;
+
+    include /etc/nginx/snippets/tls-params.conf;
+    include /etc/nginx/snippets/app.conf;
+}

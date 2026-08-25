@@ -151,17 +151,26 @@ services:
       context: frontend
       args:
         NETINV_VERSION: ${NETINV_VERSION:-}
-    # 8090 serves plain HTTP and does nothing but redirect to 8443. TLS is the
-    # way in; the HTTP listener exists so a bookmark or a typed hostname still
-    # arrives somewhere rather than failing to connect.
+    # In the default tls mode 8090 serves plain HTTP and does nothing but
+    # redirect to 8443: TLS is the way in, and the HTTP listener exists so a
+    # bookmark or a typed hostname still arrives somewhere rather than failing
+    # to connect. With NETINV_FRONTEND_MODE=http, 8090 serves the app itself
+    # for a TLS-terminating proxy in front — 8443 keeps working either way.
     ports: ["8090:80", "8443:443"]
     depends_on: { api: { condition: service_started } }
     volumes:
       # Route /api to the api service (the ingress does this in k8s), terminate
-      # TLS, and set the security headers. Swap for frontend-proxy.conf to run
-      # without TLS — see doc 20 §12 for why that is a bad idea on anything
-      # reachable by more than one person.
-      - ./deploy/compose-app/frontend-tls.conf.template:/etc/nginx/templates/default.conf.template:ro
+      # TLS, and set the security headers.
+      #
+      # NETINV_FRONTEND_MODE picks which template is mounted: tls (default)
+      # redirects port 80 to HTTPS, http serves the app on port 80 as well for
+      # a TLS-terminating proxy in front. Doc 20 §12.4 covers when the second
+      # is defensible. An unknown value fails the mount rather than silently
+      # falling back, so a typo cannot leave the origin in a mode nobody chose.
+      - ./deploy/compose-app/frontend-${NETINV_FRONTEND_MODE:-tls}.conf.template:/etc/nginx/templates/default.conf.template:ro
+      # The SPA, the /api proxy, the security headers and the TLS parameters,
+      # shared by both templates so the modes cannot drift apart.
+      - ./deploy/compose-app/nginx-snippets:/etc/nginx/snippets:ro
       - ./deploy/compose-app/certs:/etc/nginx/certs:ro
     environment:
       # The published HTTPS port, as a suffix for the HTTP->HTTPS redirect.

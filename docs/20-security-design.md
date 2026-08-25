@@ -74,7 +74,7 @@ The brief lists OAuth2: v1 implements the resource-server side (Bearer tokens, O
 
 ### 12.1 TLS
 
-The single-host deployment terminates TLS at nginx (`deploy/compose-app/frontend-tls.conf.template`). Port 80 exists only to issue a 308 to HTTPS and to serve an ACME challenge path; it is not a second way in.
+The single-host deployment terminates TLS at nginx (`deploy/compose-app/frontend-tls.conf.template`). Port 80 exists only to issue a 308 to HTTPS and to serve an ACME challenge path; it is not a second way in. §12.4 covers the one supported exception, for deployments that terminate TLS in front of this host.
 
 - **TLS 1.2 and 1.3 only**, forward-secrecy ciphers only — every offered suite is ECDHE, so a stolen key cannot decrypt captured traffic. Session tickets off.
 - **Headers:** HSTS, CSP, `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Cross-Origin-Opener-Policy`, `Permissions-Policy`. The CSP is `script-src 'self'` with no `unsafe-inline` — the app is self-contained, so `connect-src 'self'` leaves injected script nowhere to send anything. `style-src` needs `unsafe-inline` because the charting libraries set element styles directly.
@@ -131,3 +131,20 @@ Fixed: the layout is asserted before extraction, `mkdir -p` is gone so a missing
 
 
 Dependency + container scan clean (critical/high) · secrets-in-repo scan (gitleaks) clean · authz test suite: every endpoint × every role matches §5 · no-secret-leak invariant tests green · TLS config scan (testssl) on staging · seeded-admin flow forces password change · backup restore drill performed · threat-model review of any scope added since this doc.
+### 12.4 Serving a plain-HTTP origin behind a terminating proxy
+
+`NETINV_FRONTEND_MODE` selects which nginx template the frontend mounts:
+
+| Mode | Port 8090 | Port 8443 |
+|---|---|---|
+| `tls` (default) | 308 redirect to HTTPS | the app, over TLS |
+| `http` | **the app, in cleartext** | the app, over TLS |
+
+`http` mode exists because a TLS-terminating proxy in front of the host — a Cloudflare tunnel, a load balancer, an existing reverse proxy — has to reach an origin it can talk to. Pointing such a proxy at the TLS port works only if it trusts the origin certificate, and a self-signed one frequently is not trusted: middleboxes that inspect TLS have been observed forging TCP resets when an untrusted certificate appears, which presents as a connection reset rather than a certificate warning and is easy to misdiagnose as an application fault.
+
+**What it costs.** The hop between the proxy and this host carries the login POST and the session cookie in cleartext. That is exactly the exposure the TLS work removed, so `http` mode is only defensible when the hop is trusted: the proxy running on this same host (origin `https://localhost:8443` avoids the question entirely and is the better answer where possible), or a segment you would already be willing to run plain HTTP across. It is not a way to avoid installing a certificate on a network you do not control.
+
+**What does not change.** Both templates include the same `nginx-snippets/app.conf`, so the SPA, the `/api` proxy and the full security-header set are identical in either mode — the modes differ only in what port 80 does. The snippet is shared rather than copied precisely so a header cannot end up set on HTTPS and missing on the HTTP origin.
+
+**`Secure` cookies still apply.** The api sets the flag from `NETINV_INSECURE_COOKIES` alone and never reads `X-Forwarded-Proto`, so an `http`-mode origin still issues `Secure` cookies. Through a proxy that terminates TLS this is correct and wanted: the browser's connection is HTTPS, so it stores and returns the cookie. The consequence is that **logging in by pointing a browser straight at `http://<host>:8090` will not hold a session** — the browser discards the `Secure` cookie — which is a feature of this arrangement rather than a fault: use 8443 for direct access, and reserve 8090 for the proxy.
+

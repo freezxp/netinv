@@ -156,10 +156,13 @@ Two things worth knowing if you ever bring it up by hand rather than via the scr
   Budget roughly 75 MB per device per year — a handful of devices is a couple
   of GB, 500 devices is ~75 GB. Lower it if the disk is small; VictoriaMetrics
   stops accepting writes when the disk fills, and collection stops with it.
-- **Not exposed to the internet as-is.** It serves plain HTTP on 8090 with
-  `NETINV_INSECURE_COOKIES=1`. To expose it, put a TLS-terminating reverse
-  proxy (Caddy/nginx/Traefik) in front, set `NETINV_UI_URL` to the HTTPS URL,
-  and remove `NETINV_INSECURE_COOKIES` in the `.env`.
+- **Not exposed to the internet as-is.** It serves HTTPS on 8443 with a
+  self-signed certificate, and 8090 redirects there; `NETINV_INSECURE_COOKIES`
+  defaults to 0. To expose it, replace `certs/netinv.{crt,key}` with a real
+  pair and set `NETINV_UI_URL` to the public HTTPS URL. If a TLS-terminating
+  proxy sits in front and cannot be made to trust the origin certificate, set
+  `NETINV_FRONTEND_MODE=http` so 8090 serves the app directly — read doc 20
+  §12.4 first, because that hop then carries the login in cleartext.
 - **Bring your own data tier**: point the DSNs/passwords in
   `deploy/compose-app/docker-compose.deploy.yml` and `.env` at your managed
   PostgreSQL / RabbitMQ / VictoriaMetrics / Redis instead of the bundled

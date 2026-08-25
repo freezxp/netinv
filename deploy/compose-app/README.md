@@ -19,7 +19,7 @@ docker compose --env-file deploy/compose-app/.env \
   --profile app up -d --build
 ```
 
-Open **http://localhost:8090** and log in as `admin` with the
+Open **https://localhost:8443** (8090 redirects there) and log in as `admin` with the
 `NETINV_ADMIN_PASSWORD` from your `.env` (the admin is bootstrapped on first
 boot against an empty database; change the password at first login).
 
@@ -27,7 +27,7 @@ boot against an empty database; change the password at first login).
 
 | URL / port | What |
 |---|---|
-| http://localhost:8090 | NetInv UI (nginx serving the SPA, proxying `/api` to the api service) |
+| https://localhost:8443 | NetInv UI (nginx serving the SPA, proxying `/api` to the api service). http://localhost:8090 redirects here, or serves the app itself when `NETINV_FRONTEND_MODE=http` |
 | :5672 / :15672 | RabbitMQ (+ management) |
 | :8428 | VictoriaMetrics |
 | :8025 | MailHog (email test inbox) |
@@ -37,9 +37,12 @@ boot against an empty database; change the password at first login).
 
 - **Secrets**: `.env` is git-ignored. The master key encrypts the credential
   vault — losing it means re-entering SNMP credentials (doc 28 R-10).
-- **TLS**: this single-host setup serves plain HTTP on 8090 with
-  `NETINV_INSECURE_COOKIES=1`. Put it behind a TLS-terminating reverse proxy
-  (or use the k8s ingress path) and unset that flag for anything exposed.
+- **TLS**: this single-host setup terminates TLS on 8443 with a self-signed
+  certificate from `make-cert.sh`; 8090 redirects there and session cookies
+  carry `Secure`. Replace `certs/netinv.{crt,key}` with a real pair for
+  anything exposed. Setting `NETINV_FRONTEND_MODE=http` makes 8090 serve the
+  app itself, for a TLS-terminating proxy in front that cannot trust the
+  origin certificate — doc 20 §12.4 covers what that costs.
 - **Poller state**: the buffer uses tmpfs here (single host, local broker). The
   k8s poller chart uses a PVC with `fsGroup` for persistence.
 - **Managed data tier**: point `PG_PASSWORD`/`RABBIT_PASSWORD` (and the DSNs in
