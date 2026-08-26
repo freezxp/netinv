@@ -94,7 +94,7 @@ func TestAssignByMatchDryRunPreviewsWithoutWriting(t *testing.T) {
 
 // The operator's own underscore is a literal. An unescaped LIKE would let
 // "ACME_WAN" also claim "ACMExWAN", which is a different customer's port.
-func TestAssignByMatchTreatsWildcardsInTheValueAsLiteral(t *testing.T) {
+func TestAssignByMatchTreatsUnderscoreAsLiteral(t *testing.T) {
 	dr, _, all := seedMatchFixture(t)
 	ctx := t.Context()
 
@@ -212,5 +212,64 @@ func TestAssignByMatchRejectsRulesThatWouldMatchEverything(t *testing.T) {
 		Value: "acme", Customer: "Acme Ltd",
 	}); err == nil {
 		t.Fatal("an unknown field was accepted into the query")
+	}
+}
+
+// % is the operator's wildcard, so a shape they type is the shape they get.
+// Anchored at both ends when they use one: "ACME-WAN-0%" must not reach the
+// alias that merely contains that text somewhere in the middle.
+func TestAssignByMatchHonoursPercentAsAWildcard(t *testing.T) {
+	dr, _, _ := seedMatchFixture(t)
+	ctx := t.Context()
+
+	// A shape: dash-separated, ending in WAN-something.
+	shape, err := dr.AssignByMatch(ctx, MatchRule{
+		Field: "alias", Op: "like", Value: "ACME-%-0%", Customer: "Acme Ltd",
+	})
+	if err != nil {
+		t.Fatalf("shape: %v", err)
+	}
+	// ACME-WAN-01, -02 and -05. Not ACME_WAN-03 (literal underscore), not
+	// ACMExWAN-04, not the GLOBEX port.
+	if shape.Matched != 3 {
+		t.Fatalf("shape matched %d, want 3: %+v", shape.Matched, shape.Sample)
+	}
+
+	// A prefix is anchored: nothing here starts with WAN, though three
+	// aliases contain it, so an unanchored pattern would wrongly match.
+	prefix, err := dr.AssignByMatch(ctx, MatchRule{
+		Field: "alias", Op: "like", Value: "WAN%", Customer: "Acme Ltd",
+	})
+	if err != nil {
+		t.Fatalf("prefix: %v", err)
+	}
+	if prefix.Matched != 0 {
+		t.Fatalf("prefix matched %d, want 0 — a %% pattern must anchor", prefix.Matched)
+	}
+
+	// And with no % at all it stays a substring, which is what most rules want.
+	sub, err := dr.AssignByMatch(ctx, MatchRule{
+		Field: "alias", Op: "like", Value: "WAN", Customer: "Acme Ltd",
+	})
+	if err != nil {
+		t.Fatalf("substring: %v", err)
+	}
+	if sub.Matched == 0 {
+		t.Fatal("a value with no wildcard stopped behaving as contains")
+	}
+}
+
+// A bare wildcard would assign every untagged port in the fleet. It is one
+// keystroke from a real rule, so it has to be refused rather than previewed.
+func TestAssignByMatchRefusesAValueOfOnlyWildcards(t *testing.T) {
+	dr, _, _ := seedMatchFixture(t)
+	ctx := t.Context()
+
+	for _, v := range []string{"%", "%%", " % ", "%_%"} {
+		if _, err := dr.AssignByMatch(ctx, MatchRule{
+			Field: "alias", Op: "like", Value: v, Customer: "Acme Ltd",
+		}); err == nil {
+			t.Fatalf("value %q was accepted", v)
+		}
 	}
 }

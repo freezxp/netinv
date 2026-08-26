@@ -485,9 +485,12 @@ function AssignByMatch({ onClose }: { onClose: () => void }) {
         <p className="text-sm text-slate-500">
           Matches the text operators write on a port. <span className="mono">contains</span>{" "}
           is a substring; <span className="mono">equals</span> is the whole
-          value. Both ignore case, and <span className="mono">%</span> or{" "}
-          <span className="mono">_</span> in your text match literally rather
-          than as wildcards.
+          value. Both ignore case. Use <span className="mono">%</span> as a
+          wildcard — <span className="mono">ACME%</span> is a prefix,{" "}
+          <span className="mono">ACME-%-WAN</span> is a shape — and a value
+          containing one is matched end to end rather than as a substring. An{" "}
+          <span className="mono">_</span> is literal, since nearly every alias
+          has one and almost nobody means “any character” by it.
         </p>
 
         <div className="mt-3 flex flex-wrap items-end gap-2">

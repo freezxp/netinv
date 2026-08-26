@@ -25,8 +25,8 @@ type MatchRule struct {
 	Field string
 	// Op is eq (whole value, case-insensitive) or like (contains).
 	Op string
-	// Value is the text to look for. Its own % and _ are matched literally —
-	// see escapeLike.
+	// Value is the text to look for. Under like, % is the operator's own
+	// wildcard and _ is matched literally — see likePattern.
 	Value string
 	// Customer is the name to write; ClearToken empties it.
 	Customer string
@@ -79,14 +79,34 @@ var matchableCols = map[string]string{
 	"name":  "coalesce(i.name,'')",
 }
 
-// escapeLike makes a user's text match literally inside a LIKE pattern.
+// likePattern turns the operator's text into a LIKE pattern.
 //
-// Without it a port alias containing an underscore — which is most of them —
-// silently matches any character, so a rule for "ACME_WAN" also claims
-// "ACMExWAN". Wildcards the operator did not type should not exist.
-func escapeLike(s string) string {
-	r := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
-	return r.Replace(s)
+// The two wildcards are treated differently on purpose, because operators mean
+// them differently. **% is theirs**: someone typing "ACME-%-WAN" wants a
+// pattern, and refusing it forces them into a substring that also catches
+// things they did not ask for. **_ is not**: nearly every port alias contains
+// an underscore and essentially nobody means "any character" by it, so a rule
+// for "ACME_WAN" that also claimed "ACMExWAN" would be handing a different
+// customer's port over on a typo nobody typed.
+//
+// Text with no % is wrapped as a substring, which is what "contains" should do
+// and what the great majority of rules want. Text with a % is used verbatim
+// and therefore anchored at both ends, so the operator gets the whole pattern
+// language: "ACME%" is a prefix, "%ACME%" is contains, "A%B%C" is a shape.
+func likePattern(s string) string {
+	esc := strings.NewReplacer(`\`, `\\`, `_`, `\_`).Replace(s)
+	if strings.Contains(esc, "%") {
+		return esc
+	}
+	return "%" + esc + "%"
+}
+
+// onlyWildcards reports text that would select the entire fleet. A bare "%" is
+// never a rule anyone meant to write, and it is one keystroke away from a real
+// one — the preview would show it, but a rule that assigns every untagged port
+// in the estate should have to be spelled out rather than typed by accident.
+func onlyWildcards(s string) bool {
+	return strings.Trim(s, "%_ \t") == ""
 }
 
 // AssignByMatch applies one rule to every matching interface.
@@ -134,7 +154,11 @@ func (r *DeviceRepo) AssignByMatch(ctx context.Context, rule MatchRule) (MatchRe
 			preds = append(preds, "lower("+c+") = lower($1)")
 		}
 	case "like", "contains":
-		arg = "%" + escapeLike(value) + "%"
+		if onlyWildcards(value) {
+			return res, errx.New(errx.KindInvalid,
+				"a value of only wildcards would match every interface in the fleet")
+		}
+		arg = likePattern(value)
 		for _, c := range cols {
 			preds = append(preds, c+` ILIKE $1 ESCAPE '\'`)
 		}
