@@ -281,6 +281,54 @@ export function useImportInterfaceTags() {
   });
 }
 
+export interface AssignMatchRule {
+  field: "alias" | "descr" | "name" | "any";
+  op: "like" | "eq";
+  value: string;
+  customer: string;
+  overwrite?: boolean;
+  dry_run?: boolean;
+}
+
+export interface AssignMatchPreviewRow {
+  device: string;
+  if_index: number;
+  name: string;
+  alias: string;
+  descr: string;
+  customer: string;
+}
+
+export interface AssignMatchResult {
+  matched: number;
+  updated: number;
+  dry_run: boolean;
+  skipped: string[];
+  sample: AssignMatchPreviewRow[];
+}
+
+/** Assigns a customer to every interface whose description matches one rule.
+ *
+ *  The API previews unless dry_run is explicitly false, so the UI runs the
+ *  same rule twice: once to show what it selected, once to apply it. Sending
+ *  the identical rule both times is what makes the preview trustworthy. */
+export function useAssignByMatch() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (rule: AssignMatchRule) =>
+      api<AssignMatchResult>("/interfaces/assign", {
+        method: "POST",
+        body: JSON.stringify(rule),
+      }),
+    onSuccess: (res) => {
+      if (res.dry_run) return; // a preview changed nothing to invalidate
+      qc.invalidateQueries({ queryKey: ["interfaces"] });
+      qc.invalidateQueries({ queryKey: ["interface-customers"] });
+      qc.invalidateQueries({ queryKey: ["report"] });
+    },
+  });
+}
+
 export interface InterfaceSearchRow {
   id: string;
   device_id: string;

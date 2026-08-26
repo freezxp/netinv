@@ -55,6 +55,9 @@ func (h *DeviceHandler) Register(r chi.Router) {
 		// Tagging is operator knowledge about the network, so it is a write
 		// even though it changes nothing the network can see.
 		pw.Post("/interfaces/tags", h.tagInterfaces)
+		// Rule-based assignment: one filter over the description text rather
+		// than a row per port. Defaults to a dry run — see assignInterfaces.
+		pw.Post("/interfaces/assign", h.assignInterfaces)
 		pw.Post("/devices/{id}/addresses", h.addAddress)
 		pw.Post("/devices/{id}/merge", h.merge)
 		// Live SNMP walk: read-only, but it loads the device, so operator+.
@@ -349,6 +352,61 @@ func (h *DeviceHandler) tagInterfaces(w http.ResponseWriter, r *http.Request) {
 		Detail: map[string]any{"submitted": len(in), "updated": res.Updated,
 			"unmatched": len(res.Unmatched), "ambiguous": len(res.Ambiguous)},
 	})
+	httpx.WriteJSON(w, http.StatusOK, res)
+}
+
+// assignInterfaces assigns a customer to every interface whose description
+// matches one rule, instead of naming each port.
+//
+// Operators encode the customer in the port alias long before they have a
+// monitoring system to tell — "ACME-WAN-01", "cust:globex" — so the assignment
+// they want is usually one filter, not a spreadsheet of two hundred rows.
+//
+// **It previews unless told otherwise.** dry_run defaults to true, so the
+// careless call is the harmless one: this writes the field that reports bill
+// from, and a rule one character too broad silently moves another customer's
+// circuit onto this customer's invoice. The caller sees what matched, then
+// asks for it again with dry_run false.
+func (h *DeviceHandler) assignInterfaces(w http.ResponseWriter, r *http.Request) {
+	repo := h.Svc.Repo.(*postgres.DeviceRepo)
+	var body struct {
+		Field     string    `json:"field"`
+		Op        string    `json:"op"`
+		Value     string    `json:"value"`
+		Customer  string    `json:"customer"`
+		Tags      *[]string `json:"tags"`
+		Overwrite bool      `json:"overwrite"`
+		DryRun    *bool     `json:"dry_run"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		httpx.WriteError(w, r, errx.New(errx.KindInvalid, "malformed JSON body"))
+		return
+	}
+	rule := postgres.MatchRule{
+		Field: body.Field, Op: body.Op, Value: body.Value,
+		Customer: body.Customer, Overwrite: body.Overwrite,
+		Apply: body.DryRun != nil && !*body.DryRun,
+	}
+	if body.Tags != nil {
+		rule.Tags, rule.SetTags = *body.Tags, true
+	}
+	res, err := repo.AssignByMatch(r.Context(), rule)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	// A dry run is not an event: it changes nothing, and an audit log that
+	// records previews buries the writes among them.
+	if rule.Apply {
+		h.Svc.Audit.Write(r.Context(), audit.Event{
+			ActorKind: "user", ActorID: httpx.ClaimsFrom(r.Context()).Subject,
+			Action: "interface.assign", ResourceKind: "interface",
+			Detail: map[string]any{"field": rule.Field, "op": rule.Op,
+				"value": rule.Value, "customer": rule.Customer,
+				"matched": res.Matched, "updated": res.Updated,
+				"skipped": len(res.Skipped), "overwrite": rule.Overwrite},
+		})
+	}
 	httpx.WriteJSON(w, http.StatusOK, res)
 }
 

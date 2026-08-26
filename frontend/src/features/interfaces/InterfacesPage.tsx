@@ -8,12 +8,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import {
+  useAssignByMatch,
   useCustomers,
   useImportInterfaceTags,
   useInterfaceSearch,
   useInstantQuery,
   useMetricsLimits,
   utilizationExpr,
+  type AssignMatchResult,
   type InterfaceSearchRow,
 } from "../../api/hooks";
 import {
@@ -68,6 +70,7 @@ export function InterfacesPage() {
   const [customer, setCustomer] = useState("");
   const [page, setPage] = useState(0);
   const [importing, setImporting] = useState(false);
+  const [assigning, setAssigning] = useState(false);
   const [upOnly, setUpOnly] = useState(false);
   const [busyOnly, setBusyOnly] = useState(false);
   const q = useDebounced(typed, 300);
@@ -165,6 +168,9 @@ export function InterfacesPage() {
           title="Exclude interfaces carrying no measurable traffic in the current window"
         >
           {busyOnly ? "Hiding idle" : "Hide idle"}
+        </Button>
+        <Button variant="ghost" onClick={() => setAssigning(true)}>
+          Assign by filter
         </Button>
         <Button variant="ghost" onClick={() => setImporting(true)}>
           Import customers
@@ -276,6 +282,7 @@ export function InterfacesPage() {
       </Card>
 
       {importing && <ImportCustomers onClose={() => setImporting(false)} />}
+      {assigning && <AssignByMatch onClose={() => setAssigning(false)} />}
 
       {total > PAGE && (
         <div className="flex items-center justify-between text-sm">
@@ -435,6 +442,195 @@ function useDebounced(value: string, ms: number) {
  * worth removing. The result names every row that did not match: an import
  * that silently applies 40 of 50 rows is worse than one that fails.
  */
+// AssignByMatch tags every port whose description matches one rule.
+//
+// The CSV import beside it is for a list that already exists somewhere else.
+// This is for the commoner case: the operator encoded the customer in the port
+// alias years ago, and wants one filter rather than two hundred rows.
+//
+// Preview is not a convenience here, it is the whole design. The field being
+// written is what the bandwidth report bills from, so the rule is shown what
+// it selected — including ports it would have taken from another customer —
+// before anything is written. Apply re-sends the identical rule with dry_run
+// false, so what was approved is what runs.
+function AssignByMatch({ onClose }: { onClose: () => void }) {
+  const [field, setField] = useState<"alias" | "descr" | "name" | "any">(
+    "alias",
+  );
+  const [op, setOp] = useState<"like" | "eq">("like");
+  const [value, setValue] = useState("");
+  const [customer, setCustomer] = useState("");
+  const [overwrite, setOverwrite] = useState(false);
+  const [preview, setPreview] = useState<AssignMatchResult | null>(null);
+  const [applied, setApplied] = useState<AssignMatchResult | null>(null);
+  const assign = useAssignByMatch();
+
+  const rule = { field, op, value: value.trim(), customer: customer.trim() };
+  const ready = rule.value !== "" && rule.customer !== "";
+
+  // Any edit invalidates a preview: showing a count from the previous rule
+  // beside an Apply button that would run the current one is how the wrong
+  // ports get assigned.
+  function edit<T>(set: (v: T) => void) {
+    return (v: T) => {
+      set(v);
+      setPreview(null);
+      setApplied(null);
+    };
+  }
+
+  return (
+    <div className="fixed inset-0 z-30 flex items-center justify-center bg-black/50 p-4">
+      <Card title="Assign customer by filter" className="w-full max-w-[46rem]">
+        <p className="text-sm text-slate-500">
+          Matches the text operators write on a port. <span className="mono">contains</span>{" "}
+          is a substring; <span className="mono">equals</span> is the whole
+          value. Both ignore case, and <span className="mono">%</span> or{" "}
+          <span className="mono">_</span> in your text match literally rather
+          than as wildcards.
+        </p>
+
+        <div className="mt-3 flex flex-wrap items-end gap-2">
+          <label className="text-xs">
+            <span className="block text-slate-500">Field</span>
+            <Select
+              value={field}
+              onChange={(e) => edit(setField)(e.target.value as typeof field)}
+            >
+              <option value="alias">ifAlias</option>
+              <option value="descr">ifDescr</option>
+              <option value="name">ifName</option>
+              <option value="any">any of them</option>
+            </Select>
+          </label>
+          <label className="text-xs">
+            <span className="block text-slate-500">Match</span>
+            <Select
+              value={op}
+              onChange={(e) => edit(setOp)(e.target.value as typeof op)}
+            >
+              <option value="like">contains</option>
+              <option value="eq">equals</option>
+            </Select>
+          </label>
+          <label className="text-xs grow">
+            <span className="block text-slate-500">Text</span>
+            <Input
+              value={value}
+              onChange={(e) => edit(setValue)(e.target.value)}
+              placeholder="ACME-WAN"
+            />
+          </label>
+          <label className="text-xs grow">
+            <span className="block text-slate-500">Customer</span>
+            <Input
+              value={customer}
+              onChange={(e) => edit(setCustomer)(e.target.value)}
+              placeholder="Acme Ltd"
+            />
+          </label>
+        </div>
+
+        <label className="mt-2 flex items-center gap-2 text-xs text-slate-500">
+          <input
+            type="checkbox"
+            checked={overwrite}
+            onChange={(e) => edit(setOverwrite)(e.target.checked)}
+          />
+          Reassign ports already held by another customer
+        </label>
+
+        {preview && !applied && (
+          <div className="mt-3 rounded border border-slate-300 p-2 text-sm dark:border-slate-700">
+            <div>
+              Matches <strong>{preview.matched}</strong>{" "}
+              {preview.matched === 1 ? "port" : "ports"}
+              {preview.skipped.length > 0 && (
+                <>
+                  , leaving <strong>{preview.skipped.length}</strong> held by
+                  someone else
+                </>
+              )}
+              .
+            </div>
+            {preview.skipped.length > 0 && !overwrite && (
+              <ul className="mono mt-1 max-h-24 overflow-auto text-xs text-amber-600">
+                {preview.skipped.map((sk) => (
+                  <li key={sk}>{sk}</li>
+                ))}
+              </ul>
+            )}
+            {preview.sample.length > 0 && (
+              <table className="mt-2 w-full text-xs">
+                <tbody>
+                  {preview.sample.map((r) => (
+                    <tr key={`${r.device}-${r.if_index}`}>
+                      <td className="mono pr-2">{r.device}</td>
+                      <td className="mono pr-2">{r.name}</td>
+                      <td className="pr-2 text-slate-500">{r.alias}</td>
+                      <td className="text-slate-500">{r.customer}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+            {preview.matched > preview.sample.length && (
+              <div className="mt-1 text-xs text-slate-500">
+                showing the first {preview.sample.length}
+              </div>
+            )}
+          </div>
+        )}
+
+        {applied && (
+          <div className="mt-3 text-sm text-emerald-600">
+            Assigned {applied.updated}{" "}
+            {applied.updated === 1 ? "port" : "ports"} to {rule.customer}.
+          </div>
+        )}
+
+        {assign.isError && (
+          <div className="mt-3 text-sm text-rose-600">
+            {(assign.error as Error).message}
+          </div>
+        )}
+
+        <div className="mt-3 flex items-center gap-2">
+          <Button
+            disabled={!ready || assign.isPending}
+            onClick={() =>
+              assign
+                .mutateAsync({ ...rule, overwrite })
+                .then((r) => {
+                  setPreview(r);
+                  setApplied(null);
+                })
+                .catch(() => {})
+            }
+          >
+            Preview
+          </Button>
+          <Button
+            variant="ghost"
+            disabled={!preview || preview.matched === 0 || assign.isPending}
+            onClick={() =>
+              assign
+                .mutateAsync({ ...rule, overwrite, dry_run: false })
+                .then(setApplied)
+                .catch(() => {})
+            }
+          >
+            Apply
+          </Button>
+          <Button variant="ghost" onClick={onClose}>
+            Close
+          </Button>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
 function ImportCustomers({ onClose }: { onClose: () => void }) {
   const [csv, setCsv] = useState("");
   const imp = useImportInterfaceTags();

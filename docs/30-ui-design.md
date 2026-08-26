@@ -124,7 +124,9 @@ Every column header sorts. Inventory columns sort in the database, so the order 
 
 Two exclusions sit beside it: **Hide down** and **Hide idle**. They work differently and the page says so rather than pretending otherwise. Hide down filters in the database, so the total and paging follow it and it can be combined with paging honestly. Hide idle can only filter the rows already fetched — traffic lives in the metrics store, not a column — so the footer reports how many it removed on this page, the same honesty the utilisation sort uses.
 
-Interfaces also carries a **Customer** column, a customer filter, and **Import customers** — a CSV paste or file upload assigning customers and tags in bulk, reporting every row that matched nothing or matched ambiguously rather than applying what it could and staying quiet about the rest.
+Interfaces also carries a **Customer** column, a customer filter, and two ways to assign one. **Import customers** is a CSV paste or file upload assigning customers and tags in bulk, reporting every row that matched nothing or matched ambiguously rather than applying what it could and staying quiet about the rest. **Assign by filter** takes one rule instead — field (ifAlias / ifDescr / ifName / any), contains or equals, the text, and the customer — for the commoner case where the customer was already encoded in the port alias and a spreadsheet would be two hundred rows of the same thought.
+
+The filter dialog is preview-first, and that is the design rather than a nicety: it writes the field the bandwidth report bills from. **Preview** shows the match count, a capped sample of the actual ports, and any port it would have taken from another customer; only then does **Apply** re-send the identical rule with `dry_run:false`. Editing any input clears the preview, because a count from the previous rule sitting beside an Apply button that would run the current one is precisely how the wrong ports get assigned. Ports already held by a different customer are listed and left alone unless *Reassign ports already held by another customer* is ticked.
 
 ## 5b. Reports `/reports`
 
