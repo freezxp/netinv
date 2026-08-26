@@ -74,7 +74,7 @@ The brief lists OAuth2: v1 implements the resource-server side (Bearer tokens, O
 
 ### 12.1 TLS
 
-The single-host deployment terminates TLS at nginx (`deploy/compose-app/frontend-tls.conf.template`). Port 80 exists only to issue a 308 to HTTPS and to serve an ACME challenge path; it is not a second way in. §12.4 covers the one supported exception, for deployments that terminate TLS in front of this host.
+The single-host deployment terminates TLS at nginx (`deploy/compose-app/frontend-tls.conf.template`). Port 80 exists only to redirect to HTTPS and to serve an ACME challenge path; it is not a second way in. The redirect is a **307 with `Cache-Control: no-store`**, deliberately not a 308: a permanent redirect carrying a port number strands every browser that cached it if the deployment later switches to §12.4's http mode, and it does so invisibly — the browser stops sending the request at all, so nothing appears in the access log. HSTS is what durably pins HTTPS; the redirect only needs to route the current hit. §12.4 covers the one supported exception, for deployments that terminate TLS in front of this host.
 
 - **TLS 1.2 and 1.3 only**, forward-secrecy ciphers only — every offered suite is ECDHE, so a stolen key cannot decrypt captured traffic. Session tickets off.
 - **Headers:** HSTS, CSP, `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Cross-Origin-Opener-Policy`, `Permissions-Policy`. The CSP is `script-src 'self'` with no `unsafe-inline` — the app is self-contained, so `connect-src 'self'` leaves injected script nowhere to send anything. `style-src` needs `unsafe-inline` because the charting libraries set element styles directly.

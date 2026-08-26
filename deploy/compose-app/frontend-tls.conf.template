@@ -28,7 +28,18 @@ server {
         # host may map that to anything. Without it the redirect sends browsers
         # to https://host/ — port 443, where nothing is listening — and the
         # only symptom is a connection that hangs after a working login page.
-        return 308 https://$host${TLS_PORT_SUFFIX}$request_uri;
+        #
+        # 307 rather than 308, and no-store rather than the default: a
+        # *permanent* redirect carrying a port number is a trap. Switch the
+        # deployment to NETINV_FRONTEND_MODE=http later and every browser that
+        # saw the 308 keeps redirecting itself to :8443 — a port the new front
+        # end may not publish — without ever asking this server again. The
+        # symptom is a site that is unreachable for the people who used it
+        # before and fine for everyone else, and no request in the access log
+        # to show for it. HSTS above is what durably pins HTTPS; this redirect
+        # only needs to route the current hit.
+        add_header Cache-Control "no-store" always;
+        return 307 https://$host${TLS_PORT_SUFFIX}$request_uri;
     }
 }
 
