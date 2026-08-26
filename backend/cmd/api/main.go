@@ -404,6 +404,10 @@ func main() {
 						},
 					},
 					Checker: checker,
+					// PDF exports carry the deployment's own branding, read
+					// per render so a logo change applies to the next export
+					// rather than the next restart.
+					Branding: &settings.Store{Pool: pool},
 				}).Register(g)
 				(&settings.Handler{
 					Store:   &settings.Store{Pool: pool},

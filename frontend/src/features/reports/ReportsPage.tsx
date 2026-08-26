@@ -56,11 +56,16 @@ const PERIODS = [
   { key: "90d", label: "Last 90 days", hours: 24 * 90 },
 ] as const;
 
-// The CSV goes through a token-authorized fetch rather than a plain link: the
+// Exports go through a token-authorized fetch rather than a plain link: the
 // session is a bearer token, not a cookie the browser would attach on its own,
 // so a link would download a 401 page named like a report.
-async function downloadCSV(params: URLSearchParams) {
-  params.set("format", "csv");
+//
+// CSV is for the spreadsheet, where the numbers get recalculated. PDF is for
+// the person — a capacity meeting, a monthly pack sent to a customer — and is
+// rendered server-side so it carries the deployment's branding and looks the
+// same whoever exported it.
+async function download(params: URLSearchParams, format: "csv" | "pdf") {
+  params.set("format", format);
   const token = useAuthStore.getState().accessToken;
   const res = await fetch(`/api/v1/reports/bandwidth?${params}`, {
     headers: { Authorization: `Bearer ${token}` },
@@ -69,7 +74,7 @@ async function downloadCSV(params: URLSearchParams) {
   const blob = await res.blob();
   const name =
     res.headers.get("Content-Disposition")?.match(/filename="([^"]+)"/)?.[1] ??
-    "netinv-bandwidth.csv";
+    `netinv-bandwidth.${format}`;
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
   a.download = name;
@@ -186,9 +191,16 @@ export function ReportsPage() {
           <Button
             variant="ghost"
             disabled={!report.data || rows.length === 0}
-            onClick={() => downloadCSV(params())}
+            onClick={() => download(params(), "csv")}
           >
             Download CSV
+          </Button>
+          <Button
+            variant="ghost"
+            disabled={!report.data || rows.length === 0}
+            onClick={() => download(params(), "pdf")}
+          >
+            Download PDF
           </Button>
         </div>
         <p className="mt-2 text-xs text-slate-500">

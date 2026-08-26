@@ -281,10 +281,45 @@ export function useImportInterfaceTags() {
   });
 }
 
-export interface AssignMatchRule {
+export interface Branding {
+  company: string;
+  subtitle: string;
+  logo: string;
+  footer: string;
+  accent: string;
+}
+
+/** Branding printed on exported PDF reports. Readable by anyone who can see
+ *  the platform, so the Reports page can say what an export will look like. */
+export function useBranding() {
+  return useQuery({
+    queryKey: ["branding"],
+    queryFn: () => api<Branding>("/settings/branding"),
+  });
+}
+
+export function useSaveBranding() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (b: Branding) =>
+      api<Branding>("/settings/branding", {
+        method: "PUT",
+        body: JSON.stringify(b),
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["branding"] }),
+  });
+}
+
+export interface AssignMatchCondition {
   field: "alias" | "descr" | "name" | "any";
   op: "like" | "eq";
   value: string;
+}
+
+export interface AssignMatchRule {
+  /** ANDed. One substring is usually either too broad or too specific on its
+   *  own, and the fragments an operator wants are rarely adjacent. */
+  match: AssignMatchCondition[];
   customer: string;
   overwrite?: boolean;
   dry_run?: boolean;

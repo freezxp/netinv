@@ -355,12 +355,32 @@ func (h *DeviceHandler) tagInterfaces(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, res)
 }
 
+// auditConditions renders a rule's conditions for the audit log. The whole
+// rule is recorded, not just the first condition: "which filter assigned this
+// customer" is the question the entry exists to answer.
+func auditConditions(rule postgres.MatchRule) []map[string]string {
+	conds := rule.Conditions
+	if len(conds) == 0 {
+		conds = []postgres.MatchCondition{{Field: rule.Field, Op: rule.Op, Value: rule.Value}}
+	}
+	out := make([]map[string]string, 0, len(conds))
+	for _, c := range conds {
+		out = append(out, map[string]string{"field": c.Field, "op": c.Op, "value": c.Value})
+	}
+	return out
+}
+
 // assignInterfaces assigns a customer to every interface whose description
 // matches one rule, instead of naming each port.
 //
 // Operators encode the customer in the port alias long before they have a
 // monitoring system to tell — "ACME-WAN-01", "cust:globex" — so the assignment
 // they want is usually one filter, not a spreadsheet of two hundred rows.
+//
+// Conditions are ANDed, because one substring is usually either too broad or
+// too specific on its own: "the alias says ACME *and* it says 8585" is the
+// shape of a real narrowing, and re-typing a longer string only works when the
+// two fragments happen to be adjacent.
 //
 // **It previews unless told otherwise.** dry_run defaults to true, so the
 // careless call is the harmless one: this writes the field that reports bill
@@ -370,20 +390,24 @@ func (h *DeviceHandler) tagInterfaces(w http.ResponseWriter, r *http.Request) {
 func (h *DeviceHandler) assignInterfaces(w http.ResponseWriter, r *http.Request) {
 	repo := h.Svc.Repo.(*postgres.DeviceRepo)
 	var body struct {
-		Field     string    `json:"field"`
-		Op        string    `json:"op"`
-		Value     string    `json:"value"`
-		Customer  string    `json:"customer"`
-		Tags      *[]string `json:"tags"`
-		Overwrite bool      `json:"overwrite"`
-		DryRun    *bool     `json:"dry_run"`
+		// match is the general form: conditions ANDed together. field/op/value
+		// remain accepted as the single-condition spelling.
+		Match     []postgres.MatchCondition `json:"match"`
+		Field     string                    `json:"field"`
+		Op        string                    `json:"op"`
+		Value     string                    `json:"value"`
+		Customer  string                    `json:"customer"`
+		Tags      *[]string                 `json:"tags"`
+		Overwrite bool                      `json:"overwrite"`
+		DryRun    *bool                     `json:"dry_run"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		httpx.WriteError(w, r, errx.New(errx.KindInvalid, "malformed JSON body"))
 		return
 	}
 	rule := postgres.MatchRule{
-		Field: body.Field, Op: body.Op, Value: body.Value,
+		Conditions: body.Match,
+		Field:      body.Field, Op: body.Op, Value: body.Value,
 		Customer: body.Customer, Overwrite: body.Overwrite,
 		Apply: body.DryRun != nil && !*body.DryRun,
 	}
@@ -401,9 +425,9 @@ func (h *DeviceHandler) assignInterfaces(w http.ResponseWriter, r *http.Request)
 		h.Svc.Audit.Write(r.Context(), audit.Event{
 			ActorKind: "user", ActorID: httpx.ClaimsFrom(r.Context()).Subject,
 			Action: "interface.assign", ResourceKind: "interface",
-			Detail: map[string]any{"field": rule.Field, "op": rule.Op,
-				"value": rule.Value, "customer": rule.Customer,
-				"matched": res.Matched, "updated": res.Updated,
+			Detail: map[string]any{"match": auditConditions(rule),
+				"customer": rule.Customer,
+				"matched":  res.Matched, "updated": res.Updated,
 				"skipped": len(res.Skipped), "overwrite": rule.Overwrite},
 		})
 	}

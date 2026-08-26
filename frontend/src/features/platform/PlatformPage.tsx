@@ -1,10 +1,11 @@
 // Platform management (doc 30 §8): sites, poller fleet, connector catalog,
-// credentials vault.
+// credentials vault, report branding.
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../api/client";
-import { useSites } from "../../api/hooks";
+import { useBranding, useSaveBranding, useSites } from "../../api/hooks";
+import type { Branding } from "../../api/hooks";
 import type { Site } from "../../api/types";
 import { useAuthStore, hasPermissionRole } from "../auth/store";
 import { DiscoveryTab } from "./DiscoveryTab";
@@ -27,6 +28,7 @@ const tabs = [
   "Connectors",
   "Credentials",
   "Capacity",
+  "Branding",
 ] as const;
 
 export function PlatformPage() {
@@ -60,6 +62,7 @@ export function PlatformPage() {
       {tab === "Connectors" && <ConnectorsTab />}
       {tab === "Credentials" && <CredentialsTab />}
       {tab === "Capacity" && <CapacityTab />}
+      {tab === "Branding" && <BrandingTab />}
     </div>
   );
 }
@@ -727,3 +730,157 @@ function CredentialsTab() {
     </div>
   );
 }
+
+// BrandingTab configures what an exported PDF report says about who produced
+// it. Deployment configuration rather than a per-report option, because the
+// answer never varies by report: the company running NetInv is the company on
+// every page of every export it hands a customer.
+function BrandingTab() {
+  const current = useBranding();
+  const save = useSaveBranding();
+  const [form, setForm] = useState<Branding | null>(null);
+  const [logoError, setLogoError] = useState("");
+  const b = form ?? current.data ?? BLANK_BRANDING;
+  const set = (patch: Partial<Branding>) => setForm({ ...b, ...patch });
+
+  // Read as a data URI in the browser: the logo travels with the rest of the
+  // branding as one JSON body, so there is no upload endpoint, no file on a
+  // container filesystem that vanishes when it is replaced, and nothing to
+  // clean up when it changes.
+  function pickLogo(file: File) {
+    setLogoError("");
+    if (file.size > LOGO_LIMIT) {
+      setLogoError(
+        `That file is ${Math.round(file.size / 1024)} KB; the limit is ${LOGO_LIMIT / 1024} KB.`,
+      );
+      return;
+    }
+    const fr = new FileReader();
+    fr.onload = () => set({ logo: String(fr.result) });
+    fr.onerror = () => setLogoError("That file could not be read.");
+    fr.readAsDataURL(file);
+  }
+
+  return (
+    <Card title="Report branding">
+      <p className="text-sm text-slate-500">
+        Printed on the header and footer of every PDF report. CSV exports are
+        unaffected — they go to a spreadsheet, not to a customer. Leave it
+        empty and exports say “NetInv”.
+      </p>
+
+      <div className="mt-3 grid gap-3 sm:grid-cols-2">
+        <label className="text-xs">
+          <span className="block text-slate-500">Company</span>
+          <Input
+            value={b.company}
+            maxLength={200}
+            onChange={(e) => set({ company: e.target.value })}
+            placeholder="Acme Networks"
+          />
+        </label>
+        <label className="text-xs">
+          <span className="block text-slate-500">Subtitle</span>
+          <Input
+            value={b.subtitle}
+            maxLength={200}
+            onChange={(e) => set({ subtitle: e.target.value })}
+            placeholder="Network Operations"
+          />
+        </label>
+        <label className="text-xs sm:col-span-2">
+          <span className="block text-slate-500">
+            Footer — printed on every page
+          </span>
+          <Input
+            value={b.footer}
+            maxLength={200}
+            onChange={(e) => set({ footer: e.target.value })}
+            placeholder="Commercial in confidence"
+          />
+        </label>
+        <label className="text-xs">
+          <span className="block text-slate-500">Accent colour</span>
+          <div className="flex items-center gap-2">
+            <input
+              type="color"
+              value={/^#[0-9a-fA-F]{6}$/.test(b.accent) ? b.accent : "#334155"}
+              onChange={(e) => set({ accent: e.target.value })}
+              className="h-8 w-10 rounded border border-slate-300 bg-transparent dark:border-slate-700"
+            />
+            <Input
+              value={b.accent}
+              onChange={(e) => set({ accent: e.target.value })}
+              placeholder="#334155"
+            />
+          </div>
+        </label>
+        <div className="text-xs">
+          <span className="block text-slate-500">Logo — PNG, JPEG or GIF</span>
+          <div className="flex items-center gap-2">
+            <input
+              type="file"
+              accept="image/png,image/jpeg,image/gif"
+              className="text-xs"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) pickLogo(f);
+              }}
+            />
+            {b.logo && (
+              <Button variant="ghost" onClick={() => set({ logo: "" })}>
+                Remove
+              </Button>
+            )}
+          </div>
+          {b.logo && (
+            <img
+              src={b.logo}
+              alt="Report logo"
+              className="mt-2 max-h-14 rounded border border-slate-200 bg-white p-1 dark:border-slate-700"
+            />
+          )}
+        </div>
+      </div>
+
+      {logoError && (
+        <div className="mt-2 text-sm text-rose-600">{logoError}</div>
+      )}
+      {save.isError && (
+        <div className="mt-2 text-sm text-rose-600">
+          {(save.error as Error).message}
+        </div>
+      )}
+      {save.isSuccess && !form && (
+        <div className="mt-2 text-sm text-emerald-600">Saved.</div>
+      )}
+
+      <div className="mt-3 flex items-center gap-2">
+        <Button
+          disabled={save.isPending || !form}
+          onClick={() =>
+            save.mutateAsync(b).then(() => setForm(null)).catch(() => {})
+          }
+        >
+          Save
+        </Button>
+        <Button variant="ghost" disabled={!form} onClick={() => setForm(null)}>
+          Discard
+        </Button>
+      </div>
+    </Card>
+  );
+}
+
+const BLANK_BRANDING: Branding = {
+  company: "",
+  subtitle: "",
+  logo: "",
+  footer: "",
+  accent: "",
+};
+
+// Matches the server's cap. Checked here too so someone dragging in a press-kit
+// PNG is told before a megabyte of base64 goes over the wire to be rejected.
+const LOGO_LIMIT = 512 * 1024;
+

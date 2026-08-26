@@ -18,15 +18,32 @@ import (
 // is for the far commoner case where the operator already encoded the customer
 // in the port description years ago — "ACME-WAN-01", "cust:globex" — and the
 // answer is one rule, not a spreadsheet of two hundred rows.
-type MatchRule struct {
+// MatchCondition is one test against one text column.
+type MatchCondition struct {
 	// Field names the column to match: alias, descr, name, or any, which
 	// matches if any of the three does. Alias is the default because it is
 	// the field operators curate; descr is usually the vendor's own text.
-	Field string
+	Field string `json:"field"`
 	// Op is eq (whole value, case-insensitive) or like (contains).
-	Op string
+	Op string `json:"op"`
 	// Value is the text to look for. Under like, % is the operator's own
 	// wildcard and _ is matched literally — see likePattern.
+	Value string `json:"value"`
+}
+
+type MatchRule struct {
+	// Conditions are ANDed. Two conditions is the common shape — "the alias
+	// says ACME *and* it says 8585" — because one substring is usually either
+	// too broad or too specific on its own, and narrowing by re-typing a
+	// longer string only works when the two fragments are adjacent.
+	//
+	// A single condition may instead be given in Field/Op/Value, which is
+	// what the earlier single-filter form sent.
+	Conditions []MatchCondition
+	// Field, Op and Value are the single-condition form. Ignored when
+	// Conditions is set.
+	Field string
+	Op    string
 	Value string
 	// Customer is the name to write; ClearToken empties it.
 	Customer string
@@ -117,53 +134,30 @@ func onlyWildcards(s string) bool {
 func (r *DeviceRepo) AssignByMatch(ctx context.Context, rule MatchRule) (MatchResult, error) {
 	res := MatchResult{DryRun: !rule.Apply, Skipped: []string{}, Sample: []MatchPreviewRow{}}
 
-	field := strings.ToLower(strings.TrimSpace(rule.Field))
-	if field == "" {
-		field = "alias"
-	}
-	op := strings.ToLower(strings.TrimSpace(rule.Op))
-	if op == "" {
-		op = "like"
-	}
-	value := strings.TrimSpace(rule.Value)
-	if value == "" {
-		return res, errx.New(errx.KindInvalid, "value is required")
+	conds := rule.Conditions
+	if len(conds) == 0 {
+		conds = []MatchCondition{{Field: rule.Field, Op: rule.Op, Value: rule.Value}}
 	}
 	if rule.Customer == "" && !rule.SetTags {
 		return res, errx.New(errx.KindInvalid, "nothing to assign: give a customer or tags")
 	}
-
-	var cols []string
-	if field == "any" {
-		cols = []string{matchableCols["alias"], matchableCols["descr"], matchableCols["name"]}
-	} else {
-		c, ok := matchableCols[field]
-		if !ok {
-			return res, errx.New(errx.KindInvalid,
-				"unknown field %q: use alias, descr, name or any", rule.Field)
-		}
-		cols = []string{c}
+	if len(conds) > maxConditions {
+		return res, errx.New(errx.KindInvalid,
+			"a rule takes at most %d conditions", maxConditions)
 	}
 
-	var preds []string
-	var arg any
-	switch op {
-	case "eq":
-		arg = value
-		for _, c := range cols {
-			preds = append(preds, "lower("+c+") = lower($1)")
+	// Each condition contributes one ANDed clause and one argument. Built as
+	// numbered placeholders rather than interpolated text: the values are
+	// operator input, and the column names come from a whitelist.
+	var clauses []string
+	var args []any
+	for _, c := range conds {
+		clause, arg, err := condClause(c, len(args)+1)
+		if err != nil {
+			return res, err
 		}
-	case "like", "contains":
-		if onlyWildcards(value) {
-			return res, errx.New(errx.KindInvalid,
-				"a value of only wildcards would match every interface in the fleet")
-		}
-		arg = likePattern(value)
-		for _, c := range cols {
-			preds = append(preds, c+` ILIKE $1 ESCAPE '\'`)
-		}
-	default:
-		return res, errx.New(errx.KindInvalid, "unknown op %q: use eq or like", rule.Op)
+		clauses = append(clauses, clause)
+		args = append(args, arg)
 	}
 
 	// Retired devices and removed interfaces are excluded for the same reason
@@ -174,10 +168,10 @@ func (r *DeviceRepo) AssignByMatch(ctx context.Context, rule MatchRule) (MatchRe
 		FROM inventory.interfaces i
 		JOIN inventory.devices d ON d.id = i.device_id
 		WHERE i.state != 'removed' AND d.status != 'retired'
-		  AND (` + strings.Join(preds, " OR ") + `)
+		  AND ` + strings.Join(clauses, "\n\t\t  AND ") + `
 		ORDER BY d.name, i.if_index`
 
-	rows, err := r.Pool.Query(ctx, q, arg)
+	rows, err := r.Pool.Query(ctx, q, args...)
 	if err != nil {
 		return res, errx.Wrap(errx.KindTransient, err, "match interfaces")
 	}
@@ -234,4 +228,60 @@ func (r *DeviceRepo) AssignByMatch(ctx context.Context, rule MatchRule) (MatchRe
 		return nil
 	})
 	return res, err
+}
+
+// maxConditions bounds a rule. Each one is another ANDed clause over the same
+// table scan; past a handful the rule has stopped being something an operator
+// can read back and check, which is the property the preview depends on.
+const maxConditions = 8
+
+// condClause renders one condition as a SQL predicate plus its argument.
+func condClause(c MatchCondition, argN int) (string, any, error) {
+	field := strings.ToLower(strings.TrimSpace(c.Field))
+	if field == "" {
+		field = "alias"
+	}
+	op := strings.ToLower(strings.TrimSpace(c.Op))
+	if op == "" {
+		op = "like"
+	}
+	value := strings.TrimSpace(c.Value)
+	if value == "" {
+		return "", nil, errx.New(errx.KindInvalid, "every condition needs a value")
+	}
+
+	var cols []string
+	if field == "any" {
+		cols = []string{matchableCols["alias"], matchableCols["descr"], matchableCols["name"]}
+	} else {
+		col, ok := matchableCols[field]
+		if !ok {
+			return "", nil, errx.New(errx.KindInvalid,
+				"unknown field %q: use alias, descr, name or any", c.Field)
+		}
+		cols = []string{col}
+	}
+
+	ph := "$" + itoa(argN)
+	var preds []string
+	var arg any
+	switch op {
+	case "eq":
+		arg = value
+		for _, col := range cols {
+			preds = append(preds, "lower("+col+") = lower("+ph+")")
+		}
+	case "like", "contains":
+		if onlyWildcards(value) {
+			return "", nil, errx.New(errx.KindInvalid,
+				"a value of only wildcards would match every interface in the fleet")
+		}
+		arg = likePattern(value)
+		for _, col := range cols {
+			preds = append(preds, col+` ILIKE `+ph+` ESCAPE '\'`)
+		}
+	default:
+		return "", nil, errx.New(errx.KindInvalid, "unknown op %q: use eq or like", c.Op)
+	}
+	return "(" + strings.Join(preds, " OR ") + ")", arg, nil
 }

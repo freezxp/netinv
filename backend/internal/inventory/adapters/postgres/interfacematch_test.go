@@ -273,3 +273,90 @@ func TestAssignByMatchRefusesAValueOfOnlyWildcards(t *testing.T) {
 		}
 	}
 }
+
+// Two conditions narrow rather than widen. One substring is usually either
+// too broad or too specific on its own, and the fragments an operator wants
+// are rarely adjacent in the alias.
+func TestAssignByMatchAndsItsConditions(t *testing.T) {
+	dr, _, _ := seedMatchFixture(t)
+	ctx := t.Context()
+
+	// "ACME" alone reaches four aliases (-01, -02, ACME_WAN-03, ACMExWAN-04)
+	// plus the one held by Globex.
+	broad, err := dr.AssignByMatch(ctx, MatchRule{
+		Conditions: []MatchCondition{{Field: "alias", Op: "like", Value: "ACME"}},
+		Customer:   "Acme Ltd",
+	})
+	if err != nil {
+		t.Fatalf("broad: %v", err)
+	}
+
+	// Adding a second fragment that is not adjacent to the first narrows it
+	// to the one port, which a single longer substring could not express.
+	narrow, err := dr.AssignByMatch(ctx, MatchRule{
+		Conditions: []MatchCondition{
+			{Field: "alias", Op: "like", Value: "ACME"},
+			{Field: "alias", Op: "like", Value: "-02"},
+		},
+		Customer: "Acme Ltd",
+	})
+	if err != nil {
+		t.Fatalf("narrow: %v", err)
+	}
+	if narrow.Matched != 1 {
+		t.Fatalf("two conditions matched %d, want 1: %+v", narrow.Matched, narrow.Sample)
+	}
+	if narrow.Matched >= broad.Matched {
+		t.Fatalf("AND widened the result: %d -> %d", broad.Matched, narrow.Matched)
+	}
+
+	// Conditions may span columns: alias says ACME, descr says uplink.
+	spanning, err := dr.AssignByMatch(ctx, MatchRule{
+		Conditions: []MatchCondition{
+			{Field: "alias", Op: "like", Value: "GLOBEX"},
+			{Field: "descr", Op: "like", Value: "acme"},
+		},
+		Customer: "Globex Ltd",
+	})
+	if err != nil {
+		t.Fatalf("spanning: %v", err)
+	}
+	if spanning.Matched != 1 {
+		t.Fatalf("cross-column AND matched %d, want 1", spanning.Matched)
+	}
+
+	// A condition with no value cannot silently drop out and widen the rule.
+	if _, err := dr.AssignByMatch(ctx, MatchRule{
+		Conditions: []MatchCondition{
+			{Field: "alias", Op: "like", Value: "ACME"},
+			{Field: "alias", Op: "like", Value: "   "},
+		},
+		Customer: "Acme Ltd",
+	}); err == nil {
+		t.Fatal("a blank condition was accepted")
+	}
+}
+
+// The single-condition form keeps working, because it is what the first
+// version of the UI sends and what any saved script would.
+func TestAssignByMatchStillAcceptsTheSingleFilterForm(t *testing.T) {
+	dr, _, _ := seedMatchFixture(t)
+	ctx := t.Context()
+
+	legacy, err := dr.AssignByMatch(ctx, MatchRule{
+		Field: "alias", Op: "like", Value: "ACME-WAN", Customer: "Acme Ltd",
+	})
+	if err != nil {
+		t.Fatalf("legacy: %v", err)
+	}
+	modern, err := dr.AssignByMatch(ctx, MatchRule{
+		Conditions: []MatchCondition{{Field: "alias", Op: "like", Value: "ACME-WAN"}},
+		Customer:   "Acme Ltd",
+	})
+	if err != nil {
+		t.Fatalf("modern: %v", err)
+	}
+	if legacy.Matched != modern.Matched {
+		t.Fatalf("forms disagree: %d vs %d", legacy.Matched, modern.Matched)
+	}
+}

@@ -15,7 +15,9 @@ import {
   useInstantQuery,
   useMetricsLimits,
   utilizationExpr,
+  type AssignMatchCondition,
   type AssignMatchResult,
+  type AssignMatchRule,
   type InterfaceSearchRow,
 } from "../../api/hooks";
 import {
@@ -170,7 +172,7 @@ export function InterfacesPage() {
           {busyOnly ? "Hiding idle" : "Hide idle"}
         </Button>
         <Button variant="ghost" onClick={() => setAssigning(true)}>
-          Assign by filter
+          Add customer
         </Button>
         <Button variant="ghost" onClick={() => setImporting(true)}>
           Import customers
@@ -442,106 +444,168 @@ function useDebounced(value: string, ms: number) {
  * worth removing. The result names every row that did not match: an import
  * that silently applies 40 of 50 rows is worse than one that fails.
  */
-// AssignByMatch tags every port whose description matches one rule.
+// AssignByMatch adds a customer to every port whose description matches.
 //
 // The CSV import beside it is for a list that already exists somewhere else.
 // This is for the commoner case: the operator encoded the customer in the port
-// alias years ago, and wants one filter rather than two hundred rows.
+// alias years ago, and wants a filter rather than two hundred rows.
 //
-// Preview is not a convenience here, it is the whole design. The field being
-// written is what the bandwidth report bills from, so the rule is shown what
-// it selected — including ports it would have taken from another customer —
-// before anything is written. Apply re-sends the identical rule with dry_run
-// false, so what was approved is what runs.
+// It opens as one box — ifAlias contains <text> — because that is what nearly
+// every rule is. Conditions are ANDed, since one substring tends to be either
+// too broad or too specific, and re-typing a longer one only helps when the
+// two fragments are adjacent in the alias. Field and match-type live behind
+// Options, so the common case is two inputs and a button.
+//
+// Preview is not a convenience, it is the design. The field being written is
+// what the bandwidth report bills from, so the rule shows what it selected —
+// including ports it would have taken from another customer — before anything
+// is written. Apply re-sends the identical rule with dry_run false.
 function AssignByMatch({ onClose }: { onClose: () => void }) {
-  const [field, setField] = useState<"alias" | "descr" | "name" | "any">(
-    "alias",
-  );
-  const [op, setOp] = useState<"like" | "eq">("like");
-  const [value, setValue] = useState("");
+  const [conds, setConds] = useState<AssignMatchCondition[]>([
+    { field: "alias", op: "like", value: "" },
+  ]);
   const [customer, setCustomer] = useState("");
   const [overwrite, setOverwrite] = useState(false);
+  const [advanced, setAdvanced] = useState(false);
   const [preview, setPreview] = useState<AssignMatchResult | null>(null);
   const [applied, setApplied] = useState<AssignMatchResult | null>(null);
   const assign = useAssignByMatch();
 
-  const rule = { field, op, value: value.trim(), customer: customer.trim() };
-  const ready = rule.value !== "" && rule.customer !== "";
-
-  // Any edit invalidates a preview: showing a count from the previous rule
+  // Any edit invalidates the preview: a count from the previous rule sitting
   // beside an Apply button that would run the current one is how the wrong
   // ports get assigned.
-  function edit<T>(set: (v: T) => void) {
-    return (v: T) => {
-      set(v);
-      setPreview(null);
-      setApplied(null);
-    };
+  const stale = () => {
+    setPreview(null);
+    setApplied(null);
+  };
+  function setCond(i: number, patch: Partial<AssignMatchCondition>) {
+    setConds((cs) => cs.map((c, n) => (n === i ? { ...c, ...patch } : c)));
+    stale();
   }
+
+  const filled = conds.filter((c) => c.value.trim() !== "");
+  const ready = filled.length === conds.length && customer.trim() !== "";
+  const rule: AssignMatchRule = {
+    match: conds.map((c) => ({ ...c, value: c.value.trim() })),
+    customer: customer.trim(),
+    overwrite,
+  };
 
   return (
     <div className="fixed inset-0 z-30 flex items-center justify-center bg-black/50 p-4">
-      <Card title="Assign customer by filter" className="w-full max-w-[46rem]">
+      <Card title="Add customer" className="w-full max-w-[46rem]">
         <p className="text-sm text-slate-500">
-          Matches the text operators write on a port. <span className="mono">contains</span>{" "}
-          is a substring; <span className="mono">equals</span> is the whole
-          value. Both ignore case. Use <span className="mono">%</span> as a
-          wildcard — <span className="mono">ACME%</span> is a prefix,{" "}
-          <span className="mono">ACME-%-WAN</span> is a shape — and a value
-          containing one is matched end to end rather than as a substring. An{" "}
-          <span className="mono">_</span> is literal, since nearly every alias
-          has one and almost nobody means “any character” by it.
+          Assigns a customer to every port whose description matches. Extra
+          conditions must <em>all</em> match. Use <span className="mono">%</span>{" "}
+          as a wildcard — <span className="mono">ACME%</span> is a prefix — and
+          an <span className="mono">_</span> is literal.
         </p>
 
-        <div className="mt-3 flex flex-wrap items-end gap-2">
+        {conds.map((c, i) => (
+          <div key={i} className="mt-2 flex flex-wrap items-end gap-2">
+            <span className="pb-2 text-xs text-slate-500 w-8">
+              {i === 0 ? "where" : "and"}
+            </span>
+            {advanced && (
+              <>
+                <Select
+                  value={c.field}
+                  onChange={(e) =>
+                    setCond(i, {
+                      field: e.target.value as AssignMatchCondition["field"],
+                    })
+                  }
+                >
+                  <option value="alias">ifAlias</option>
+                  <option value="descr">ifDescr</option>
+                  <option value="name">ifName</option>
+                  <option value="any">any field</option>
+                </Select>
+                <Select
+                  value={c.op}
+                  onChange={(e) =>
+                    setCond(i, {
+                      op: e.target.value as AssignMatchCondition["op"],
+                    })
+                  }
+                >
+                  <option value="like">contains</option>
+                  <option value="eq">equals</option>
+                </Select>
+              </>
+            )}
+            {!advanced && (
+              <span className="pb-2 text-xs text-slate-500">
+                ifAlias contains
+              </span>
+            )}
+            <div className="grow">
+              <Input
+                value={c.value}
+                onChange={(e) => setCond(i, { value: e.target.value })}
+                placeholder={i === 0 ? "ACME" : "8585"}
+              />
+            </div>
+            {conds.length > 1 && (
+              <Button
+                variant="ghost"
+                onClick={() => {
+                  setConds((cs) => cs.filter((_, n) => n !== i));
+                  stale();
+                }}
+              >
+                ✕
+              </Button>
+            )}
+          </div>
+        ))}
+
+        <div className="mt-2 flex flex-wrap items-center gap-3">
+          <Button
+            variant="ghost"
+            disabled={conds.length >= 8}
+            onClick={() => {
+              setConds((cs) => [...cs, { field: "alias", op: "like", value: "" }]);
+              stale();
+            }}
+          >
+            + condition
+          </Button>
+          <button
+            className="text-xs text-slate-500 underline"
+            onClick={() => setAdvanced((a) => !a)}
+          >
+            {advanced ? "Hide options" : "Options"}
+          </button>
+        </div>
+
+        <div className="mt-3">
           <label className="text-xs">
-            <span className="block text-slate-500">Field</span>
-            <Select
-              value={field}
-              onChange={(e) => edit(setField)(e.target.value as typeof field)}
-            >
-              <option value="alias">ifAlias</option>
-              <option value="descr">ifDescr</option>
-              <option value="name">ifName</option>
-              <option value="any">any of them</option>
-            </Select>
-          </label>
-          <label className="text-xs">
-            <span className="block text-slate-500">Match</span>
-            <Select
-              value={op}
-              onChange={(e) => edit(setOp)(e.target.value as typeof op)}
-            >
-              <option value="like">contains</option>
-              <option value="eq">equals</option>
-            </Select>
-          </label>
-          <label className="text-xs grow">
-            <span className="block text-slate-500">Text</span>
-            <Input
-              value={value}
-              onChange={(e) => edit(setValue)(e.target.value)}
-              placeholder="ACME-WAN"
-            />
-          </label>
-          <label className="text-xs grow">
             <span className="block text-slate-500">Customer</span>
             <Input
               value={customer}
-              onChange={(e) => edit(setCustomer)(e.target.value)}
+              onChange={(e) => {
+                setCustomer(e.target.value);
+                stale();
+              }}
               placeholder="Acme Ltd"
             />
           </label>
         </div>
 
-        <label className="mt-2 flex items-center gap-2 text-xs text-slate-500">
-          <input
-            type="checkbox"
-            checked={overwrite}
-            onChange={(e) => edit(setOverwrite)(e.target.checked)}
-          />
-          Reassign ports already held by another customer
-        </label>
+        {advanced && (
+          <label className="mt-2 flex items-center gap-2 text-xs text-slate-500">
+            <input
+              type="checkbox"
+              checked={overwrite}
+              onChange={(e) => {
+                setOverwrite(e.target.checked);
+                stale();
+              }}
+            />
+            Reassign ports already held by another customer
+          </label>
+        )}
 
         {preview && !applied && (
           <div className="mt-3 rounded border border-slate-300 p-2 text-sm dark:border-slate-700">
@@ -603,7 +667,7 @@ function AssignByMatch({ onClose }: { onClose: () => void }) {
             disabled={!ready || assign.isPending}
             onClick={() =>
               assign
-                .mutateAsync({ ...rule, overwrite })
+                .mutateAsync(rule)
                 .then((r) => {
                   setPreview(r);
                   setApplied(null);
@@ -618,7 +682,7 @@ function AssignByMatch({ onClose }: { onClose: () => void }) {
             disabled={!preview || preview.matched === 0 || assign.isPending}
             onClick={() =>
               assign
-                .mutateAsync({ ...rule, overwrite, dry_run: false })
+                .mutateAsync({ ...rule, dry_run: false })
                 .then(setApplied)
                 .catch(() => {})
             }

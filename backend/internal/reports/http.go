@@ -1,6 +1,7 @@
 package reports
 
 import (
+	"context"
 	"encoding/csv"
 	"fmt"
 	"net/http"
@@ -13,11 +14,21 @@ import (
 	"github.com/freezxp/netinv/backend/internal/platform/authz"
 	"github.com/freezxp/netinv/backend/internal/platform/errx"
 	"github.com/freezxp/netinv/backend/internal/platform/httpx"
+	"github.com/freezxp/netinv/backend/internal/platform/settings"
 )
 
 type Handler struct {
 	Svc     *Service
 	Checker authz.Checker
+	// Branding is optional: a deployment that has never configured it still
+	// exports, unbranded, rather than failing.
+	Branding BrandingReader
+}
+
+// BrandingReader is the settings side, kept as an interface so reports does
+// not depend on the settings package's storage.
+type BrandingReader interface {
+	GetBranding(ctx context.Context) (settings.Branding, error)
 }
 
 func (h *Handler) Register(r chi.Router) {
@@ -27,11 +38,14 @@ func (h *Handler) Register(r chi.Router) {
 	})
 }
 
-// bandwidth serves the interface traffic report as JSON or CSV.
+// bandwidth serves the interface traffic report as JSON, CSV or PDF.
 //
-// CSV is not an afterthought: a bandwidth report's destination is usually a
-// spreadsheet, an invoice or a capacity meeting, and a report you cannot get
-// out of the tool is a report someone retypes.
+// The exports are not an afterthought: a bandwidth report's destination is
+// usually a spreadsheet, an invoice or a capacity meeting, and a report you
+// cannot get out of the tool is a report someone retypes. CSV is for the
+// spreadsheet, where the numbers get recalculated; PDF is for the person, who
+// reads them as they are and needs the page to say who produced it and over
+// what window.
 func (h *Handler) bandwidth(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	to, err := parseAt(q.Get("to"), time.Now().UTC())
@@ -56,11 +70,24 @@ func (h *Handler) bandwidth(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if q.Get("format") != "csv" {
+	switch q.Get("format") {
+	case "csv":
+		writeCSV(w, rep)
+	case "pdf":
+		// Branding failing to load must not lose the report: an export
+		// without a logo is still the numbers someone asked for.
+		var brand settings.Branding
+		if h.Branding != nil {
+			if b, berr := h.Branding.GetBranding(r.Context()); berr == nil {
+				brand = b
+			}
+		}
+		if err := writePDF(w, rep, brand); err != nil {
+			httpx.WriteError(w, r, errx.Wrap(errx.KindInternal, err, "render pdf"))
+		}
+	default:
 		httpx.WriteJSON(w, http.StatusOK, rep)
-		return
 	}
-	writeCSV(w, rep)
 }
 
 func writeCSV(w http.ResponseWriter, rep *Report) {

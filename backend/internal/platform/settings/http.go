@@ -25,11 +25,13 @@ func (h *Handler) Register(r chi.Router) {
 	r.Group(func(pr chi.Router) {
 		pr.Use(httpx.RequirePerm(h.Checker, authz.PlatformRead))
 		pr.Get("/settings/metrics-mirror", h.getMirror)
+		pr.Get("/settings/branding", h.getBranding)
 	})
 	r.Group(func(pw chi.Router) {
 		pw.Use(httpx.RequirePerm(h.Checker, authz.SettingsWrite))
 		pw.Put("/settings/metrics-mirror", h.putMirror)
 		pw.Post("/settings/metrics-mirror/test", h.testMirror)
+		pw.Put("/settings/branding", h.putBranding)
 	})
 }
 
@@ -40,6 +42,41 @@ func (h *Handler) getMirror(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, m)
+}
+
+// getBranding returns what exported reports say about who produced them.
+// Readable at platform:read rather than settings:write, because the Reports
+// page shows the operator what their export will look like.
+func (h *Handler) getBranding(w http.ResponseWriter, r *http.Request) {
+	b, err := h.Store.GetBranding(r.Context())
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, b)
+}
+
+func (h *Handler) putBranding(w http.ResponseWriter, r *http.Request) {
+	var in Branding
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		httpx.WriteError(w, r, errx.New(errx.KindInvalid, "malformed JSON body"))
+		return
+	}
+	actor := httpx.ClaimsFrom(r.Context()).Subject
+	out, err := h.Store.PutBranding(r.Context(), in, actor)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	// The logo is deliberately not in the audit detail: it is up to half a
+	// megabyte of base64 and would bury every other entry in the log.
+	h.Audit.Write(r.Context(), audit.Event{
+		ActorKind: "user", ActorID: actor, Action: "settings.branding",
+		ResourceKind: "setting", ResourceID: BrandingKey,
+		After: map[string]any{"company": out.Company, "subtitle": out.Subtitle,
+			"footer": out.Footer, "accent": out.Accent, "has_logo": out.Logo != ""},
+	})
+	httpx.WriteJSON(w, http.StatusOK, out)
 }
 
 func (h *Handler) putMirror(w http.ResponseWriter, r *http.Request) {
