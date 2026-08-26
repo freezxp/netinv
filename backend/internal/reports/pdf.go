@@ -42,31 +42,68 @@ type pdfCol struct {
 	right bool // numeric columns are right-aligned so digits line up
 }
 
-// interfaceCols and customerCols mirror the two CSV shapes. A grouped export
-// gets different columns rather than blank ones, for the same reason: a table
-// full of empty device cells invites someone to fill them in.
-var interfaceCols = []pdfCol{
-	{"Customer", 34, false}, {"Device", 32, false}, {"Interface", 24, false},
-	{"Alias", 46, false}, {"Speed", 20, true},
-	{"Avg in", 21, true}, {"Avg out", 21, true},
-	{"P95 in", 21, true}, {"P95 out", 21, true},
-	{"Peak in", 21, true}, {"Peak out", 21, true},
-	{"Util p95", 21, true},
+// keyed carries the column key alongside the geometry, so a cell is looked up
+// by name rather than by position. The interface table's columns are chosen by
+// the operator, and a positional cell list silently shifts every value one
+// column left the first time somebody unticks one.
+type keyed struct {
+	pdfCol
+	key string
 }
 
-var customerCols = []pdfCol{
-	{"Customer", 56, false}, {"Circuits", 20, true}, {"Speed", 24, true},
-	{"Avg in", 26, true}, {"Avg out", 26, true},
-	{"P95 in", 26, true}, {"P95 out", 26, true},
-	{"Peak in", 26, true}, {"Peak out", 26, true},
-	{"Total in", 24, true},
+// customerCols is the grouped table, which is not configurable: it has a
+// different shape — one row per customer, with no interface to name — and
+// nothing in it that a customer-facing page would want removed.
+var customerCols = []keyed{
+	{pdfCol{"Customer", 56, false}, "customer"},
+	{pdfCol{"Circuits", 20, true}, "circuits"},
+	{pdfCol{"Speed", 24, true}, "speed"},
+	{pdfCol{"Avg in", 26, true}, "avg_in"},
+	{pdfCol{"Avg out", 26, true}, "avg_out"},
+	{pdfCol{"P95 in", 26, true}, "p95_in"},
+	{pdfCol{"P95 out", 26, true}, "p95_out"},
+	{pdfCol{"Peak in", 26, true}, "peak_in"},
+	{pdfCol{"Peak out", 26, true}, "peak_out"},
+	{pdfCol{"Total in", 24, true}, "total_in"},
 }
 
-func writePDF(w http.ResponseWriter, rep *Report, brand settings.Branding) error {
-	cols := interfaceCols
-	if rep.GroupedBy == "customer" {
-		cols = customerCols
+// availW is the printable width between the margins.
+const availW = pdfPageW - 2*pdfMarginX
+
+// scaleCols stretches the chosen columns to fill the page. Configured widths
+// are proportions, not millimetres: unticking the device column should widen
+// the alias, not leave a gap where the device used to be.
+func scaleCols(cols []keyed) []keyed {
+	total := 0.0
+	for _, c := range cols {
+		total += c.width
 	}
+	if total <= 0 {
+		return cols
+	}
+	f := availW / total
+	out := make([]keyed, len(cols))
+	for i, c := range cols {
+		c.width *= f
+		out[i] = c
+	}
+	return out
+}
+
+func columnsFor(rep *Report, brand settings.Branding) []keyed {
+	if rep.GroupedBy == "customer" {
+		return scaleCols(customerCols)
+	}
+	chosen := brand.ColumnsOrDefault()
+	cols := make([]keyed, 0, len(chosen))
+	for _, c := range chosen {
+		cols = append(cols, keyed{pdfCol{c.Title, c.Width, c.Right}, c.Key})
+	}
+	return scaleCols(cols)
+}
+
+func writePDF(w http.ResponseWriter, rep *Report, brand settings.Branding, charts []Chart) error {
+	cols := columnsFor(rep, brand)
 	r, g, b := brand.AccentRGB()
 
 	doc := fpdf.New("L", "mm", "A4", "")
@@ -80,27 +117,24 @@ func writePDF(w http.ResponseWriter, rep *Report, brand settings.Branding) error
 
 	generated := time.Now().UTC()
 	page := 0
-	newPage := func() {
+	startPage := func() {
 		page++
 		doc.AddPage()
-		y := header(doc, rep, brand, r, g, b, page == 1)
-		doc.SetY(y)
-		tableHeader(doc, cols, r, g, b)
+		doc.SetY(header(doc, rep, brand, r, g, b, page == 1))
 	}
-	newPage()
+	endPage := func() { footer(doc, brand, generated, page) }
 
+	startPage()
+	tableHeader(doc, cols, r, g, b)
 	fill := false
 	for _, row := range rep.Rows {
 		if doc.GetY() > pdfBottomY-8 {
-			footer(doc, brand, generated, page)
-			newPage()
+			endPage()
+			startPage()
+			tableHeader(doc, cols, r, g, b)
 			fill = false
 		}
-		cells := interfaceCells(row)
-		if rep.GroupedBy == "customer" {
-			cells = customerCells(row)
-		}
-		rowLine(doc, cols, cells, fill)
+		rowLine(doc, cols, cells(rep, row, cols), fill)
 		fill = !fill
 	}
 	if len(rep.Rows) == 0 {
@@ -108,7 +142,8 @@ func writePDF(w http.ResponseWriter, rep *Report, brand settings.Branding) error
 		doc.SetTextColor(120, 120, 120)
 		doc.CellFormat(0, 8, "No interfaces matched this report.", "", 1, "L", false, 0, "")
 	}
-	footer(doc, brand, generated, page)
+	drawCharts(doc, rep, brand, charts, r, g, b, startPage, endPage)
+	endPage()
 
 	var buf bytes.Buffer
 	if err := doc.Output(&buf); err != nil {
@@ -183,6 +218,15 @@ func header(doc *fpdf.Fpdf, rep *Report, brand settings.Branding, r, g, b int, f
 	if !first {
 		return y + 4
 	}
+	if rep.Sample {
+		doc.SetXY(pdfMarginX, y+1.5)
+		doc.SetFont("Helvetica", "B", 8)
+		doc.SetTextColor(180, 90, 20)
+		doc.CellFormat(0, 5, tr(doc,
+			"Sample data — a preview of the layout, not a report of this network."),
+			"", 1, "L", false, 0, "")
+		return doc.GetY() + 1
+	}
 	if rep.Truncated {
 		// A truncated report that does not say so is a wrong report.
 		doc.SetXY(pdfMarginX, y+1.5)
@@ -199,6 +243,9 @@ func header(doc *fpdf.Fpdf, rep *Report, brand settings.Branding, r, g, b int, f
 // whole fleet when it was one customer, or the reverse.
 func scopeLine(rep *Report) string {
 	var parts []string
+	if rep.Sample {
+		return "sample data"
+	}
 	if rep.Customer != "" {
 		parts = append(parts, "customer: "+rep.Customer)
 	}
@@ -211,7 +258,7 @@ func scopeLine(rep *Report) string {
 	return strings.Join(parts, "   ")
 }
 
-func tableHeader(doc *fpdf.Fpdf, cols []pdfCol, r, g, b int) {
+func tableHeader(doc *fpdf.Fpdf, cols []keyed, r, g, b int) {
 	doc.SetFont("Helvetica", "B", 7.5)
 	doc.SetFillColor(r, g, b)
 	doc.SetTextColor(255, 255, 255)
@@ -228,7 +275,7 @@ func tableHeader(doc *fpdf.Fpdf, cols []pdfCol, r, g, b int) {
 	doc.Ln(-1)
 }
 
-func rowLine(doc *fpdf.Fpdf, cols []pdfCol, cells []string, fill bool) {
+func rowLine(doc *fpdf.Fpdf, cols []keyed, vals []string, fill bool) {
 	doc.SetFont("Helvetica", "", 7.5)
 	doc.SetTextColor(30, 30, 30)
 	// Banding rather than rules: on a table this wide, horizontal lines fight
@@ -237,8 +284,8 @@ func rowLine(doc *fpdf.Fpdf, cols []pdfCol, cells []string, fill bool) {
 	doc.SetX(pdfMarginX)
 	for i, c := range cols {
 		v := ""
-		if i < len(cells) {
-			v = cells[i]
+		if i < len(vals) {
+			v = vals[i]
 		}
 		align := "L"
 		if c.right {
@@ -266,31 +313,60 @@ func footer(doc *fpdf.Fpdf, brand settings.Branding, generated time.Time, page i
 	doc.CellFormat(pdfPageW/2-pdfMarginX, 5, fmt.Sprintf("Page %d", page), "", 0, "R", false, 0, "")
 }
 
-func interfaceCells(row Row) []string {
-	return []string{
-		orDash(row.Customer), row.DeviceName, row.Name, row.Alias,
-		bps(float64(row.SpeedBPS)),
-		bps(row.AvgInBPS), bps(row.AvgOutBPS),
-		bps(row.P95InBPS), bps(row.P95OutBPS),
-		bps(row.MaxInBPS), bps(row.MaxOutBPS),
-		pctCell(row.P95UtilPct),
+// cells renders one row in the order the columns were chosen.
+func cells(rep *Report, row Row, cols []keyed) []string {
+	grouped := rep.GroupedBy == "customer"
+	out := make([]string, len(cols))
+	for i, c := range cols {
+		out[i] = cell(row, c.key, grouped)
 	}
+	return out
 }
 
-func customerCells(row Row) []string {
-	name := row.Customer
-	if name == "" {
-		// The untagged group is named, not blank: an invoice-shaped report
-		// with an anonymous row is how a circuit goes unbilled.
-		name = "(untagged)"
+func cell(row Row, key string, grouped bool) string {
+	switch key {
+	case "customer":
+		if grouped {
+			if row.Customer == "" {
+				// The untagged group is named, not blank: an invoice-shaped
+				// report with an anonymous row is how a circuit goes unbilled.
+				return "(untagged)"
+			}
+			return row.Customer
+		}
+		return orDash(row.Customer)
+	case "circuits":
+		return fmt.Sprintf("%d", row.Interfaces)
+	case "device":
+		return row.DeviceName
+	case "interface":
+		return row.Name
+	case "alias":
+		return orDash(row.Alias)
+	case "descr":
+		return orDash(row.Descr)
+	case "speed":
+		return bps(float64(row.SpeedBPS))
+	case "avg_in":
+		return bps(row.AvgInBPS)
+	case "avg_out":
+		return bps(row.AvgOutBPS)
+	case "p95_in":
+		return bps(row.P95InBPS)
+	case "p95_out":
+		return bps(row.P95OutBPS)
+	case "peak_in":
+		return bps(row.MaxInBPS)
+	case "peak_out":
+		return bps(row.MaxOutBPS)
+	case "total_in":
+		return bytesHuman(row.TotalInBytes)
+	case "total_out":
+		return bytesHuman(row.TotalOutBytes)
+	case "util_p95":
+		return pctCell(row.P95UtilPct)
 	}
-	return []string{
-		name, fmt.Sprintf("%d", row.Interfaces), bps(float64(row.SpeedBPS)),
-		bps(row.AvgInBPS), bps(row.AvgOutBPS),
-		bps(row.P95InBPS), bps(row.P95OutBPS),
-		bps(row.MaxInBPS), bps(row.MaxOutBPS),
-		bytesHuman(row.TotalInBytes),
-	}
+	return ""
 }
 
 func orDash(s string) string {
@@ -370,4 +446,60 @@ func maxF(a, b float64) float64 {
 		return a
 	}
 	return b
+}
+
+// drawCharts lays the per-row charts out after the summary table.
+//
+// After rather than interleaved: the table is the thing that gets scanned and
+// compared, and a reader looking for the busiest circuit should not have to
+// scroll past a chart between every two rows. The charts are the second
+// question — what did that circuit's month look like — asked in the same
+// order the table answered the first.
+func drawCharts(doc *fpdf.Fpdf, rep *Report, brand settings.Branding,
+	charts []Chart, r, g, b int, startPage, endPage func()) {
+	if len(charts) == 0 {
+		return
+	}
+	perRow := brand.ChartsPerRow()
+	cw := (availW - float64(perRow-1)*chartGapX) / float64(perRow)
+
+	y := doc.GetY() + 5
+	// The heading and the first row of charts travel together: a section title
+	// alone at the foot of a page is worse than a slightly short page.
+	if y+8+chartH > pdfBottomY {
+		endPage()
+		startPage()
+		y = doc.GetY()
+	}
+	doc.SetXY(pdfMarginX, y)
+	doc.SetFont("Helvetica", "B", 10)
+	doc.SetTextColor(r, g, b)
+	doc.CellFormat(availW, 6, "Traffic detail", "", 1, "L", false, 0, "")
+	if n := len(rep.Rows) - len(charts); n > 0 {
+		// Said out loud rather than left to be noticed: a reader who counts
+		// ten charts under a forty-row table must be told the other thirty
+		// were dropped by a limit, not by having no traffic.
+		doc.SetFont("Helvetica", "I", 7.5)
+		doc.SetTextColor(150, 150, 150)
+		doc.CellFormat(availW, 4, tr(doc, fmt.Sprintf(
+			"Charts are drawn for the %d busiest rows; %d further rows appear in the table only.",
+			len(charts), n)), "", 1, "L", false, 0, "")
+	}
+	y = doc.GetY() + 2
+
+	for i, c := range charts {
+		if col := i % perRow; col == 0 {
+			if i > 0 {
+				y += chartH + chartGapY
+			}
+			if y+chartH > pdfBottomY {
+				endPage()
+				startPage()
+				y = doc.GetY() + 2
+			}
+		}
+		x := pdfMarginX + float64(i%perRow)*(cw+chartGapX)
+		drawChart(doc, x, y, cw, c, rep.Rows[i], rep.From, rep.To, r, g, b)
+	}
+	doc.SetY(y + chartH)
 }

@@ -3,6 +3,7 @@ package reports
 import (
 	"context"
 	"encoding/csv"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -36,6 +37,29 @@ func (h *Handler) Register(r chi.Router) {
 		pr.Use(httpx.RequirePerm(h.Checker, authz.DevicesRead))
 		pr.Get("/reports/bandwidth", h.bandwidth)
 	})
+	r.Group(func(pw chi.Router) {
+		// Preview renders unsaved branding, which is a settings operation
+		// wearing a report's clothes — so it is gated like one.
+		pw.Use(httpx.RequirePerm(h.Checker, authz.SettingsWrite))
+		pw.Post("/reports/preview", h.preview)
+	})
+}
+
+// preview renders a one-page sample from the branding in the request body
+// rather than from the stored row, so an operator sees the effect of a logo or
+// a column choice before saving it. The data is synthetic and says so: a
+// preview built from live traffic would be a real report that happens to be
+// unsaveable, and someone would send it to a customer.
+func (h *Handler) preview(w http.ResponseWriter, r *http.Request) {
+	var brand settings.Branding
+	if err := json.NewDecoder(r.Body).Decode(&brand); err != nil {
+		httpx.WriteError(w, r, errx.New(errx.KindInvalid, "malformed JSON body"))
+		return
+	}
+	rep, charts := SamplePDF(brand)
+	if err := writePDF(w, rep, brand, charts); err != nil {
+		httpx.WriteError(w, r, errx.Wrap(errx.KindInternal, err, "render preview"))
+	}
 }
 
 // bandwidth serves the interface traffic report as JSON, CSV or PDF.
@@ -82,7 +106,20 @@ func (h *Handler) bandwidth(w http.ResponseWriter, r *http.Request) {
 				brand = b
 			}
 		}
-		if err := writePDF(w, rep, brand); err != nil {
+		// Charts are fetched only when the export is going to draw them, and
+		// a failure here fails the export rather than quietly producing a
+		// table. A PDF that is missing the charts the deployment configured
+		// is a different document from the one that was asked for, and the
+		// place it gets noticed is after it has been emailed to a customer.
+		var charts []Chart
+		if brand.ChartsEnabled() {
+			charts, err = h.Svc.BuildCharts(r.Context(), rep)
+			if err != nil {
+				httpx.WriteError(w, r, err)
+				return
+			}
+		}
+		if err := writePDF(w, rep, brand, charts); err != nil {
 			httpx.WriteError(w, r, errx.Wrap(errx.KindInternal, err, "render pdf"))
 		}
 	default:

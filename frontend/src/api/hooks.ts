@@ -287,6 +287,29 @@ export interface Branding {
   logo: string;
   footer: string;
   accent: string;
+  /** Columns of the per-interface table, in print order. Empty means the
+   *  server's default, which names an interface by its alias alone. */
+  columns?: string[];
+  /** "each" (the default) draws a traffic chart per row; "none" is a table. */
+  charts?: "each" | "none";
+  /** "compact" puts two charts to a page row, "full" one across the page. */
+  chart_size?: "compact" | "full";
+}
+
+export interface ReportColumnCatalogue {
+  columns: { key: string; title: string }[];
+  default: string[];
+}
+
+/** The columns an export may carry. Fetched rather than hard-coded: the server
+ *  validates the keys on the way in, so a list that drifted would offer a
+ *  column the save then rejects. */
+export function useReportColumns() {
+  return useQuery({
+    queryKey: ["report-columns"],
+    queryFn: () => api<ReportColumnCatalogue>("/settings/report-columns"),
+    staleTime: Infinity,
+  });
 }
 
 /** Branding printed on exported PDF reports. Readable by anyone who can see

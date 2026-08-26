@@ -387,10 +387,15 @@ func main() {
 					Pool: pool, VM: alertvm.New(vmURL), Redis: redisClient,
 					Checker: checker,
 				}).Register(g)
+				reportVM := reports.NewVMReader(vmURL)
 				(&reports.Handler{
 					Svc: &reports.Service{
 						Interfaces: &invpg.DeviceRepo{Pool: pool},
-						Metrics:    reports.NewVMReader(vmURL),
+						Metrics:    reportVM,
+						// The same reader serves the charts a PDF export
+						// draws: they are the same series over the same
+						// window, asked across it rather than at its end.
+						Charts: reportVM,
 						// Same per-request read as the query proxy: the
 						// cadence is changeable from the UI, and a rate window
 						// shorter than it spans one sample and returns nothing,

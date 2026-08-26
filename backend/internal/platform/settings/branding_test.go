@@ -80,3 +80,57 @@ func TestBrandingValidationRules(t *testing.T) {
 		t.Fatal("an oversized logo was accepted")
 	}
 }
+
+// Layout validation. An unknown column key is refused rather than dropped:
+// dropping it prints a narrower table than the operator configured, and the
+// only way to notice is to compare an export against the form.
+func TestReportLayoutValidationRules(t *testing.T) {
+	for _, b := range []Branding{
+		{Charts: "sometimes"},
+		{ChartSize: "enormous"},
+		{Columns: []string{"alias", "no-such-column"}},
+		{Columns: []string{"alias", "alias"}},
+	} {
+		if _, err := b.normalized(); err == nil {
+			t.Errorf("accepted an invalid layout: %+v", b)
+		}
+	}
+	// The valid shapes, including the unset one an existing row deserializes to.
+	for _, b := range []Branding{
+		{},
+		{Charts: "each", ChartSize: "compact"},
+		{Charts: "none", ChartSize: "full", Columns: []string{"alias", "p95_in"}},
+	} {
+		if _, err := b.normalized(); err != nil {
+			t.Errorf("rejected a valid layout %+v: %v", b, err)
+		}
+	}
+}
+
+// An unconfigured deployment gets a table named by alias, with charts on.
+func TestReportLayoutDefaults(t *testing.T) {
+	var b Branding
+	if !b.ChartsEnabled() {
+		t.Error("charts should be on until someone turns them off")
+	}
+	if b.ChartsPerRow() != 2 {
+		t.Errorf("default charts per row = %d, want 2", b.ChartsPerRow())
+	}
+	keys := map[string]bool{}
+	for _, c := range b.ColumnsOrDefault() {
+		keys[c.Key] = true
+	}
+	if !keys["alias"] {
+		t.Error("the default table must name an interface by its alias")
+	}
+	for _, gone := range []string{"device", "interface"} {
+		if keys[gone] {
+			t.Errorf("the default table should not carry %q", gone)
+		}
+	}
+	// A configuration naming only columns that no longer exist falls back
+	// rather than printing a report with no columns at all.
+	if got := (Branding{Columns: []string{"gone"}}).ColumnsOrDefault(); len(got) == 0 {
+		t.Error("an unresolvable column list emptied the table")
+	}
+}

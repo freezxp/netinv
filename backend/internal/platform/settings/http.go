@@ -26,6 +26,7 @@ func (h *Handler) Register(r chi.Router) {
 		pr.Use(httpx.RequirePerm(h.Checker, authz.PlatformRead))
 		pr.Get("/settings/metrics-mirror", h.getMirror)
 		pr.Get("/settings/branding", h.getBranding)
+		pr.Get("/settings/report-columns", h.reportColumns)
 	})
 	r.Group(func(pw chi.Router) {
 		pw.Use(httpx.RequirePerm(h.Checker, authz.SettingsWrite))
@@ -56,6 +57,25 @@ func (h *Handler) getBranding(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, b)
 }
 
+// reportColumns is the catalogue the branding form's column picker is built
+// from. Served rather than duplicated in the frontend: the keys are validated
+// on the way in, so a list that drifts out of step would offer an operator a
+// column the server then refuses.
+func (h *Handler) reportColumns(w http.ResponseWriter, r *http.Request) {
+	type col struct {
+		Key   string `json:"key"`
+		Title string `json:"title"`
+	}
+	out := struct {
+		Columns []col    `json:"columns"`
+		Default []string `json:"default"`
+	}{Default: DefaultReportColumns}
+	for _, c := range ReportColumns {
+		out.Columns = append(out.Columns, col{c.Key, c.Title})
+	}
+	httpx.WriteJSON(w, http.StatusOK, out)
+}
+
 func (h *Handler) putBranding(w http.ResponseWriter, r *http.Request) {
 	var in Branding
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
@@ -74,7 +94,8 @@ func (h *Handler) putBranding(w http.ResponseWriter, r *http.Request) {
 		ActorKind: "user", ActorID: actor, Action: "settings.branding",
 		ResourceKind: "setting", ResourceID: BrandingKey,
 		After: map[string]any{"company": out.Company, "subtitle": out.Subtitle,
-			"footer": out.Footer, "accent": out.Accent, "has_logo": out.Logo != ""},
+			"footer": out.Footer, "accent": out.Accent, "has_logo": out.Logo != "",
+			"columns": out.Columns, "charts": out.Charts, "chart_size": out.ChartSize},
 	})
 	httpx.WriteJSON(w, http.StatusOK, out)
 }

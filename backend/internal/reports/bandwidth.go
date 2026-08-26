@@ -68,6 +68,17 @@ type Report struct {
 	To        time.Time `json:"to"`
 	Truncated bool      `json:"truncated"`
 	Rows      []Row     `json:"rows"`
+
+	// Sample marks a report built from invented numbers for the branding
+	// preview. It is printed on the page, not merely tracked: a layout
+	// preview that looks like a report is a document somebody forwards.
+	Sample bool `json:"-"`
+
+	// ifaces is the interface set the rows were built from, kept so a grouped
+	// export can chart each customer's members without asking the database
+	// the same question twice. Unexported: it is working state, not part of
+	// the answer, and it must never reach the JSON body.
+	ifaces []postgres.InterfaceSearchRow
 }
 
 // InterfaceFinder is the inventory side: which interfaces the operator means.
@@ -97,6 +108,9 @@ type Service struct {
 	// changeable from the UI, so one captured at boot goes stale and takes the
 	// report's columns with it. nil falls back to 60s.
 	PollInterval func() time.Duration
+	// Charts reads the series a PDF export draws. Optional: without it an
+	// export is a table, which is what every export was until charts existed.
+	Charts RangeReader
 }
 
 // MaxRows caps a report. The cost of a report is dominated by how many series
@@ -117,7 +131,7 @@ func (s *Service) Bandwidth(ctx context.Context, f postgres.InterfaceFilter, fro
 		return nil, err
 	}
 	rep := &Report{Query: f.Q, Customer: f.Customer, From: from, To: to,
-		Truncated: total > len(ifaces), Rows: []Row{}}
+		Truncated: total > len(ifaces), Rows: []Row{}, ifaces: ifaces}
 	if len(ifaces) == 0 {
 		return rep, nil
 	}

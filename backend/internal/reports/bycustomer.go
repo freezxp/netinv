@@ -45,7 +45,8 @@ func (s *Service) ByCustomer(ctx context.Context, f postgres.InterfaceFilter,
 		return nil, err
 	}
 	rep := &Report{Query: f.Q, Customer: f.Customer, From: from, To: to,
-		GroupedBy: "customer", Truncated: total > len(ifaces), Rows: []Row{}}
+		GroupedBy: "customer", Truncated: total > len(ifaces), Rows: []Row{},
+		ifaces: ifaces}
 	if len(ifaces) == 0 {
 		return rep, nil
 	}
