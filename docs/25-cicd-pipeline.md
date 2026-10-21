@@ -57,7 +57,7 @@ GitHub side holds **no** cluster credentials; GHCR pull secrets in-cluster. Acti
 
 §2's diagram is the target shape; the pipeline as built is a subset, and the gap is recorded here rather than left to be discovered.
 
-**Implemented in `ci.yml`:** paths-filter; backend build/vet/test (`-race`, with a PostgreSQL service for integration tests); golangci-lint over both Go modules (config in `/.golangci.yml`); connector tests and `make connector-lint`; the coverage ratchet (`scripts/coverage.sh`); frontend typecheck/lint/build; gitleaks, `make licenses`, govulncheck, `npm audit` and shellcheck over every tracked `*.sh`; `helm lint` plus template rendering and kubeconform validation; and a Playwright E2E smoke against PostgreSQL, VictoriaMetrics and Redis.
+**Implemented in `ci.yml`:** paths-filter; backend build/vet/test (`-race`, with a PostgreSQL service for integration tests); golangci-lint over both Go modules (config in `/.golangci.yml`); connector tests and `make connector-lint`; the coverage ratchet (`scripts/coverage.sh`); frontend typecheck/lint/build; gitleaks, `make licenses`, govulncheck, `npm audit` and shellcheck over every tracked `*.sh`; `helm lint` plus template rendering and kubeconform validation (**switched off by ADR-024** — the job is still defined, behind `if: false`); and a Playwright E2E smoke against PostgreSQL, VictoriaMetrics and Redis.
 
 **Not wired, and why:**
 

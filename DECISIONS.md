@@ -39,7 +39,7 @@ Decisions ADR-001 … ADR-017 were made with the product owner on **2026-08-07**
 **Rationale:** Multi-tenant retrofits are the classic SaaS rewrite trigger; carrying a dormant `tenant_id` is nearly free.
 
 ## ADR-006: Kubernetes on-prem
-**Status:** accepted
+**Status:** accepted; **install mechanism suspended by ADR-024 (2026-10-21)** — Helm is paused and Docker Compose is the supported deployment
 **Decision:** Target vanilla-conformant on-prem Kubernetes; recommend RKE2 (or k3s for lab). Helm is the only supported install mechanism. 4–5 datacenters: one **core site** runs the full stack; other sites run only a poller deployment phoning home.
 **Consequences:** Remote pollers must work from behind NAT: all connections are outbound from the poller (AMQP over TLS to core RabbitMQ). No inbound ports at remote sites.
 
@@ -181,3 +181,14 @@ Decisions ADR-001 … ADR-017 were made with the product owner on **2026-08-07**
 - **2026-08-13 — security checklist against TLS: closed** (doc 20 §12.1–12.2). The stack now terminates TLS; govulncheck, npm audit, trivy, gitleaks and testssl all pass, along with manual auth, RBAC, injection and brute-force probes. Three real vulnerabilities were fixed to get there, including two CRITICAL OpenSSL CVEs in the container that terminates TLS. The full endpoint × role authz matrix is still outstanding.
 - **2026-08-13 — backup/restore drill: closed** (doc 20 §12.3). Run against real pilot data into throwaway containers. It found the metrics half of the restore recovering nothing while exiting 0 — vindicating the "do not fake them" instruction the gate was written with, since this gate was the one that could have been waved through most easily.
 - Still open: real-hardware validation of the six untested connectors, and the 72 h soak plus chaos-lite on staging Kubernetes.
+
+## ADR-024: Helm chart support is paused; Docker Compose is the supported deployment
+**Status:** accepted (2026-10-21, suspends the install-mechanism half of ADR-006)
+**Context:** ADR-006 made Kubernetes the target and Helm "the only supported install mechanism". In practice every real deployment — the pilot and the production install — runs the Docker Compose stack (`deploy/compose-app`), and the chart has been maintained alongside it on every change: each new service, variable and port written twice, rendered across six value sets in CI, and occasionally exercised on a minikube box that is not where anything runs. That is a second deployment surface with no user, and it costs time on every feature.
+**Decision:** Pause the chart. `deploy/helm/` stays in the repository exactly as it was at v1.2.0 plus the commits up to this one, and is no longer updated when the application changes. The `helm` CI job is switched off (`if: false`, so re-enabling is one line). Docker Compose — `quickstart.sh`, `upgrade.sh`, the two-file compose project — is the one supported deployment, and docs describe it as such.
+**Rationale:** A deployment path that nobody runs is not tested by being rendered; it is tested by being used, and nothing here uses it. Keeping it current anyway spends effort on every change for a benefit that arrives only if someone adopts it. Pausing rather than deleting keeps the work — the chart did install and run on Kubernetes 1.35 (doc 35) — while being honest that it is no longer maintained.
+**Consequences:**
+- **The chart drifts from the application from this commit on.** The first service it will lack is the SNMP trap listener, in development when this was decided; installing the chart will then yield a NetInv without trap intake, and every later change widens the gap. Doc 19, doc 35 and the chart README say so at the top.
+- ADR-006's site topology still holds — remote pollers phone home, no inbound ports at remote sites — but it is delivered by Compose, not by the `netinv-poller` chart.
+- **ADR-023's 72 h soak gate cannot close as written.** It names "staging Kubernetes", and there is now no supported Kubernetes deployment to soak. The gate stays open and is not restated here: whether it becomes a soak of the Compose stack is a change to ADR-023, to be made deliberately rather than as a side effect of this one.
+- **To resume:** re-enable the CI job, bring the chart level with Compose — every service, environment variable and port added since this ADR — then verify an install on a real cluster before calling it supported again. The CI render alone missed three defects the cluster found (doc 35).

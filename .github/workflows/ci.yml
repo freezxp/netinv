@@ -102,7 +102,11 @@ jobs:
           NETINV_TEST_PG_DSN: postgres://netinv:ci@localhost:5432/netinv
         run: ../scripts/coverage.sh
 
+  # Paused by ADR-024: Docker Compose is the supported deployment and the chart
+  # is no longer updated with the application, so rendering it would only
+  # report drift. Delete this `if` to resume — after bringing the chart level.
   helm:
+    if: false
     needs: changes
     runs-on: ubuntu-latest
     steps:

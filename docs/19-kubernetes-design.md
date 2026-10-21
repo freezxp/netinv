@@ -2,6 +2,8 @@
 
 **Status:** draft · **Depends on:** 18, ADR-006 · pipeline: 25
 
+> **Paused (ADR-024, 2026-10-21).** Helm chart support is paused and Docker Compose is the supported deployment ([doc 32](32-quickstart.md)). The chart is frozen as of that date and no longer updated with the application — services added after that date, starting with the SNMP trap listener, will be missing from it, and the gap widens with every change. What follows is kept as a record and as the starting point if the chart is resumed.
+
 > This is the *design*: what the workloads are and why. For the *procedure* —
 > installing the chart, the data-tier toggles, and the failures the first real
 > install produced — see [doc 35](35-kubernetes-deployment.md).

@@ -31,9 +31,10 @@ inside a new LXC container, in about ten minutes, and `destroy` removes it —
 which also makes it a cheap way to test a branch against real hardware
 ([docs/33-proxmox-lxc.md](docs/33-proxmox-lxc.md)).
 
-Running **Kubernetes**? Helm charts for the platform and for remote-site
-pollers, with the installation procedure and the things that bite in
-[docs/35-kubernetes-deployment.md](docs/35-kubernetes-deployment.md).
+**Kubernetes is paused** ([ADR-024](DECISIONS.md)): Docker Compose is the
+supported deployment. The Helm charts in `deploy/helm/` installed and ran on
+Kubernetes 1.35 ([docs/35-kubernetes-deployment.md](docs/35-kubernetes-deployment.md)),
+but they are frozen as of 2026-10-21 and no longer track the application.
 
 ## What it looks like
 
@@ -81,7 +82,7 @@ real network appears in them.*
 | Cache | Redis |
 | Queue | RabbitMQ |
 | Auth | Local accounts + JWT (OIDC-shaped; Keycloak later) |
-| Deploy | Docker → on-prem Kubernetes, Helm |
+| Deploy | Docker Compose (Helm charts paused — ADR-024) |
 | CI/CD | GitHub Actions → GHCR |
 
 ## Repository map
@@ -98,7 +99,7 @@ netinv/
 ├── connectors/        ← vendor connectors (cisco, juniper, huawei, zte, ubiquiti,
 │                     ruckus, fortinet, paloalto)
 ├── frontend/          ← React + TypeScript app
-├── deploy/            ← Helm charts, k8s manifests, docker-compose, Proxmox LXC installer
+├── deploy/            ← docker-compose, Proxmox LXC installer; Helm charts (paused)
 └── scripts/           ← dev and CI helpers (seed-demo, licences, connector contract)
 ```
 

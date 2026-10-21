@@ -2,7 +2,8 @@
 
 **Status:** draft · The easiest way to get a full NetInv running — the whole
 platform on one host, no Kubernetes. Good for evaluation, demos, and small
-single-site installs. For multi-site production use the Helm charts and the
+single-site installs, and — since ADR-024 paused the Helm charts — the
+supported deployment for production too. See also the
 [pilot runbook](31-pilot-runbook.md).
 
 > Running this inside a **Proxmox LXC** container? See
@@ -171,5 +172,5 @@ Two things worth knowing if you ever bring it up by hand rather than via the scr
   datacenter, run the poller elsewhere and enroll it — see
   [doc 31 §4](31-pilot-runbook.md). The compose poller here polls whatever its
   host can reach on the network.
-- **Scaling out** to Kubernetes when you outgrow one host: the same images and
-  config drive the Helm charts in `deploy/helm/` — nothing to rebuild.
+- **Scaling out** to Kubernetes is paused (ADR-024). The charts in
+  `deploy/helm/` are frozen and lack services added since 2026-10-21.

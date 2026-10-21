@@ -5,6 +5,8 @@ NetInv running on a cluster with the Helm chart. [Doc 19](19-kubernetes-design.m
 the workloads are and why; this is the *procedure*, plus everything that went
 wrong the first time it was run for real.
 
+> **Paused (ADR-024, 2026-10-21).** Helm chart support is paused and Docker Compose is the supported deployment ([doc 32](32-quickstart.md)). The chart is frozen as of that date and no longer updated with the application — services added after that date, starting with the SNMP trap listener, will be missing from it, and the gap widens with every change. What follows is kept as a record and as the starting point if the chart is resumed.
+
 > **Verified end to end on Kubernetes 1.35** (minikube, docker driver, 6 CPU /
 > 10 GB) on 2026-08-14: 17/17 pods ready about 100 seconds after
 > `helm install`, migrations applied, login working through the Ingress, and a

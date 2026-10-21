@@ -2,6 +2,8 @@
 
 **Status:** draft · **Depends on:** 18, 19, 20 · Owner action required (Sprint 20)
 
+> **Helm is paused (ADR-024, 2026-10-21).** The install steps below that use `helm` describe the frozen chart, which no longer tracks the application. Install and upgrade with Docker Compose — [doc 32](32-quickstart.md) and `deploy/compose-app/upgrade.sh` — and read the rest of this runbook (enrolment, validation, backup, widening) as applying to that deployment.
+
 This is the operator's checklist to take NetInv from a fresh install to a
 running pilot across the core site + remote datacenters. The mechanics of the
 Helm install itself live in [doc 35](35-kubernetes-deployment.md); this is what

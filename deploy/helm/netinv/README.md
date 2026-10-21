@@ -1,5 +1,7 @@
 # netinv — core-site Helm chart
 
+> **Paused (ADR-024, 2026-10-21).** Helm chart support is paused and Docker Compose is the supported deployment ([doc 32](../../../docs/32-quickstart.md)). The chart is frozen as of that date and no longer updated with the application — services added after that date, starting with the SNMP trap listener, will be missing from it, and the gap widens with every change. What follows is kept as a record and as the starting point if the chart is resumed.
+
 Installs NetInv's seven services, the frontend, and (by default) a single-replica
 data tier, per [doc 19](../../../docs/19-kubernetes-design.md). The full
 deployment guide is [doc 35](../../../docs/35-kubernetes-deployment.md).

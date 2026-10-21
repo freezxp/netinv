@@ -22,7 +22,7 @@
 | 16 | [Domain Model](16-domain-model.md) | Bounded contexts, aggregates, ubiquitous language | draft |
 | 17 | [Class Diagram](17-class-diagram.md) | Key interfaces/types per context (Mermaid classDiagram) | draft |
 | 18 | [Deployment Diagram](18-deployment-diagram.md) | Core site + remote sites, network paths, ports | draft |
-| 19 | [Kubernetes Deployment Design](19-kubernetes-design.md) | Namespaces, workloads, Helm, resources, operators | draft |
+| 19 | [Kubernetes Deployment Design](19-kubernetes-design.md) | Namespaces, workloads, Helm, resources, operators — **paused, ADR-024** | draft |
 | 20 | [Security Design](20-security-design.md) | AuthN/Z, crypto, secrets, RBAC matrix, threat model | draft |
 | 21 | [Logging Strategy](21-logging-strategy.md) | Structured logs, levels, correlation, retention | draft |
 | 22 | [Monitoring Strategy](22-monitoring-strategy.md) | Self-monitoring: metrics, SLOs, alerting on ourselves | draft |
@@ -38,7 +38,7 @@
 | 32 | [Quick Start (Docker Compose)](32-quickstart.md) | One-command single-host test deployment | draft |
 | 33 | [Proxmox LXC deployment](33-proxmox-lxc.md) | Running the Compose stack in an LXC container: nesting/keyctl, storage driver, unprivileged ICMP | draft |
 | 34 | [Flow collection](34-flow-collection.md) | The `netinv-flow` collector: NetFlow decode, ingest-time top-N aggregation, the exposure of listening on a socket, and the Flow tab | draft |
-| 35 | [Kubernetes deployment](35-kubernetes-deployment.md) | Installing the Helm chart on a real cluster: procedure, the data-tier toggles, and the five things that bite — verified on Kubernetes 1.35 | draft |
+| 35 | [Kubernetes deployment](35-kubernetes-deployment.md) | **Paused, ADR-024.** Installing the Helm chart on a real cluster: procedure, the data-tier toggles, and the five things that bite — verified on Kubernetes 1.35 | draft |
 
 ## Role guides
 

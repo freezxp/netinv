@@ -2,7 +2,7 @@
 
 The whole platform on one host: all six Go services + the frontend, running as
 their built images against the compose data tier. This is the simplest real
-deployment; for on-prem Kubernetes use the Helm charts and `docs/31-pilot-runbook.md`.
+deployment, and since ADR-024 paused the Helm charts, the supported one.
 
 ## Deploy
 
