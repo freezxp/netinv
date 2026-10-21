@@ -242,6 +242,7 @@ func main() {
 				Repo:  &invpg.SyncRepo{Pool: pool},
 				Locks: redisLocker(redisClient),
 				Audit: auditor, Log: rt.Log,
+				Match: connectorMatcher(pool),
 			}
 			go func() { // consume with reconnect across broker restarts
 				for ctx.Err() == nil {
@@ -512,6 +513,10 @@ func connectorMatcher(pool *pgxpool.Pool) colapp.ConnectorMatcher {
 		defer rows.Close()
 		best, bestLen := "generic", 0
 		descr := strings.ToLower(sysDescr)
+		// Compare with exactly one leading dot on both sides: agents and
+		// libraries disagree about it, and a mismatch matches nothing silently.
+		dotted := func(o string) string { return "." + strings.TrimLeft(o, ".") }
+		sysObjectID = dotted(sysObjectID)
 		for rows.Next() {
 			var id, vendor string
 			var prefixes []string
@@ -519,7 +524,7 @@ func connectorMatcher(pool *pgxpool.Pool) colapp.ConnectorMatcher {
 				continue
 			}
 			for _, p := range prefixes {
-				if p != "" && strings.HasPrefix(sysObjectID, p) && len(p) > bestLen {
+				if p = dotted(p); p != "." && strings.HasPrefix(sysObjectID, p) && len(p) > bestLen {
 					best, bestLen = id, len(p)
 				}
 			}

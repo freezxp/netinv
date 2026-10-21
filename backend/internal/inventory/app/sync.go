@@ -38,6 +38,7 @@ type IfState struct {
 
 type DeviceState struct {
 	DeviceID    string
+	ConnectorID string
 	SysName     string
 	SysDescr    string
 	SysObjectID string
@@ -282,6 +283,12 @@ type SyncService struct {
 	Locks DeviceLocker
 	Audit audit.Writer
 	Log   *slog.Logger
+	// Match scores a system against the connector catalog (doc 11 §7). A
+	// device added by hand without a connector starts on generic, and this is
+	// where it gets the vendor connector its sysObjectID calls for — without
+	// it, only discovered devices were ever matched, and a FortiGate added by
+	// address polled through IF-MIB alone indefinitely. Nil disables it.
+	Match func(sysObjectID, sysDescr string) string
 }
 
 // HandleResult processes one poller SyncResult (consumed from the queue).
@@ -302,9 +309,20 @@ func (s *SyncService) HandleResult(ctx context.Context, res wire.SyncResult, run
 			return err
 		}
 		diff := Diff(*cur, *res.Snapshot, res.CollectedAt)
+		matched := s.rematch(cur, res.Snapshot, &diff)
 		n, err := s.Repo.Apply(ctx, res.DeviceID, diff, res.Snapshot.Adjacencies, run)
 		if err != nil {
 			return err
+		}
+		if matched != "" {
+			s.Log.Info("connector matched on sync", "device", res.DeviceID,
+				"from", cur.ConnectorID, "to", matched, "sys_object_id", res.Snapshot.SysObjectID)
+			s.Audit.Write(ctx, audit.Event{
+				ActorKind: "system", Action: "device.connector_matched",
+				ResourceKind: "device", ResourceID: res.DeviceID,
+				Detail: map[string]any{"from": cur.ConnectorID, "to": matched,
+					"sys_object_id": res.Snapshot.SysObjectID},
+			})
 		}
 		if n > 0 {
 			s.Audit.Write(ctx, audit.Event{
@@ -316,6 +334,29 @@ func (s *SyncService) HandleResult(ctx context.Context, res wire.SyncResult, run
 		}
 		return nil
 	})
+}
+
+// rematch moves a device off the generic connector when its system identity
+// matches a vendor one, and records the change in the diff so it is applied in
+// the sync transaction and shows in asset history. It only ever moves *from*
+// generic: any other connector was chosen by an operator or by an earlier
+// match, and a sync must not overrule either. The vendor-identity fields this
+// sync collected came from generic; the next sync collects them through the
+// matched connector.
+func (s *SyncService) rematch(cur *DeviceState, snap *wire.SyncSnapshot, diff *DiffResult) string {
+	if s.Match == nil || cur.ConnectorID != "generic" || snap.SysObjectID == "" {
+		return ""
+	}
+	m := s.Match(snap.SysObjectID, snap.SysDescr)
+	if m == "" || m == cur.ConnectorID {
+		return ""
+	}
+	diff.DeviceFields["connector_id"] = m
+	diff.Changes = append(diff.Changes, FieldChange{
+		ObjectKind: "device", ObjectID: cur.DeviceID, Field: "connector_id",
+		Old: cur.ConnectorID, New: m, ChangeKind: "updated",
+	})
+	return m
 }
 
 func orDefault(v, def string) string {
