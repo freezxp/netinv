@@ -3,12 +3,12 @@
 // hardware sensors from fgHwSensorEntTable, identity from FORTINET-CORE-MIB.
 // Embeds generic for IF-MIB, the system group and LLDP.
 //
-// NOT VALIDATED AGAINST HARDWARE. Every OID here comes from the published
-// Fortinet MIBs, not from a walk of a real appliance, and there is no fixture
-// because there is no FortiGate to record one from. The shape most likely to
-// be wrong is what a given FortiOS build actually populates — several of these
-// objects exist on all models but return nothing on some, which this code
-// treats as "no sample" rather than an error (doc 10 §5.7).
+// PARTIALLY VALIDATED: against a recorded walk of a FortiGate-VM on FortiOS
+// 6.0.4 (testdata/fortinet.snmpwalk, pinned by fixture_test.go). A VM has no
+// hardware sensors, so the fgHwSensorEntTable path is still unvalidated, as is
+// every physical appliance. Several of these objects exist on all models but
+// return nothing on some, which this code treats as "no sample" rather than an
+// error (doc 10 §5.7).
 package fortinet
 
 import (
@@ -55,7 +55,11 @@ const (
 	oidFgSysMemUsage    = ".1.3.6.1.4.1.12356.101.4.1.4.0"  // percent
 	oidFgSysMemCapacity = ".1.3.6.1.4.1.12356.101.4.1.5.0"  // KB
 	oidFgSysSesCount    = ".1.3.6.1.4.1.12356.101.4.1.8.0"  // active sessions
-	oidFgSysSesRate1    = ".1.3.6.1.4.1.12356.101.4.1.10.0" // sessions/sec, 1-min average
+	oidFgSysSesRate1    = ".1.3.6.1.4.1.12356.101.4.1.11.0" // sessions/sec, 1-min average
+	// .9 and .10 are fgSysLowMemUsage and fgSysLowMemCapacity. This constant
+	// once pointed at .10, and a real FortiGate-VM answers it with the memory
+	// capacity in KB — 4063936 — which charted as four million new sessions
+	// per second. The recorded walk pins the correct column.
 
 	// fgHwSensorEntTable — present on appliances with physical sensors, absent
 	// on VMs, which is the single biggest difference between two FortiGates
