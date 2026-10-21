@@ -11,6 +11,7 @@
 #   1. imports nothing beyond stdlib, connectors/sdk, and connectors/generic
 #   2. carries tests
 #   3. is registered in connectors/registry
+#   4. appears in the api's connector catalog (backend/cmd/api/main.go)
 set -euo pipefail
 cd "$(dirname "$0")/../connectors"
 
@@ -62,6 +63,24 @@ for dir in */; do
 		note ok "registered"
 	else
 		note FAIL "missing from connectors/registry/registry.go"
+		fail=1
+	fi
+
+	# 4. Catalog. The api keeps a static copy of the registry because it must
+	#    not import connectors (doc 13 rule 5). A connector missing from that
+	#    copy is compiled into the poller and invisible everywhere else: not in
+	#    the UI, rejected when set on a device, never picked by the match. Two
+	#    connectors sat in that state for two months before anyone noticed.
+	srcs=$(find "$name" -maxdepth 1 -name '*.go' ! -name '*_test.go')
+	# shellcheck disable=SC2086 # word-split the file list on purpose
+	id=$(grep -hoE '(^|[^A-Za-z])ID: *"[a-z0-9-]+"' $srcs 2>/dev/null | head -1 |
+		sed -E 's/.*ID: *"([^"]+)"/\1/' || true)
+	if [ -z "$id" ]; then
+		note warn "no ID: \"...\" literal found; catalog not checked"
+	elif grep -q "{\"$id\"," ../backend/cmd/api/main.go; then
+		note ok "in the api connector catalog"
+	else
+		note FAIL "$id missing from the connector catalog in backend/cmd/api/main.go"
 		fail=1
 	fi
 done

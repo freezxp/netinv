@@ -152,6 +152,11 @@ func main() {
 		}
 		// Connector catalog (doc 08): static mirror of the compiled registry —
 		// the API deliberately does not import connectors (doc 13 rule 5).
+		// Being a copy, it can fall behind: fortinet-fortios and paloalto-panos
+		// were registered for two months without appearing here, so they were
+		// absent from the UI, unselectable through the API, and never chosen
+		// by the connector match. scripts/connector-lint.sh now fails when a
+		// registered connector's ID is missing from this list.
 		for _, c := range [][5]string{
 			{"generic", "Generic", "Generic SNMP (IF-MIB)", `["inventory","interfaces","topology","icmp","health"]`, `[]`},
 			{"cisco-ios", "Cisco", "Cisco IOS / IOS-XE", `["inventory","interfaces","topology","icmp","health"]`, `[".1.3.6.1.4.1.9."]`},
@@ -160,6 +165,8 @@ func main() {
 			{"zte-zxr", "ZTE", "ZTE ZXR10 (best-effort)", `["inventory","interfaces","topology","icmp"]`, `[".1.3.6.1.4.1.3902."]`},
 			{"ubiquiti", "Ubiquiti", "Ubiquiti (SNMP)", `["inventory","interfaces","topology","icmp","health"]`, `[".1.3.6.1.4.1.41112.",".1.3.6.1.4.1.10002."]`},
 			{"ruckus", "Ruckus", "Ruckus Wireless (Unleashed / ZoneFlex)", `["inventory","interfaces","topology","icmp","wireless"]`, `[".1.3.6.1.4.1.25053"]`},
+			{"fortinet-fortios", "Fortinet", "Fortinet FortiGate (FortiOS)", `["inventory","interfaces","topology","icmp","health"]`, `[".1.3.6.1.4.1.12356."]`},
+			{"paloalto-panos", "Palo Alto Networks", "Palo Alto Networks PAN-OS", `["inventory","interfaces","topology","icmp","health"]`, `[".1.3.6.1.4.1.25461."]`},
 		} {
 			if _, err := pool.Exec(ctx, `
 				INSERT INTO platform.connectors
