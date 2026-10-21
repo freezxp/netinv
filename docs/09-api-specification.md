@@ -265,6 +265,14 @@ Built-in rules (`is_builtin`, the FR-ALR-07 pack) are **fully editable** — thr
  "labels": {"site": "dc-east"}}
 ```
 
+### SNMP traps — `/events/traps` (doc 36)
+
+| Method | URI | Permission | Codes |
+|---|---|---|---|
+| GET | `/events/traps?device_id=d_…&unknown=1&q=link&before=<id>&limit=100` | `devices:read` | 200 `{"data":[…],"next_before":<id>}` |
+
+Newest first, keyset-paged on `id` (`before`; `limit` ≤ 500). `unknown=1` returns only traps no device claims. `q` matches a trap-name substring or an OID prefix. Each row carries `device_name` and, where the trap named an interface, `if_index` and `if_name`; `varbinds` is the decoded list `{oid,type,value}`.
+
 ## 10. Weathermaps — `/maps`
 
 | Method | URI | Permission | Codes |

@@ -30,6 +30,8 @@ import (
 	"github.com/freezxp/netinv/backend/internal/collection/adapters/secrets"
 	colapp "github.com/freezxp/netinv/backend/internal/collection/app"
 	"github.com/freezxp/netinv/backend/internal/dashboard"
+	eventhttp "github.com/freezxp/netinv/backend/internal/events/adapters/httpapi"
+	eventpg "github.com/freezxp/netinv/backend/internal/events/adapters/postgres"
 	"github.com/freezxp/netinv/backend/internal/iam/adapters/httpapi"
 	"github.com/freezxp/netinv/backend/internal/iam/adapters/lockout"
 	iampg "github.com/freezxp/netinv/backend/internal/iam/adapters/postgres"
@@ -361,6 +363,7 @@ func main() {
 				discH.Register(g)
 			}
 			alertH.Register(g)
+			(&eventhttp.Handler{Store: &eventpg.Store{Pool: pool}, Checker: checker}).Register(g)
 			channelH.Register(g)
 			exportH.Register(g)
 			(&audit.Handler{Pool: pool, Checker: checker}).Register(g)

@@ -68,7 +68,7 @@ echo "==> Starting data tier (postgres, redis, rabbitmq, victoriametrics, snmpsi
 echo "==> Ensuring a TLS certificate exists"
 "$(dirname "$0")/make-cert.sh"
 
-# 4. Application (seven services + frontend), built from source.
+# 4. Application (eight services + frontend), built from source.
 # Stamp the footer with what is actually being built. `git describe` names the
 # tag plus any commits since it, so a deployment running ahead of a release
 # says so instead of claiming to be the release. Outside a git checkout (a

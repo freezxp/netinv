@@ -28,6 +28,7 @@ var defaultHealthPorts = map[string]string{
 	"alerter":   ":8084",
 	"notifier":  ":8085",
 	"flow":      ":8086",
+	"events":    ":8087",
 }
 
 // Load reads common configuration for the named service.

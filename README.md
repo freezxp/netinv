@@ -20,7 +20,7 @@ git clone https://github.com/freezxp/netinv.git && cd netinv
 ./deploy/compose-app/quickstart.sh
 ```
 
-It generates secrets, builds the images, starts the whole platform (seven
+It generates secrets, builds the images, starts the whole platform (eight
 services + UI + a bundled data tier and SNMP simulator), generates a TLS
 certificate, and prints your login. Open **https://localhost:8443** — the
 certificate is self-signed, so the browser will warn once; `http://localhost:8090`
@@ -69,6 +69,7 @@ real network appears in them.*
 - **Finds** any interface in the fleet by what someone wrote on it — ifAlias, description, name or customer — and tags interfaces with a customer in bulk from CSV, kept clear of sync so a reprovision cannot quietly erase it.
 - **Reports** interface bandwidth over a period — average, 95th percentile, peak and totals per direction — filtered by customer and optionally grouped one row per customer, exportable as CSV. The aggregate is summed before the percentile is taken, so a customer's figures are of their combined traffic rather than a sum of per-circuit numbers.
 - **Alerts** via Email, Webhook, and Slack with severity-based routing, ack/silence workflow.
+- **SNMP traps** (v1/v2c, informs) received on UDP 162, attributed to devices, and alertable like any metric (doc 36).
 - **Scales** from a single site to 100k devices across multiple datacenters via site-local pollers phoning home over RabbitMQ.
 
 ## Stack (decided — see [DECISIONS.md](DECISIONS.md))
@@ -95,7 +96,7 @@ netinv/
 ├── CLAUDE.md          ← AI onboarding: read this first if you are an AI agent
 ├── DECISIONS.md       ← architecture decision log (ADR-lite); the "why" behind everything
 ├── docs/              ← the 35-document design package (numbered, see docs/README.md)
-├── backend/           ← Go services: api, scheduler, poller, ingester, alerter, notifier, flow
+├── backend/           ← Go services: api, scheduler, poller, ingester, alerter, notifier, flow, events
 ├── connectors/        ← vendor connectors (cisco, juniper, huawei, zte, ubiquiti,
 │                     ruckus, fortinet, paloalto)
 ├── frontend/          ← React + TypeScript app

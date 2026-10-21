@@ -56,7 +56,7 @@ RBAC roles Admin/Operator/Read-Only/Auditor (matrix in doc 20); user management;
 Site (datacenter) management; poller registration/health; connector catalog view (which vendors available, version); device onboarding: manual add, CSV import, and **subnet discovery scan (P1)** with approve-to-manage queue.
 
 ### 4.8 Deferred (P2 — designed-in seams)
-Wireless (categories 7), firewall/NAT/LB (6), hosts (8), synthetic checks (9), facilities/UPS (10), NetFlow/sFlow (11), syslog/trap events, Keycloak SSO, multi-tenancy activation, HA, mobile app.
+Wireless (categories 7), firewall/NAT/LB (6), hosts (8), synthetic checks (9), facilities/UPS (10), NetFlow/sFlow (11), syslog events (SNMP traps since ADR-025), Keycloak SSO, multi-tenancy activation, HA, mobile app.
 
 ## 5. Non-goals (v1)
 - No configuration management/push (read-only monitoring; NetInv never writes to devices).

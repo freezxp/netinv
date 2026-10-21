@@ -134,6 +134,11 @@ Append-only lifecycle log: `id bigint identity` PK · `alert_id` FK alert_instan
 ### silences
 `id` PK · `tenant_id` · `scope jsonb` NN · `reason` text NN · `starts_at`/`ends_at` NN · `created_by` FK users NN · `revoked_at` NULL. Partial index `(ends_at) WHERE revoked_at IS NULL`.
 
+## Schema `events`
+
+### snmp_traps
+Append-only trap log (doc 36 §5): `id bigserial` PK · `received_at` NN · `source inet` NN · `agent_addr inet` NULL (v1 only) · `device_id text` NULL, **no FK** — a deleted device keeps its history and an unknown source has none · `version` NN CHECK (`1`,`2c`) · `inform bool` NN · `trap_oid` NN · `trap_name` NULL · `if_index int` NULL · `varbinds jsonb` NN. Indexes `(received_at)`, `(device_id, id DESC)`, and `(id DESC) WHERE device_id IS NULL` for the unknown-source view. Pruned by age (`NETINV_TRAP_RETENTION`, default 30 d). The community is never stored.
+
 ## Schema `notify`
 
 ### channels

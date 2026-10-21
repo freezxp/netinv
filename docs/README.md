@@ -1,6 +1,6 @@
 # NetInv Design Package — Document Index
 
-35 documents. Numbers are canonical references ("doc 09" = API spec). Read top-to-bottom for the full picture, or follow the role guides below.
+36 documents. Numbers are canonical references ("doc 09" = API spec). Read top-to-bottom for the full picture, or follow the role guides below.
 
 | # | Document | One-liner | Status |
 |---|---|---|---|
@@ -39,6 +39,7 @@
 | 33 | [Proxmox LXC deployment](33-proxmox-lxc.md) | Running the Compose stack in an LXC container: nesting/keyctl, storage driver, unprivileged ICMP | draft |
 | 34 | [Flow collection](34-flow-collection.md) | The `netinv-flow` collector: NetFlow decode, ingest-time top-N aggregation, the exposure of listening on a socket, and the Flow tab | draft |
 | 35 | [Kubernetes deployment](35-kubernetes-deployment.md) | **Paused, ADR-024.** Installing the Helm chart on a real cluster: procedure, the data-tier toggles, and the five things that bite — verified on Kubernetes 1.35 | draft |
+| 36 | [SNMP trap intake](36-snmp-traps.md) | The `netinv-events` service: v1/v2c traps and informs, attribution to devices, alerting through `netinv_snmp_trap`, the exposure of UDP 162, and the Traps views | draft |
 
 ## Role guides
 
@@ -49,6 +50,7 @@
 - **Ops/deploy:** 18, 19, 21, 22, 25, 04; single-host installs 32 (Docker Compose) and 33 (Proxmox LXC); Kubernetes 35 (procedure) on top of 19 (design).
 - **Product/management:** 01, 02, 26, 27, 28, 29.
 - **Flow (NetFlow/sFlow):** 34, then ADR-020 in `/DECISIONS.md` for why it aggregates rather than stores.
+- **SNMP traps:** 36, then ADR-025 for why traps are in and syslog is not.
 
 ## Conventions
 

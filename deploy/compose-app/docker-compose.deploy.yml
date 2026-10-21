@@ -9,7 +9,8 @@
 #
 # The base docker-compose.yml (repo root) provides postgres/redis/rabbitmq/
 # victoriametrics/snmpsim/mailhog; this overlay wires the six app services +
-# frontend with real connection strings and secrets.
+# frontend with real connection strings and secrets. (Now eight: events,
+# the SNMP trap listener, joined in ADR-025.)
 services:
   api:
     restart: unless-stopped
@@ -106,6 +107,26 @@ services:
       # it mirrors too — otherwise a backup holds everything except the
       # traffic composition.
       NETINV_VM_MIRROR_URL: ${NETINV_VM_MIRROR_URL:-}
+
+  # SNMP trap intake (ADR-025, doc 36) — the second service that accepts
+  # unsolicited network input. v1/v2c carry only a community string, which
+  # crosses the wire in clear, so NETINV_TRAP_ALLOW (source prefixes) is the
+  # control that matters; NETINV_TRAP_COMMUNITIES additionally rejects traps
+  # not sent with an expected community. Both empty accepts anything that
+  # reaches the port, and the service says so at startup.
+  events:
+    restart: unless-stopped
+    profiles: [app]
+    ports: ["${NETINV_TRAP_PORT:-162}:1162/udp"]
+    environment:
+      NETINV_PG_DSN: postgres://netinv:${PG_PASSWORD}@postgres:5432/netinv
+      NETINV_AMQP_URL: amqp://netinv:${RABBIT_PASSWORD}@rabbitmq:5672/
+      NETINV_TRAP_ADDR: ":1162"
+      NETINV_TRAP_ALLOW: ${NETINV_TRAP_ALLOW:-}
+      NETINV_TRAP_COMMUNITIES: ${NETINV_TRAP_COMMUNITIES:-}
+      # Stored traps older than this are pruned hourly. 30d by default.
+      NETINV_TRAP_RETENTION: ${NETINV_TRAP_RETENTION:-30d}
+    depends_on: { api: { condition: service_started } }
 
   ingester:
     restart: unless-stopped

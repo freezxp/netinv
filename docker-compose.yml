@@ -104,6 +104,14 @@ services:
     build: { context: ., dockerfile: backend/Dockerfile, args: { SERVICE: flow } }
     environment: *appenv
     ports: ["2055:2055/udp", "4739:4739/udp"]
+  events:
+    restart: unless-stopped
+    profiles: [app]
+    build: { context: ., dockerfile: backend/Dockerfile, args: { SERVICE: events } }
+    environment: *appenv
+    # SNMP traps. The container listens on 1162 because it runs unprivileged;
+    # agents send to the standard 162 on the host (doc 36 §7).
+    ports: ["${NETINV_TRAP_PORT:-162}:1162/udp"]
   alerter:
     restart: unless-stopped
     profiles: [app]

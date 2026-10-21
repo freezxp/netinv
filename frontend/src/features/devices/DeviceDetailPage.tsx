@@ -29,6 +29,7 @@ import { RangePicker } from "../../components/RangePicker";
 import { rateWindow, useTimeRange } from "../../api/timerange";
 import { OidBrowser } from "../inventory/OidBrowser";
 import { FlowTab } from "./FlowTab";
+import { TrapsTable } from "../events/TrapsPage";
 import { formatBps, formatDuration, formatMs } from "../../lib/format";
 
 const baseTabs = [
@@ -38,6 +39,7 @@ const baseTabs = [
   "Flow",
   "History",
   "Alerts",
+  "Traps",
 ] as const;
 type Tab = (typeof baseTabs)[number] | "Wireless";
 
@@ -178,6 +180,7 @@ export function DeviceDetailPage() {
       )}
       {tab === "History" && <HistoryTab deviceID={id} />}
       {tab === "Alerts" && <AlertsTab deviceID={id} />}
+      {tab === "Traps" && <TrapsTable filter={{ deviceID: id }} />}
     </div>
   );
 }

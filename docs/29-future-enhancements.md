@@ -23,7 +23,8 @@ Discovery UI GA (backend shipped P1) · maintenance windows · PDF reports (avai
 MAC table size, STP topology changes, errdisabled/storm-control (L2) · route/ARP table sizes, BGP session state + prefix counts (BGP4-MIB + vendor), OSPF neighbors, VRRP/HSRP transitions (L3). Design impact: **none structural** — new collector capability interfaces in the SDK (`L2Collector`, `RoutingCollector`), new metric names, new builtin rules; connectors deepen independently (ADR-014). BGP peer state belongs on the weathermap (node badge) — small map schema addition (`netinv.map/2`, versioned per FR-MAP-07).
 
 ## v1.3 — Events & early flow
-- **Syslog + SNMP trap ingestion** (deferred C4): new intake service (`netinv-events`) → RabbitMQ → PG events store + correlation with alerts ("what changed when the graph bent" — PRD dashboard g). Seam: events.domain bus + recent-events panel already exist.
+- **SNMP traps: delivered 2026-10-21** (ADR-025, doc 36) — v1/v2c traps and informs, stored per device and alerted through `netinv_snmp_trap`. Still deferred from this item: SNMPv3 traps, syslog, and correlation with alerts.
+- **Syslog + SNMP trap ingestion** (deferred C4, traps now delivered above): new intake service (`netinv-events`) → RabbitMQ → PG events store + correlation with alerts ("what changed when the graph bent" — PRD dashboard g). Seam: events.domain bus + recent-events panel already exist.
 - **Flows-lite:** sFlow/NetFlow v5 top-talkers only (category 11's highest-value slice) via a dedicated `netinv-flow` collector writing aggregated (not per-flow) series to VM — full IPFIX with raw-flow storage (ClickHouse) is a separate later ADR; do not let flow storage decisions leak into v1.x.
 
 ## v2.0 — Enterprise

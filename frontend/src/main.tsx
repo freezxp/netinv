@@ -40,6 +40,10 @@ const MapEditorPage = lazyRoute(
   () => import("./features/maps/MapEditorPage"),
   "MapEditorPage",
 );
+const TrapsPage = lazyRoute(
+  () => import("./features/events/TrapsPage"),
+  "TrapsPage",
+);
 const AlertsPage = lazyRoute(
   () => import("./features/alerts/AlertsPage"),
   "AlertsPage",
@@ -95,6 +99,7 @@ const router = createBrowserRouter([
       { path: "interfaces", element: <InterfacesPage /> },
       { path: "reports", element: <ReportsPage /> },
       { path: "alerts", element: <AlertsPage /> },
+      { path: "traps", element: <TrapsPage /> },
       { path: "audit", element: <AuditPage /> },
       { path: "users", element: <UsersPage /> },
       { path: "settings", element: <SettingsPage /> },

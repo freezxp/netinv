@@ -192,3 +192,17 @@ Decisions ADR-001 … ADR-017 were made with the product owner on **2026-08-07**
 - ADR-006's site topology still holds — remote pollers phone home, no inbound ports at remote sites — but it is delivered by Compose, not by the `netinv-poller` chart.
 - **ADR-023's 72 h soak gate cannot close as written.** It names "staging Kubernetes", and there is now no supported Kubernetes deployment to soak. The gate stays open and is not restated here: whether it becomes a soak of the Compose stack is a change to ADR-023, to be made deliberately rather than as a side effect of this one.
 - **To resume:** re-enable the CI job, bring the chart level with Compose — every service, environment variable and port added since this ADR — then verify an install on a real cluster before calling it supported again. The CI render alone missed three defects the cluster found (doc 35).
+
+---
+
+## ADR-025: SNMP traps are received; syslog stays deferred
+**Status:** accepted (2026-10-21, amends the "syslog/trap ingestion" deferral of ADR-004)
+**Context:** Polling sees a device once per cadence and only what its MIB says now. The events an operator most wants to know about on a firewall — a VPN tunnel dropping, an HA failover, repeated wrong communities — are announced by the device as traps and often leave nothing in a polled counter. ADR-021 brought FortiGate and PA-series appliances in as devices; without traps, NetInv sees their interfaces but not the things they shout about. "Syslog/trap ingestion" was deferred as one item, but they are different sizes of work: traps are structured, identified by OID, and low volume; syslog is free text whose value depends on parsing per vendor and per version.
+**Decision:** Add a `netinv-events` service that receives SNMP v1 and v2c traps and v2c informs on UDP 162, stores each in `events.snmp_traps`, and publishes a `netinv_snmp_trap` sample for traps from known devices so ordinary alert rules can fire on them (doc 36). SNMPv3 traps, syslog, and any trap-specific correlation or mapping engine stay deferred.
+**Rationale:** Turning a trap into a metric sample reuses everything already built — the ingester's labels, the alerter, silences, notification routing — instead of growing a second alert path. The event store keeps the varbinds an alert cannot carry, for the operator who opens the device to see what happened. v3 is left out because receiving it needs each sender's engine ID and keys configured in NetInv, and v1/v2c is what the fleet's devices are configured to send today.
+**Consequences:**
+- **A second component accepts unsolicited network input**, after `netinv-flow` (ADR-020). v1/v2c have no real authentication, so the allow-list, community check, per-source rate limit and per-device label cap in doc 36 §7 are what bound a hostile or broken sender. A spoofed trap can raise a false alert; it cannot change anything.
+- **Single replica**, like the flow collector: a trap is sent once, to one address.
+- **Vendor trap names are generated from MIB text, not observed.** The Fortinet and Palo Alto names (doc 36 §3) have not been compared with a real device's traps. Like the connectors in ADR-023, this is stated rather than assumed.
+- Link, restart and authentication traps duplicate what polling already alerts on, except authentication failure, which polling cannot see. The built-in rules alert on authentication failure (warning) and on everything else not already covered (info).
+- Not in the Helm chart, which is paused (ADR-024).

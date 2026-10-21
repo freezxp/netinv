@@ -26,7 +26,7 @@ NetInv occupies the gap: **the Cacti experience, rebuilt on today's stack** — 
 
 **v1 (20 sprints, solo developer + AI pair):** SNMP collection of interface traffic, device health, availability/latency, and inventory; alerting with Email/Webhook/Slack; asset inventory with search/filter/export and history; RBAC (Admin/Operator/Read-Only/Auditor); audit logging; the weathermap editor.
 
-**Designed-in but deferred:** wireless controllers, firewall/LB metrics, NetFlow/sFlow, syslog/trap ingestion, Keycloak SSO, multi-tenancy, HA/DR. Each has an explicit seam in the architecture (doc 29) so activating it is an addition, not a rewrite.
+**Designed-in but deferred:** wireless controllers, firewall/LB metrics, NetFlow/sFlow, syslog ingestion (SNMP traps since ADR-025), Keycloak SSO, multi-tenancy, HA/DR. Each has an explicit seam in the architecture (doc 29) so activating it is an addition, not a rewrite.
 
 ## Architecture in one paragraph
 

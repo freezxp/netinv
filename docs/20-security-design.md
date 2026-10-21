@@ -12,6 +12,7 @@
 | Privilege escalation | RBAC gaps | deny-by-default permission middleware (§5), authz tests per endpoint |
 | Topology disclosure | map/inventory read by wrong party | RBAC floors on maps, TLS everywhere, audit trail |
 | Tampered supply chain | malicious image/dependency | doc 25: pinned digests, SBOM, scan gates, signed images |
+| Spoofed or flooding trap sender | UDP 162 accepts unsolicited, unauthenticated v1/v2c datagrams | source allow-list + community check, per-source rate limit, bounded queue/varbinds/labels, unknown sources write no series; nothing in a trap is acted on (doc 36 §7, ADR-025) |
 | SNMP exposure | v2c community sniffing, device ACL gaps | prefer v3 authPriv (UI nudges: v2c flagged "legacy"), device-side ACL guidance (doc 18), never SNMP write (PRD non-goal) |
 
 ## 2. AuthN (ADR-010)

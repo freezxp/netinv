@@ -15,6 +15,7 @@ const nav = [
   { to: "/interfaces", label: "Interfaces", icon: "inventory" },
   { to: "/reports", label: "Reports", icon: "audit" },
   { to: "/alerts", label: "Alerts", icon: "alerts" },
+  { to: "/traps", label: "Traps", icon: "alerts" },
   { to: "/maps", label: "Weathermaps", icon: "maps" },
   { to: "/platform", label: "Platform", icon: "platform" },
   { to: "/audit", label: "Audit", icon: "audit", roles: ["admin", "auditor"] },

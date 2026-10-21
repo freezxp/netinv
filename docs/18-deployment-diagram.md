@@ -49,6 +49,7 @@ flowchart TB
 | Users | Ingress | TCP 443 | only user-facing entry |
 | Remote poller | Core RabbitMQ LB | TCP 5671 (AMQPS) | **only** core-bound port from sites; per-site vhost credentials (doc 20 §8) |
 | Poller | Devices | UDP 161, ICMP | source-restrict SNMP ACLs on devices to poller IPs |
+| Devices | Core `netinv-events` | UDP 162 (container 1162) | SNMP traps and informs (doc 36); restrict sources to managed devices — v1/v2c are unauthenticated |
 | Notifier | SMTP/Slack/webhooks | 587/443 egress | allowlist egress if policy requires |
 | CI (GitHub) | — | none inbound | cluster **pulls** images from GHCR (doc 25); no GitHub→on-prem path |
 | Admin | k8s API | 6443 | platform ops only, not app traffic |
