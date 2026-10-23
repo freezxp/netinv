@@ -51,8 +51,8 @@ function Stat({
           : "";
   return (
     <Card className="flex-1 min-w-36">
-      <div className="text-xs uppercase text-slate-500">{label}</div>
-      <div className={`mt-1 text-2xl font-semibold ${toneClass}`}>{value}</div>
+      <div className="eyebrow">{label}</div>
+      <div className={`tnum mt-2 text-[30px] font-semibold leading-[1.1] tracking-[-0.02em] ${toneClass}`}>{value}</div>
     </Card>
   );
 }

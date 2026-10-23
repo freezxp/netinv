@@ -2,7 +2,7 @@ import { type FormEvent, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useLogin } from "../../api/hooks";
 import { useAuthStore } from "./store";
-import { Button, Card, Input } from "../../components/ui";
+import { Button, Input } from "../../components/ui";
 import { Footer } from "../../app/Footer";
 import { ApiError } from "../../api/client";
 
@@ -33,37 +33,58 @@ export function LoginPage() {
         : null;
 
   return (
-    // The version is worth having on the sign-in screen too: it is the one
-    // page reachable without credentials, which makes it where you look when
-    // asking what a deployment is actually running.
-    <div className="flex h-full flex-col items-center justify-center gap-6">
-      <Card className="w-80">
-        <div className="mb-4 text-center">
-          <div className="text-2xl font-bold text-sky-500">NetInv</div>
-          <div className="text-sm text-slate-500">Network asset monitoring</div>
-        </div>
-        <form onSubmit={submit} className="flex flex-col gap-3">
+    // Laid out like PICA's sign-in: a panel in the deployment accent carrying
+    // the product name, beside the form. The version stays on this page: it is
+    // the one page reachable without credentials, which makes it where you
+    // look when asking what a deployment is actually running.
+    <div className="flex h-full">
+      <div
+        className="relative hidden flex-1 flex-col justify-end p-12 text-white md:flex"
+        style={{
+          background:
+            "radial-gradient(circle at 20% 15%, var(--color-sky-500), transparent 60%), linear-gradient(135deg, var(--color-sky-600), var(--color-sky-800))",
+        }}
+      >
+        <div className="font-mono text-3xl font-semibold tracking-[-0.01em]">NetInv</div>
+        <div className="mt-3 text-lg text-white/80">Network asset monitoring</div>
+      </div>
+      <div className="flex flex-1 flex-col items-center justify-center gap-6 bg-[var(--bg)] px-4">
+        <form onSubmit={submit} className="flex w-full max-w-[384px] flex-col">
+          <div className="mb-1 font-mono text-xl font-semibold md:hidden">NetInv</div>
+          <h1 className="mb-6 text-2xl font-semibold tracking-[-0.015em]">Sign in</h1>
+          <label className="eyebrow mb-1" htmlFor="login-username">
+            Username
+          </label>
           <Input
-            placeholder="Username"
+            id="login-username"
             autoComplete="username"
             value={username}
             onChange={(e) => setUsername(e.target.value)}
             autoFocus
+            className="mb-5 py-2"
           />
+          <label className="eyebrow mb-1" htmlFor="login-password">
+            Password
+          </label>
           <Input
+            id="login-password"
             type="password"
-            placeholder="Password"
             autoComplete="current-password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
+            className="mb-4 py-2"
           />
-          {errorText && <div className="text-sm text-red-500">{errorText}</div>}
-          <Button type="submit" disabled={login.isPending || !username || !password}>
+          {errorText && <div className="mb-3 text-sm text-red-600 dark:text-red-400">{errorText}</div>}
+          <Button
+            type="submit"
+            className="py-2"
+            disabled={login.isPending || !username || !password}
+          >
             {login.isPending ? "Signing in…" : "Sign in"}
           </Button>
         </form>
-      </Card>
-      <Footer />
+        <Footer />
+      </div>
     </div>
   );
 }

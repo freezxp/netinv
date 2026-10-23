@@ -1,5 +1,6 @@
 // Shared UI primitives (doc 30 §0 tokens). Deliberately small; grows with the
-// feature sprints.
+// feature sprints. The look follows PICA's Legacy appearance: flat bordered
+// surfaces, 2px corners, mono uppercase captions.
 import type {
   ButtonHTMLAttributes,
   InputHTMLAttributes,
@@ -21,12 +22,14 @@ export function Button({
   return (
     <button
       className={cx(
-        "rounded-md px-3 py-1.5 text-sm font-medium transition-colors disabled:opacity-50",
+        "rounded-sm px-3 py-1.5 text-sm font-medium transition-colors disabled:opacity-50",
+        // Dark mode fills are light, so they carry dark ink for contrast.
         variant === "primary" &&
-          "bg-sky-600 text-white hover:bg-sky-500 dark:bg-sky-600 dark:hover:bg-sky-500",
+          "bg-sky-600 text-white hover:bg-sky-700 dark:bg-sky-400 dark:text-slate-950 dark:hover:bg-sky-300",
         variant === "ghost" &&
-          "text-slate-600 hover:bg-slate-200 dark:text-slate-300 dark:hover:bg-slate-800",
-        variant === "danger" && "bg-red-600 text-white hover:bg-red-500",
+          "text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800",
+        variant === "danger" &&
+          "bg-red-600 text-white hover:bg-red-700 dark:bg-red-400 dark:text-slate-950 dark:hover:bg-red-300",
         className,
       )}
       {...props}
@@ -39,8 +42,8 @@ export function Input(props: InputHTMLAttributes<HTMLInputElement>) {
     <input
       {...props}
       className={cx(
-        "rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm outline-none",
-        "focus:border-sky-500 focus:ring-1 focus:ring-sky-500",
+        "rounded-sm border border-slate-300 bg-white px-3 py-1.5 text-sm outline-none",
+        "focus:border-sky-600 focus:ring-1 focus:ring-sky-600",
         "dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200",
         props.className,
       )}
@@ -53,8 +56,8 @@ export function Select(props: SelectHTMLAttributes<HTMLSelectElement>) {
     <select
       {...props}
       className={cx(
-        "rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm outline-none",
-        "focus:border-sky-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200",
+        "rounded-sm border border-slate-300 bg-white px-2 py-1.5 text-sm outline-none",
+        "focus:border-sky-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200",
         props.className,
       )}
     />
@@ -73,15 +76,11 @@ export function Card({
   return (
     <div
       className={cx(
-        "rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900",
+        "rounded-sm border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900",
         className,
       )}
     >
-      {title && (
-        <div className="mb-3 text-sm font-semibold text-slate-500 dark:text-slate-400">
-          {title}
-        </div>
-      )}
+      {title && <div className="eyebrow mb-3">{title}</div>}
       {children}
     </div>
   );
@@ -114,11 +113,17 @@ export function StatusBadge({ status }: { status: string }) {
   );
 }
 
+// A light badge: tinted fill, coloured text and a border in the same colour.
 export function SeverityPill({ severity }: { severity: string }) {
+  const c = statusColor[severity] ?? "var(--status-muted)";
   return (
     <span
-      className="rounded px-1.5 py-0.5 text-xs font-semibold uppercase text-white"
-      style={{ background: statusColor[severity] ?? "var(--status-muted)" }}
+      className="inline-block rounded-sm px-1.5 py-px font-mono text-[10px] font-medium uppercase tracking-[0.09em]"
+      style={{
+        color: c,
+        background: `color-mix(in srgb, ${c} 12%, transparent)`,
+        border: `1px solid color-mix(in srgb, ${c} 55%, transparent)`,
+      }}
     >
       {severity}
     </span>

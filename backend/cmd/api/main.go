@@ -360,6 +360,8 @@ func main() {
 		api := chi.NewRouter()
 		authH.Register(api)
 		pollerH.RegisterPublic(api) // token-authenticated, not JWT
+		// UI colours, read by the sign-in page before there is a session.
+		(&settings.Handler{Store: &settings.Store{Pool: pool}}).RegisterPublic(api)
 		api.Group(func(g chi.Router) {
 			g.Use(httpx.RequireAuth(verifier))
 			userH.Register(g)

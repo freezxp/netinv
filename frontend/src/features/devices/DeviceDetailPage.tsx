@@ -383,8 +383,8 @@ function HealthStat({
           : "text-green-500";
   return (
     <Card className="flex-1 min-w-36">
-      <div className="text-xs uppercase text-slate-500">{label}</div>
-      <div className={`mt-1 text-2xl font-semibold ${tone}`}>
+      <div className="eyebrow">{label}</div>
+      <div className={`tnum mt-2 text-[30px] font-semibold leading-[1.1] tracking-[-0.02em] ${tone}`}>
         {value === undefined ? "—" : `${value.toFixed(1)}${unit}`}
       </div>
     </Card>
@@ -425,7 +425,7 @@ function WirelessTab({ deviceID }: { deviceID: string }) {
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap gap-3">
         <Card className="min-w-36 flex-1">
-          <div className="text-xs uppercase text-slate-500">
+          <div className="eyebrow">
             Connected clients
           </div>
           <div className="mt-1 text-2xl font-semibold text-sky-500">
@@ -433,13 +433,13 @@ function WirelessTab({ deviceID }: { deviceID: string }) {
           </div>
         </Card>
         <Card className="min-w-36 flex-1">
-          <div className="text-xs uppercase text-slate-500">Peak (24h)</div>
+          <div className="eyebrow">Peak (24h)</div>
           <div className="mt-1 text-2xl font-semibold">
             {peak === undefined ? "—" : peak.toFixed(0)}
           </div>
         </Card>
         <Card className="min-w-36 flex-1">
-          <div className="text-xs uppercase text-slate-500">Access points</div>
+          <div className="eyebrow">Access points</div>
           <div
             className={cx(
               "mt-1 text-2xl font-semibold",
@@ -571,7 +571,7 @@ function HealthTab({ deviceID }: { deviceID: string }) {
         />
         {usedBytes !== undefined && totalBytes !== undefined && (
           <Card className="flex-1 min-w-36">
-            <div className="text-xs uppercase text-slate-500">Memory used</div>
+            <div className="eyebrow">Memory used</div>
             <div className="mt-1 text-2xl font-semibold">
               {(usedBytes / 1024 ** 3).toFixed(1)} GB
             </div>

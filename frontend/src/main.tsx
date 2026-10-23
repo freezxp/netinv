@@ -66,6 +66,9 @@ const SettingsPage = lazyRoute(
 );
 import { ApiError } from "./api/client";
 import "./styles/base.css";
+import { initAppearance } from "./app/appearance";
+
+initAppearance();
 
 // The pages are named exports; React.lazy resolves a module's default. This
 // adapts one to the other without making every page file declare a default

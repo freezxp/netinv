@@ -134,3 +134,18 @@ func TestReportLayoutDefaults(t *testing.T) {
 		t.Error("an unresolvable column list emptied the table")
 	}
 }
+
+func TestAppearanceAccentIsValidatedAndLowercased(t *testing.T) {
+	a, err := Appearance{Accent: " #B8004C "}.normalized()
+	if err != nil || a.Accent != "#b8004c" {
+		t.Fatalf("normalized = %+v, %v", a, err)
+	}
+	if a, err := (Appearance{}).normalized(); err != nil || a.Accent != "" {
+		t.Fatalf("empty accent must mean the default: %+v, %v", a, err)
+	}
+	for _, bad := range []string{"red", "#12345", "b8004c", "#b8004c;}body{"} {
+		if _, err := (Appearance{Accent: bad}).normalized(); err == nil {
+			t.Errorf("accent %q accepted", bad)
+		}
+	}
+}

@@ -1,25 +1,156 @@
 @import "tailwindcss";
+@import "@fontsource/ibm-plex-sans/latin-400.css";
+@import "@fontsource/ibm-plex-sans/latin-500.css";
+@import "@fontsource/ibm-plex-sans/latin-600.css";
+@import "@fontsource/ibm-plex-mono/latin-400.css";
+@import "@fontsource/ibm-plex-mono/latin-500.css";
 
-/* Status colors are the product's grammar (doc 30 §0) — identical everywhere. */
+/* House style shared with PICA's "Legacy" appearance (doc 30 §0): IBM Plex,
+   a blue-grey neutral scale, one muted accent, near-square corners and flat
+   bordered surfaces. Rather than restyle every page, the Tailwind palettes the
+   pages already use are re-pointed at those tokens — slate is the neutral
+   scale, sky the accent, and red/amber/green the status tones — so a class
+   like `border-slate-200` *is* the rule colour. Light pages use the low end
+   of each scale and dark pages the high end, which is why one static scale
+   serves both schemes. */
+@theme {
+  --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --color-slate-50: #f7f9fa;
+  --color-slate-100: #eef1f3;
+  --color-slate-200: #d6dde1;
+  --color-slate-300: #c2cbd1;
+  --color-slate-400: #8593a0;
+  --color-slate-500: #66727e;
+  --color-slate-600: #39434d;
+  --color-slate-700: #33404b;
+  --color-slate-800: #242d36;
+  --color-slate-900: #151b21;
+  --color-slate-950: #0e1317;
+
+  --color-sky-50: #e4f0f6;
+  --color-sky-100: #c6e2ef;
+  --color-sky-200: #a6d2e6;
+  --color-sky-300: #8acbe6;
+  --color-sky-400: #5fb3d6;
+  --color-sky-500: #2f8fbc;
+  --color-sky-600: #0b6e99;
+  --color-sky-700: #075b7f;
+  --color-sky-800: #06496a;
+  --color-sky-900: #043752;
+  --color-sky-950: #122b36;
+
+  --color-green-50: #e3f1e9;
+  --color-green-100: #c3e3d1;
+  --color-green-200: #9fd3b6;
+  --color-green-300: #7ccaa0;
+  --color-green-400: #5cc08c;
+  --color-green-500: #349b67;
+  --color-green-600: #1f7a4d;
+  --color-green-700: #18643f;
+  --color-green-800: #124f31;
+  --color-green-900: #0c3a24;
+  --color-green-950: #12261c;
+  --color-emerald-50: #e3f1e9;
+  --color-emerald-100: #c3e3d1;
+  --color-emerald-200: #9fd3b6;
+  --color-emerald-300: #7ccaa0;
+  --color-emerald-400: #5cc08c;
+  --color-emerald-500: #349b67;
+  --color-emerald-600: #1f7a4d;
+  --color-emerald-700: #18643f;
+  --color-emerald-800: #124f31;
+  --color-emerald-900: #0c3a24;
+  --color-emerald-950: #12261c;
+
+  --color-amber-50: #f6eddf;
+  --color-amber-100: #eed9b8;
+  --color-amber-200: #e5c38f;
+  --color-amber-300: #dfb070;
+  --color-amber-400: #d9a257;
+  --color-amber-500: #b7791e;
+  --color-amber-600: #9a5b08;
+  --color-amber-700: #7f4b07;
+  --color-amber-800: #643b05;
+  --color-amber-900: #4a2c04;
+  --color-amber-950: #2a2114;
+
+  --color-red-50: #f8e7e5;
+  --color-red-100: #f1c8c4;
+  --color-red-200: #eca39c;
+  --color-red-300: #ea8b81;
+  --color-red-400: #e8756a;
+  --color-red-500: #cc4a40;
+  --color-red-600: #af2a22;
+  --color-red-700: #92231c;
+  --color-red-800: #751c17;
+  --color-red-900: #581511;
+  --color-red-950: #2c1614;
+
+  --radius-xs: 2px;
+  --radius-sm: 2px;
+  --radius-md: 2px;
+  --radius-lg: 3px;
+  --radius-xl: 4px;
+
+  --shadow-sm: none;
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.12);
+}
+
+/* Semantic tokens, named as PICA names them, for anything not expressed as a
+   utility class (the shell, charts, the weathermap). */
 :root {
-  --status-ok: #22c55e;
-  --status-warning: #f59e0b;
-  --status-critical: #ef4444;
-  --status-unreachable: #94a3b8;
-  --status-muted: #475569;
-  --status-info: #0ea5e9;
+  --bg: #f3f5f6;
+  --surface: #ffffff;
+  --surface-2: #eaeef0;
+  --ink: #11161b;
+  --ink-2: #39434d;
+  --muted: #66727e;
+  --rule: #d6dde1;
+  --rule-2: #c2cbd1;
+  --accent: #0b6e99;
+  --accent-ink: #075b7f;
+  --accent-wash: #e4f0f6;
+
+  /* Status colors are the product's grammar (doc 30 §0) — identical everywhere. */
+  --status-ok: #1f7a4d;
+  --status-warning: #9a5b08;
+  --status-critical: #af2a22;
+  --status-unreachable: #66727e;
+  --status-muted: #8593a0;
+  --status-info: #0b6e99;
 
   /* Weathermap link chrome. Rate labels sit on top of the coloured band, so
      they carry a halo in the page background colour to stay legible against
      any utilisation colour; arrowheads take a thin outline for the same
      reason. */
-  --map-label-halo: #f1f5f9;
-  --map-arrow-edge: #f1f5f9;
+  --map-label-halo: #f3f5f6;
+  --map-arrow-edge: #f3f5f6;
 }
 
 .dark {
-  --map-label-halo: #020617;
-  --map-arrow-edge: #020617;
+  --bg: #0e1317;
+  --surface: #151b21;
+  --surface-2: #1b222a;
+  --ink: #e7ecef;
+  --ink-2: #bac4cc;
+  --muted: #8593a0;
+  --rule: #242d36;
+  --rule-2: #33404b;
+  --accent: #5fb3d6;
+  --accent-ink: #8acbe6;
+  --accent-wash: #122b36;
+
+  --status-ok: #5cc08c;
+  --status-warning: #d9a257;
+  --status-critical: #e8756a;
+  --status-unreachable: #8593a0;
+  --status-muted: #66727e;
+  --status-info: #5fb3d6;
+
+  --map-label-halo: #0e1317;
+  --map-arrow-edge: #0e1317;
 }
 
 @custom-variant dark (&:where(.dark, .dark *));
@@ -31,17 +162,59 @@ body,
 }
 
 body {
-  font-family: Inter, system-ui, sans-serif;
-  @apply bg-slate-100 text-slate-900;
+  font-family: var(--font-sans);
+  background: var(--bg);
+  color: var(--ink);
+  -webkit-font-smoothing: antialiased;
 }
 
-.dark body {
-  @apply bg-slate-950 text-slate-200;
+::selection {
+  background: var(--accent-wash);
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 code,
 .mono {
-  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-family: var(--font-mono);
+}
+
+.tnum {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Small mono uppercase caption — the house style for field labels, table
+   headers and section titles. */
+.eyebrow,
+table:not(.u-legend) th {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.11em;
+  color: var(--muted);
+}
+
+/* Page titles. Deliberately outside a layer, so they win over the
+   `text-xl` every page already puts on its h1. */
+main h1.text-xl {
+  font-size: 24px;
+  line-height: 1.25;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+}
+
+/* Page gutter. */
+.page {
+  padding: 28px 16px;
+}
+@media (min-width: 768px) {
+  .page {
+    padding: 28px 36px;
+  }
 }
 
 /* Weathermap link flow: dashes crawl along each half in the direction that

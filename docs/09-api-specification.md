@@ -128,6 +128,8 @@ Destinations are validated on the way in rather than discovered later: a missing
 
 | POST | `/interfaces/tags` (CSV or JSON bulk assignment) | `devices:write` | 200 `{matched,updated,unmatched,ambiguous}` |
 | POST | `/interfaces/assign` (assign by description filter) | `devices:write` | 200 `{matched,updated,dry_run,skipped,sample}` |
+| GET | `/ui/appearance` | **none** — the sign-in page needs it | 200 `{accent}` |
+| PUT | `/settings/appearance` | `settings:write` | 200, 422 (not `#rrggbb`) |
 | GET | `/settings/branding` | `platform:read` | 200 `{company,subtitle,logo,footer,accent,columns,charts,chart_size}` |
 | PUT | `/settings/branding` | `settings:write` | 200, 422 (bad colour, oversized logo, unknown column) |
 | GET | `/settings/report-columns` | `platform:read` | 200 `{columns:[{key,title}],default}` |

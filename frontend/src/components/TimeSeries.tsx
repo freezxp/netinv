@@ -62,8 +62,8 @@ export function TimeSeries({
     const el = ref.current;
     if (!el) return;
     const dark = document.documentElement.classList.contains("dark");
-    const axisColor = dark ? "#94a3b8" : "#475569";
-    const gridColor = dark ? "#1e293b" : "#e2e8f0";
+    const axisColor = dark ? "#8593a0" : "#66727e";
+    const gridColor = dark ? "#242d36" : "#d6dde1";
 
     const make = () => {
       plotRef.current?.destroy();

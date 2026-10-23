@@ -1,9 +1,10 @@
-// Settings (doc 30 §10, Admin): notification channels with test-send, and
-// where a copy of every collected metric is sent.
+// Settings (doc 30 §10, Admin): the UI's accent colour, notification channels
+// with test-send, and where a copy of every collected metric is sent.
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../api/client";
 import { Button, Card, EmptyState, Input, Select } from "../../components/ui";
+import { applyAccent, DEFAULT_ACCENT } from "../../app/appearance";
 
 interface Channel {
   id: string;
@@ -72,6 +73,7 @@ export function SettingsPage() {
   return (
     <div className="mx-auto flex max-w-4xl flex-col gap-3">
       <h1 className="text-xl font-semibold">Settings</h1>
+      <AppearanceCard />
       <MetricsMirrorCard />
       <h2 className="mt-2 text-lg font-semibold">Notifications</h2>
       <Card title="Add channel">
@@ -287,6 +289,90 @@ function MetricsMirrorCard() {
         <span className="mono">NETINV_VM_MIRROR_URL</span> on that container. A
         destination set in the environment also cannot be switched off here.
       </p>
+    </Card>
+  );
+}
+
+// The accent colours buttons, links, the active menu item and the sign-in
+// panel for everyone on this deployment. Previewed live while picking, and
+// put back if the change is abandoned.
+function AppearanceCard() {
+  const qc = useQueryClient();
+  const current = useQuery({
+    queryKey: ["ui-appearance"],
+    queryFn: () => api<{ accent: string }>("/ui/appearance"),
+  });
+  const saved = current.data?.accent || DEFAULT_ACCENT;
+  const [draft, setDraft] = useState<string | null>(null);
+  const value = draft ?? saved;
+  const valid = /^#[0-9a-f]{6}$/i.test(value);
+  const save = useMutation({
+    mutationFn: (accent: string) =>
+      api<{ accent: string }>("/settings/appearance", {
+        method: "PUT",
+        body: JSON.stringify({ accent }),
+      }),
+    onSuccess: (a) => {
+      qc.setQueryData(["ui-appearance"], a);
+      applyAccent(a.accent);
+      setDraft(null);
+    },
+  });
+  const preview = (v: string) => {
+    setDraft(v);
+    if (/^#[0-9a-f]{6}$/i.test(v)) applyAccent(v);
+  };
+  const reset = () => {
+    setDraft(null);
+    applyAccent(saved);
+  };
+
+  return (
+    <Card title="Appearance">
+      <div className="flex flex-wrap items-center gap-2">
+        <label className="eyebrow mr-1" htmlFor="accent">
+          Accent colour
+        </label>
+        <input
+          type="color"
+          aria-label="Pick accent colour"
+          value={valid ? value : DEFAULT_ACCENT}
+          onChange={(e) => preview(e.target.value)}
+          className="h-8 w-10 cursor-pointer rounded-sm border border-slate-300 bg-transparent dark:border-slate-700"
+        />
+        <Input
+          id="accent"
+          value={value}
+          onChange={(e) => preview(e.target.value.trim())}
+          className="w-28 font-mono"
+        />
+        <Button
+          disabled={!valid || draft === null || save.isPending}
+          onClick={() => save.mutate(value === DEFAULT_ACCENT ? "" : value)}
+        >
+          Save
+        </Button>
+        {draft !== null && (
+          <Button variant="ghost" onClick={reset}>
+            Cancel
+          </Button>
+        )}
+        {saved !== DEFAULT_ACCENT && draft === null && (
+          <Button variant="ghost" onClick={() => save.mutate("")}>
+            Use default
+          </Button>
+        )}
+      </div>
+      <div className="mt-2 text-xs text-slate-500">
+        Applies to everyone using this deployment, including the sign-in page.
+        Every shade, light and dark, is derived from this one colour. The PDF
+        report has its own accent, under Platform → Reports.
+      </div>
+      {save.isError && (
+        <div className="mt-2 text-sm text-red-600 dark:text-red-400">
+          {(save.error as Error).message}
+        </div>
+      )}
     </Card>
   );
 }

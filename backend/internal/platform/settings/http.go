@@ -21,6 +21,13 @@ type Handler struct {
 	Audit   audit.Writer
 }
 
+// RegisterPublic mounts the routes the sign-in page needs before anyone has
+// authenticated. Only the UI colours are here: they are shown to everyone who
+// can reach the login screen anyway, so there is nothing to protect.
+func (h *Handler) RegisterPublic(r chi.Router) {
+	r.Get("/ui/appearance", h.getAppearance)
+}
+
 func (h *Handler) Register(r chi.Router) {
 	r.Group(func(pr chi.Router) {
 		pr.Use(httpx.RequirePerm(h.Checker, authz.PlatformRead))
@@ -33,6 +40,7 @@ func (h *Handler) Register(r chi.Router) {
 		pw.Put("/settings/metrics-mirror", h.putMirror)
 		pw.Post("/settings/metrics-mirror/test", h.testMirror)
 		pw.Put("/settings/branding", h.putBranding)
+		pw.Put("/settings/appearance", h.putAppearance)
 	})
 }
 
@@ -168,4 +176,35 @@ func (h *Handler) testMirror(w http.ResponseWriter, r *http.Request) {
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"ok": true, "detail": "accepted an import request"})
+}
+
+func (h *Handler) getAppearance(w http.ResponseWriter, r *http.Request) {
+	a, err := h.Store.GetAppearance(r.Context())
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, a)
+}
+
+func (h *Handler) putAppearance(w http.ResponseWriter, r *http.Request) {
+	var in Appearance
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		httpx.WriteError(w, r, errx.New(errx.KindInvalid, "malformed JSON body"))
+		return
+	}
+	before, _ := h.Store.GetAppearance(r.Context())
+	actor := httpx.ClaimsFrom(r.Context()).Subject
+	out, err := h.Store.PutAppearance(r.Context(), in, actor)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	h.Audit.Write(r.Context(), audit.Event{
+		ActorKind: "user", ActorID: actor, Action: "settings.appearance",
+		ResourceKind: "setting", ResourceID: AppearanceKey,
+		Before: map[string]any{"accent": before.Accent},
+		After:  map[string]any{"accent": out.Accent},
+	})
+	httpx.WriteJSON(w, http.StatusOK, out)
 }

@@ -1,5 +1,5 @@
 // Sidebar glyphs. Hand-drawn rather than pulled from an icon package: v1
-// builds its own visuals (E4), and eight paths do not justify a dependency.
+// builds its own visuals (E4), and a few dozen paths do not justify a dependency.
 // All 24x24, stroke-based, currentColor — so they inherit nav link states.
 
 const paths: Record<string, React.ReactNode> = {
@@ -72,6 +72,40 @@ const paths: Record<string, React.ReactNode> = {
       <path d="M10 8l-4 4 4 4M6 12h9" />
     </>
   ),
+  ports: (
+    <>
+      <rect x="3" y="6" width="18" height="12" rx="1" />
+      <path d="M7 10v4M11 10v4M15 10v4M19 10v0" />
+    </>
+  ),
+  reports: (
+    <>
+      <path d="M4 20V10M10 20V4M16 20v-7M22 20H2" />
+    </>
+  ),
+  traps: (
+    <>
+      <path d="M5 12a7 7 0 0 1 14 0" />
+      <path d="M8.5 12a3.5 3.5 0 0 1 7 0" />
+      <circle cx="12" cy="12" r="1" />
+      <path d="M12 13v8" />
+    </>
+  ),
+  user: (
+    <>
+      <circle cx="12" cy="8" r="4" />
+      <path d="M4 21a8 8 0 0 1 16 0" />
+    </>
+  ),
+  palette: (
+    <>
+      <path d="M12 3a9 9 0 1 0 0 18c1.1 0 1.5-.8 1.5-1.5 0-1.2-1-1.5-1-2.5S13.3 15 14.5 15H17a4 4 0 0 0 4-4c0-4.4-4-8-9-8z" />
+      <circle cx="7.5" cy="11" r="1" />
+      <circle cx="10" cy="7" r="1" />
+      <circle cx="15" cy="7.5" r="1" />
+    </>
+  ),
+  chevron: <path d="M6 9l6 6 6-6" />,
   menu: <path d="M4 7h16M4 12h16M4 17h16" />,
   close: <path d="M6 6l12 12M18 6L6 18" />,
   collapse: <path d="M14 6l-6 6 6 6" />,

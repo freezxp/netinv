@@ -30,8 +30,8 @@ async function deleteMap(request: APIRequestContext, id: string) {
 
 async function login(page: Page) {
   await page.goto("/login");
-  await page.getByPlaceholder("Username").fill("admin");
-  await page.getByPlaceholder("Password").fill(PASSWORD);
+  await page.getByLabel("Username").fill("admin");
+  await page.getByLabel("Password").fill(PASSWORD);
   await page.getByRole("button", { name: "Sign in" }).click();
   await expect(page.getByRole("link", { name: "Dashboard" })).toBeVisible();
 }
@@ -46,8 +46,8 @@ test("bad password shows a generic failure (no enumeration)", async ({
   page,
 }) => {
   await page.goto("/login");
-  await page.getByPlaceholder("Username").fill("admin");
-  await page.getByPlaceholder("Password").fill("definitely-wrong");
+  await page.getByLabel("Username").fill("admin");
+  await page.getByLabel("Password").fill("definitely-wrong");
   await page.getByRole("button", { name: "Sign in" }).click();
   await expect(page.getByText(/Sign-in failed/)).toBeVisible();
 });
@@ -326,7 +326,7 @@ test("the sidebar collapses to icons and stays collapsed", async ({ page }) => {
   await expect(inventory).toBeVisible();
   // Scoped to the sidebar: the phone topbar carries the brand too, and it is
   // in the DOM at every width, merely hidden by CSS on desktop.
-  await expect(page.locator("aside").getByText("NetInv")).toHaveCount(0);
+  await expect(page.locator("aside").getByText("NetInv", { exact: true })).toHaveCount(0);
   await inventory.click();
   await expect(page.getByRole("heading", { name: "Inventory" })).toBeVisible();
 
@@ -338,7 +338,7 @@ test("the sidebar collapses to icons and stays collapsed", async ({ page }) => {
   expect(still).toBeLessThan(wide);
 
   await page.getByRole("button", { name: "Expand sidebar" }).click();
-  await expect(page.locator("aside").getByText("NetInv")).toBeVisible();
+  await expect(page.locator("aside").getByText("NetInv", { exact: true })).toBeVisible();
 });
 
 // Alert rules are operator-authored now, so the two things that must hold are
