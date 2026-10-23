@@ -39,7 +39,9 @@ func (h *UserHandler) Register(r chi.Router) {
 		pw.Post("/users/{id}/reset-password", h.resetPassword)
 	})
 	// Any authenticated user: own password change (FR-AUTH; doc 09 §2).
-	r.Put("/auth/me/password", h.changeOwnPassword)
+	// Not from an API token: a leaked token must not be able to lock its owner
+	// out by changing their password.
+	r.With(httpx.RequireInteractive).Put("/auth/me/password", h.changeOwnPassword)
 }
 
 func meta(r *http.Request) app.ClientMeta {

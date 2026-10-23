@@ -47,16 +47,29 @@ func ClaimsFrom(ctx context.Context) *authn.Claims {
 }
 
 // RequirePerm gates a route on a permission (FR-RBAC-02: declared per route,
-// fail-closed 403).
+// fail-closed 403). An API token needs the permission in both its owner's
+// roles and its own scopes.
 func RequirePerm(checker authz.Checker, perm string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			claims := ClaimsFrom(r.Context())
-			if !checker.Has(claims.Roles, perm) {
+			if !checker.Has(claims.Roles, perm) || !claims.Allows(perm) {
 				WriteError(w, r, errx.New(errx.KindForbidden, "missing permission: %s", perm))
 				return
 			}
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// RequireInteractive refuses API tokens. For actions that act on the caller's
+// own credentials, where a leaked token must not be able to entrench itself.
+func RequireInteractive(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !ClaimsFrom(r.Context()).Interactive() {
+			WriteError(w, r, errx.New(errx.KindForbidden, "not available to API tokens; sign in"))
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }

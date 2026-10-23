@@ -192,8 +192,14 @@ func main() {
 		}
 		pollerSvc := &colapp.PollerService{Repo: &colpg.PollerRepo{Pool: pool}, Audit: auditor}
 
+		apiTokenSvc := &app.APITokenService{
+			Repo: &iampg.APITokenRepo{Pool: pool}, Checker: checker, Audit: auditor, Log: rt.Log,
+		}
+		// One Bearer header, two credentials: nv_ API tokens for other
+		// applications, short-lived JWTs for the UI (doc 20 §2).
+		verifier := authn.Chain{JWT: issuer, API: apiTokenSvc}
 		authH := &httpapi.Handler{
-			Auth: authSvc, Verifier: issuer,
+			Auth: authSvc, Verifier: verifier,
 			SecureCookies: os.Getenv("NETINV_INSECURE_COOKIES") != "1",
 		}
 		userH := &httpapi.UserHandler{Svc: userSvc, Repo: userRepo, Checker: checker}
@@ -354,8 +360,9 @@ func main() {
 		authH.Register(api)
 		pollerH.RegisterPublic(api) // token-authenticated, not JWT
 		api.Group(func(g chi.Router) {
-			g.Use(httpx.RequireAuth(issuer))
+			g.Use(httpx.RequireAuth(verifier))
 			userH.Register(g)
+			(&httpapi.APITokenHandler{Svc: apiTokenSvc}).Register(g)
 			invH.Register(g)
 			devH.Register(g)
 			pollerH.RegisterAuthed(g)

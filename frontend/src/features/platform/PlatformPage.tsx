@@ -1,5 +1,5 @@
 // Platform management (doc 30 §8): sites, poller fleet, connector catalog,
-// credentials vault, report styling.
+// credentials vault, report styling, API tokens.
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -10,6 +10,7 @@ import { useAuthStore, hasPermissionRole } from "../auth/store";
 import { DiscoveryTab } from "./DiscoveryTab";
 import { CapacityTab } from "./CapacityTab";
 import { ReportStyleTab } from "./ReportStyleTab";
+import { ApiTokensTab } from "./ApiTokensTab";
 import {
   Button,
   Card,
@@ -29,6 +30,7 @@ const tabs = [
   "Credentials",
   "Capacity",
   "Reports",
+  "API tokens",
 ] as const;
 
 export function PlatformPage() {
@@ -63,6 +65,7 @@ export function PlatformPage() {
       {tab === "Credentials" && <CredentialsTab />}
       {tab === "Capacity" && <CapacityTab />}
       {tab === "Reports" && <ReportStyleTab />}
+      {tab === "API tokens" && <ApiTokensTab />}
     </div>
   );
 }

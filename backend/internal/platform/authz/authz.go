@@ -35,6 +35,15 @@ const (
 	ExportsRun       = "exports:run"
 )
 
+// All lists every permission, so an API token's scopes can be validated
+// against the vocabulary rather than accepted as arbitrary strings.
+var All = []string{
+	DevicesRead, DevicesWrite, DevicesAdmin, MetricsRead, MapsRead, MapsWrite,
+	AlertsRead, AlertsAck, AlertsAdmin, CredentialsRead, CredentialsWrite,
+	PlatformRead, PlatformWrite, UsersRead, UsersWrite, SettingsWrite,
+	AuditRead, ExportsRun,
+}
+
 // Checker answers "may these roles do perm?". Fail-closed on unknown roles.
 type Checker interface {
 	Has(roles []string, perm string) bool

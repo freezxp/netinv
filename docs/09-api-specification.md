@@ -53,6 +53,14 @@ Below, one full worked example per resource family; sibling endpoints share shap
 
 **POST /users** → `{"username","email","display_name","roles":["readonly"],"temporary_password"}` → 201 user object (never includes hash).
 
+**API tokens** are how another application reads NetInv. `POST /users/me/tokens` takes `{"name","scopes":["devices:read","metrics:read"],"expires_at":null}` and returns the token row plus `token` — an `nv_`-prefixed value that appears in that one response and is stored only as a SHA-256 hash. The caller sends it exactly as a JWT, `Authorization: Bearer nv_…`, to every endpoint in this document.
+
+- **Scopes subtract, never add.** Each scope must be a permission the creator holds when minting, or the request is a 422; on every request the token needs the permission in *both* its scopes and its owner's current roles. Roles and account status are read live, not copied into the token, so demoting or deactivating the owner takes effect on their tokens on the next request.
+- **Minting, revoking and `PUT /auth/me/password` refuse API tokens** with 403 — a leaked token must not be able to mint successors or lock its owner out. Listing is allowed.
+- `GET /auth/me` called with a token adds `api_token: {id, scopes}`, so an integration can check what it holds.
+- `last_used_at` is updated at most once a minute; a revoked or expired token, an unknown one, and one whose owner is deactivated are indistinguishable 401s. Create and revoke are audited (`api_token.create`, `api_token.revoke`).
+- `expires_at` omitted means the token does not expire. Revocation is soft: a revoked token stays listed with `revoked_at`, so a broken integration can see why.
+
 ## 4. Sites & pollers — `/sites`, `/pollers`
 
 | Method | URI | Permission | Codes |

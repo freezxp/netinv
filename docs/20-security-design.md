@@ -17,7 +17,7 @@
 
 ## 2. AuthN (ADR-010)
 
-Local accounts v1. Argon2id (m=64MiB, t=3, p=2 — tuned at deploy), per-user salt, PHC-format storage. Access JWT: **Ed25519-signed**, 15 min TTL, claims `sub`, `preferred_username`, `roles[]`, `tenant`, `jti`, `iss=netinv`, `aud=netinv-api` — deliberately OIDC-shaped; Keycloak later = new `iss`/JWKS config in `TokenVerifier` (doc 17 §5). Refresh: opaque 256-bit, SHA-256-stored, rotation families with reuse detection → family revocation (doc 07 §4). API tokens: `nv_`-prefixed opaque, scoped subset of owner's permissions, hashed at rest. Logout/deactivation → refresh revocation + access tokens die ≤15 min (jti denylist in Redis closes the gap to ≤60 s for deactivation, FR-AUTH-07).
+Local accounts v1. Argon2id (m=64MiB, t=3, p=2 — tuned at deploy), per-user salt, PHC-format storage. Access JWT: **Ed25519-signed**, 15 min TTL, claims `sub`, `preferred_username`, `roles[]`, `tenant`, `jti`, `iss=netinv`, `aud=netinv-api` — deliberately OIDC-shaped; Keycloak later = new `iss`/JWKS config in `TokenVerifier` (doc 17 §5). Refresh: opaque 256-bit, SHA-256-stored, rotation families with reuse detection → family revocation (doc 07 §4). API tokens: `nv_`-prefixed opaque (256 bits), scoped subset of owner's permissions, SHA-256-hashed at rest (Argon2 would buy nothing against 256 random bits and costs on every request). Effective permission = token scopes ∩ owner's *current* roles, read live, so demotion or deactivation applies immediately; a token cannot mint tokens or change its owner's password (doc 09 §3). Logout/deactivation → refresh revocation + access tokens die ≤15 min (jti denylist in Redis closes the gap to ≤60 s for deactivation, FR-AUTH-07).
 
 ## 3. Session & transport
 

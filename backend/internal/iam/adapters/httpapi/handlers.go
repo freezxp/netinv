@@ -136,10 +136,16 @@ func (h *Handler) logout(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) me(w http.ResponseWriter, r *http.Request) {
 	claims := httpx.ClaimsFrom(r.Context())
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+	body := map[string]any{
 		"id": claims.Subject, "username": claims.Username,
 		"roles": claims.Roles, "tenant": claims.Tenant,
-	})
+	}
+	// An integration's first call is usually "who am I": tell it which token
+	// it is and what that token may do.
+	if !claims.Interactive() {
+		body["api_token"] = map[string]any{"id": claims.APITokenID, "scopes": claims.Scopes}
+	}
+	httpx.WriteJSON(w, http.StatusOK, body)
 }
 
 func (h *Handler) setRefreshCookie(w http.ResponseWriter, value string) {

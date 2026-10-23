@@ -19,7 +19,34 @@ type Claims struct {
 	Roles    []string `json:"roles"`
 	Tenant   string   `json:"tenant"`
 	jwt.RegisteredClaims
+
+	// APITokenID is set when the request authenticated with an API token
+	// rather than an interactive session. Never serialised: an access JWT is
+	// always interactive, so a JWT claiming otherwise must not be possible.
+	APITokenID string `json:"-"`
+	// Scopes narrows Roles for an API token. Nil means unrestricted, which is
+	// the interactive case; an API token always carries a non-nil list.
+	Scopes []string `json:"-"`
 }
+
+// Allows reports whether the token's scopes admit perm. Roles still have to
+// grant it as well — scopes only ever subtract (doc 20 §2).
+func (c *Claims) Allows(perm string) bool {
+	if c.Scopes == nil {
+		return true
+	}
+	for _, s := range c.Scopes {
+		if s == perm {
+			return true
+		}
+	}
+	return false
+}
+
+// Interactive reports whether the caller holds a session rather than an API
+// token. Some actions — changing the password, minting tokens — must not be
+// reachable from a credential that lives in another application's config.
+func (c *Claims) Interactive() bool { return c.APITokenID == "" }
 
 // TokenVerifier is the issuer-swap seam (doc 17 §5).
 type TokenVerifier interface {
