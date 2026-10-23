@@ -32,6 +32,7 @@ import (
 	"github.com/freezxp/netinv/backend/internal/dashboard"
 	eventhttp "github.com/freezxp/netinv/backend/internal/events/adapters/httpapi"
 	eventpg "github.com/freezxp/netinv/backend/internal/events/adapters/postgres"
+	"github.com/freezxp/netinv/backend/internal/flowquery"
 	"github.com/freezxp/netinv/backend/internal/iam/adapters/httpapi"
 	"github.com/freezxp/netinv/backend/internal/iam/adapters/lockout"
 	iampg "github.com/freezxp/netinv/backend/internal/iam/adapters/postgres"
@@ -406,6 +407,13 @@ func main() {
 					Checker: checker,
 				}).Register(g)
 				reportVM := reports.NewVMReader(vmURL)
+				(&flowquery.Handler{
+					Svc: &flowquery.Service{
+						Book: &flowquery.Store{Pool: pool}, Metrics: reportVM,
+						MaxRange: config.Retention(),
+					},
+					Checker: checker,
+				}).Register(g)
 				(&reports.Handler{
 					Svc: &reports.Service{
 						Interfaces: &invpg.DeviceRepo{Pool: pool},

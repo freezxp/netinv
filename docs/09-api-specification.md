@@ -234,6 +234,24 @@ being believed.
 
 Response = Prometheus API shape (`{"status":"success","data":{"resultType":"matrix","result":[…]}}`) so any PromQL-ecosystem client works. Server limits: range ≤ `NETINV_VM_RETENTION` (default 2 y, and the same value VictoriaMetrics is started with, so the ceiling cannot fall below the data actually kept), step ≥ raw resolution, series ≤ 5k per query. Over-long ranges are **rejected** with 422, not clamped — a silently shortened window would make a chart lie about the period it covers. `GET /metrics/limits` reports the ceiling as `max_range_s`, so a client can offer ranges that will actually resolve instead of guessing.
 
+### 7.1 Flow — `/flow` (doc 34)
+
+| Method | URI | Permission | Codes |
+|---|---|---|---|
+| GET | `/flow/top?dimension=&from=&to=&device=&site=&exporter=&if_index=&limit=` | `metrics:read` | 200, 404 (device/site resolves to no address), 422 |
+| GET | `/flow/series?…same…&step=` | `metrics:read` | 200, 404, 422 |
+| GET | `/flow/exporters?from=&to=` | `metrics:read` | 200, 422 |
+| GET | `/devices/{id}/flow/top` · `/devices/{id}/flow/series` | `metrics:read` | as above, device from the path |
+
+These read the same `netinv_flow_*` series the metrics proxy exposes, and exist because reading those correctly takes knowledge a client should not need: the series are **per-interval, not cumulative**, so `rate()` under-reports them, and an exporter is a source address that only the inventory can map to a device (management address plus claimed `flow_exporters`, doc 34 §3.1). Both are done server-side here.
+
+- `dimension` is one of `talker` (default), `conversation`, `application`, `protocol`, `dscp`, `as` (doc 34 §3). `from`/`to` are RFC 3339 or unix seconds; the default window is the last hour, and longer than `NETINV_VM_RETENTION` is a 422 as on the metrics proxy.
+- `device` and `site` narrow by attribution; `exporter` (repeatable or comma-separated) names raw source addresses, which is the only way to ask about flow nobody has claimed. Given with a device it intersects rather than widens. `if_index` needs a device or exporter — an ifIndex names a different port on every agent.
+- **`/flow/top`** ranks values by bytes over the whole window (not the latest interval, which reorders on jitter): `{dimension, from, to, exporters, total_bytes, total_packets, data:[{value, bytes, packets, bits_per_second, share, sampled, exporters:[{exporter, device_id, device_name}]}]}`. `limit` 1–100, default 25. `bits_per_second` is the window average. `share` is of `total_bytes`, which is everything the collector *kept* in that dimension — talker totals count both ends of every flow, so a host that is one end of everything approaches 50%, not 100% (doc 34 §3).
+- **`/flow/series`** returns the top `limit` values (1–50, default 10) as bits/s at `step` (seconds or a duration; rounded up to whole one-minute intervals and widened to keep ≤1440 points), plus `total` across every value so a client can draw "other" as the difference. `step_s` in the response is the step actually used.
+- **`/flow/exporters`** lists every source that sent flow in the window with its byte volume and attribution; a row with no `device_id` is flow arriving from an address no device has claimed.
+- Every figure is a lower bound for its value: an interval in which a value fell outside the collector's per-interface top N was never written (ADR-020). SNMP counters remain the authority for volume.
+
 ## 8. Dashboard — `/dashboard` (cached aggregates, doc 05 §7)
 
 | Method | URI | Permission |

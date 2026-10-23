@@ -256,7 +256,8 @@ The three dimensions:
   gateways — UniFi included — never fill it, so on such a fleet this dimension
   is simply empty rather than showing everything as one network.
 
-The protocol, DSCP and AS dimensions were added on 2026-10-23. They are aggregates like the rest; no further v9 field is stored,
+The protocol, DSCP and AS dimensions were added (2026-10-23) for the flow API
+(doc 09 §7.1). They are aggregates like the rest; no further v9 field is stored,
 and a field the collector does not read is skipped by its declared length.
 
 ### 3.1 Device attribution
@@ -694,10 +695,11 @@ finished:
   would remove the 10-20 minute gap after a restart, but it means writing
   attacker-influenced state to disk — see ADR-022 before deciding that is worth
   it.
-- **No API endpoint fronts these series.** The UI reads them through the
-  existing metrics proxy like any other metric, which is why no new endpoint
-  was needed; there is no server-side flow resource to version or document in
-  doc 09.
+- **The UI does not use the flow API yet.** `/flow/top`, `/flow/series` and
+  `/flow/exporters` (doc 09 §7.1) exist for other applications, authenticated
+  with API tokens; the Flow tab and dashboard panel still read the series
+  through the metrics proxy, and do not offer the protocol, DSCP or AS
+  dimensions.
 - **Only one real exporter, on one platform, in one format.** A UniFi gateway
   exporting v5 is now validated end to end (§4.2). v9, IPFIX, IPv6 and
   options-record sampling have been exercised only against a generated source,
