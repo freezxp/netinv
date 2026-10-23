@@ -50,11 +50,14 @@ const (
 	fInPkts     = 2
 	fProtocol   = 4
 	fTOS        = 5
+	fTCPFlags   = 6
 	fSrcPort    = 7
 	fSrcAddrV4  = 8
+	fSrcMask    = 9
 	fInputSNMP  = 10
 	fDstPort    = 11
 	fDstAddrV4  = 12
+	fDstMask    = 13
 	fOutputSNMP = 14
 	fSrcAS      = 16
 	fDstAS      = 17
@@ -62,6 +65,8 @@ const (
 	fOutPkts    = 24
 	fSrcAddrV6  = 27
 	fDstAddrV6  = 28
+	fSrcMaskV6  = 29
+	fDstMaskV6  = 30
 	// Sampling reaches us two ways: inline on the flow record (rare), or in an
 	// options data record that describes the sampler (usual).
 	fSamplingInterval = 34
@@ -470,6 +475,16 @@ func readFlowData(body []byte, t *template) []Record {
 				if len(val) > 0 {
 					r.TOS = val[len(val)-1]
 				}
+			case fTCPFlags:
+				// IPFIX tcpControlBits is 16 bits wide; the classic flags are
+				// its low byte either way.
+				if len(val) > 0 {
+					r.TCPFlags = val[len(val)-1]
+				}
+			case fSrcMask, fSrcMaskV6:
+				r.SrcMask = narrow8(beUint(val))
+			case fDstMask, fDstMaskV6:
+				r.DstMask = narrow8(beUint(val))
 			case fSrcAS:
 				r.SrcAS = narrow32(beUint(val))
 			case fDstAS:
@@ -529,6 +544,13 @@ func readOptionsData(body []byte, t *template, from netip.Addr, sourceID uint32,
 // that does not fit is not a large port, it is a misdescribed field, so it
 // becomes zero: unknown, which the rest of the pipeline already handles (an
 // ifIndex of 0 is unattributable and the flow is dropped).
+func narrow8(v uint64) uint8 {
+	if v > 0xFF {
+		return 0
+	}
+	return uint8(v)
+}
+
 func narrow16(v uint64) uint16 {
 	if v > 0xFFFF {
 		return 0

@@ -38,10 +38,13 @@ func v5Packet(t *testing.T, samplingMode, samplingInterval uint16, recs ...Recor
 		binary.BigEndian.PutUint32(o[20:24], uint32(r.Bytes))
 		binary.BigEndian.PutUint16(o[32:34], r.SrcPort)
 		binary.BigEndian.PutUint16(o[34:36], r.DstPort)
+		o[37] = r.TCPFlags
 		o[38] = r.Protocol
 		o[39] = r.TOS
 		binary.BigEndian.PutUint16(o[40:42], uint16(r.SrcAS))
 		binary.BigEndian.PutUint16(o[42:44], uint16(r.DstAS))
+		o[44] = r.SrcMask
+		o[45] = r.DstMask
 	}
 	return b
 }
@@ -989,6 +992,88 @@ func TestDSCPNames(t *testing.T) {
 	} {
 		if got := dscpName(d); got != want {
 			t.Errorf("dscpName(%d) = %q, want %q", d, got, want)
+		}
+	}
+}
+
+func TestDecodeNetFlowV5ReadsMasksAndTCPFlags(t *testing.T) {
+	pkt := v5Packet(t, 0, 0, Record{SrcAddr: addr("10.0.0.1"), DstAddr: addr("10.0.0.2"),
+		InputIf: 1, Bytes: 100, Packets: 1, Protocol: 6, TCPFlags: 0x12, SrcMask: 16, DstMask: 28})
+	p, err := DecodeNetFlowV5(pkt, addr("192.0.2.1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := p.Records[0]
+	if r.TCPFlags != 0x12 || r.SrcMask != 16 || r.DstMask != 28 {
+		t.Errorf("flags=%#x src_mask=%d dst_mask=%d", r.TCPFlags, r.SrcMask, r.DstMask)
+	}
+}
+
+func TestAggregateSubnetAndTCPFlags(t *testing.T) {
+	a := NewAggregator()
+	a.Add(&Packet{ExporterIP: addr("192.0.2.1"), Records: []Record{
+		// Masks reported: the exporter's route lengths are used as given.
+		{SrcAddr: addr("10.1.2.3"), DstAddr: addr("8.8.8.8"), SrcMask: 16, DstMask: 24,
+			Protocol: 6, TCPFlags: 0x02, Bytes: 300, Packets: 3, InputIf: 2},
+		// No masks, both ends in one fallback /24: counted once, not twice.
+		{SrcAddr: addr("192.168.1.10"), DstAddr: addr("192.168.1.20"),
+			Protocol: 6, TCPFlags: 0x1b, Bytes: 100, Packets: 1, InputIf: 2},
+		// UDP has no flags and must not appear as "none".
+		{SrcAddr: addr("2001:db8:1:2::1"), DstAddr: addr("2001:db8:1:2::2"),
+			Protocol: 17, Bytes: 50, Packets: 1, InputIf: 2},
+	}})
+	got := map[Dimension]map[string]uint64{}
+	for _, b := range a.Drain() {
+		if got[b.Key.Dimension] == nil {
+			got[b.Key.Dimension] = map[string]uint64{}
+		}
+		got[b.Key.Dimension][b.Key.Value] = b.Bytes
+	}
+	want := map[Dimension]map[string]uint64{
+		DimSubnet: {"10.1.0.0/16": 300, "8.8.8.0/24": 300, "192.168.1.0/24": 100,
+			"2001:db8:1::/48": 50},
+		DimTCPFlags: {"SYN": 300, "SYN,ACK,PSH,FIN": 100},
+	}
+	for d, w := range want {
+		if len(got[d]) != len(w) {
+			t.Errorf("%s = %v, want %v", d, got[d], w)
+			continue
+		}
+		for v, n := range w {
+			if got[d][v] != n {
+				t.Errorf("%s[%s] = %d, want %d", d, v, got[d][v], n)
+			}
+		}
+	}
+}
+
+func TestSubnetFallsBackOnUnusableMask(t *testing.T) {
+	for _, c := range []struct {
+		addr string
+		mask uint8
+		want string
+	}{
+		{"10.1.2.3", 0, "10.1.2.0/24"},
+		{"10.1.2.3", 8, "10.0.0.0/8"},
+		{"10.1.2.3", 32, "10.1.2.3/32"},
+		// Longer than the address: a misdescribed field, not a route.
+		{"10.1.2.3", 33, "10.1.2.0/24"},
+		{"2001:db8:aa:bb::1", 0, "2001:db8:aa::/48"},
+		{"2001:db8:aa:bb::1", 64, "2001:db8:aa:bb::/64"},
+	} {
+		if got := subnet(addr(c.addr), c.mask); got != c.want {
+			t.Errorf("subnet(%s, %d) = %s, want %s", c.addr, c.mask, got, c.want)
+		}
+	}
+}
+
+func TestTCPFlagsNames(t *testing.T) {
+	for f, want := range map[uint8]string{
+		0: "none", 0x02: "SYN", 0x12: "SYN,ACK", 0x04: "RST", 0x14: "ACK,RST",
+		0x1b: "SYN,ACK,PSH,FIN", 0xff: "SYN,ACK,PSH,FIN,RST,URG,ECE,CWR",
+	} {
+		if got := tcpFlagsName(f); got != want {
+			t.Errorf("tcpFlagsName(%#x) = %q, want %q", f, got, want)
 		}
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"net/netip"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -31,10 +32,20 @@ const (
 	// Only written when the exporter fills it; AS 0 means "not known" and is
 	// skipped rather than reported as the busiest network on the Internet.
 	DimAS Dimension = "as"
+	// DimSubnet is the network each end sits in, counted at both ends as
+	// talkers are and once when both ends share it. The prefix is the
+	// exporter's own route length where it reports one, otherwise a fixed
+	// /24 or /48 — see subnet.
+	DimSubnet Dimension = "subnet"
+	// DimTCPFlags is the set of TCP flags a flow carried, OR'd across its
+	// packets. "SYN" alone is a connection attempt that never completed — a
+	// scan, or a service that is not answering — which no counter shows.
+	// At most 256 values by construction; TCP flows only.
+	DimTCPFlags Dimension = "tcp_flags"
 )
 
 // Dimensions lists every dimension in the order an API presents them.
-var Dimensions = []Dimension{DimTalker, DimConversation, DimApplication, DimProtocol, DimDSCP, DimAS}
+var Dimensions = []Dimension{DimTalker, DimConversation, DimApplication, DimProtocol, DimDSCP, DimAS, DimSubnet, DimTCPFlags}
 
 // Key identifies one aggregated bucket. Everything in it becomes a metric
 // label, so every field here must be bounded — which is exactly why the
@@ -84,10 +95,11 @@ const (
 	//
 	// Series cost is N x 3 dimensions x 2 metrics per interface per exporter
 	// for the open-ended dimensions (talker, conversation, application): at
-	// 25 that is 150 series per interface. The AS dimension adds up to 50 more
-	// where the exporter fills it; protocol and DSCP add a handful, because a
-	// network carries few of either. A thousand flow-exporting devices with
-	// ten interfaces each comes to 1.5-2M active series, which is past
+	// 25 that is 150 series per interface. The AS and subnet dimensions add
+	// up to 50 more each (subnet always, AS where the exporter fills it);
+	// protocol, DSCP and TCP flags add a handful, because a network carries
+	// few of any of them. A thousand flow-exporting devices with
+	// ten interfaces each comes to 2-2.7M active series, which is past
 	// NFR-03's ~1M single-node target, so a fleet that size must lower it —
 	// hence NETINV_FLOW_TOPN rather than a constant.
 	//
@@ -140,6 +152,14 @@ func (a *Aggregator) Add(p *Packet) {
 		}
 		if r.DstAS != 0 && r.DstAS != r.SrcAS {
 			a.add(Key{exporter, ifIndex, DimAS, "AS" + strconv.FormatUint(uint64(r.DstAS), 10)}, r)
+		}
+		src, dst := subnet(r.SrcAddr, r.SrcMask), subnet(r.DstAddr, r.DstMask)
+		a.add(Key{exporter, ifIndex, DimSubnet, src}, r)
+		if dst != src {
+			a.add(Key{exporter, ifIndex, DimSubnet, dst}, r)
+		}
+		if r.Protocol == 6 {
+			a.add(Key{exporter, ifIndex, DimTCPFlags, tcpFlagsName(r.TCPFlags)}, r)
 		}
 	}
 }
@@ -324,6 +344,61 @@ func dscpName(d uint8) string {
 	default:
 		return "dscp/" + strconv.Itoa(int(d))
 	}
+}
+
+// Fallback prefix lengths for an end whose mask the exporter did not report:
+// the common size of a LAN segment and of a site allocation respectively.
+const (
+	defaultSubnetV4 = 24
+	defaultSubnetV6 = 48
+)
+
+// subnet renders the network an address sits in, using the exporter's route
+// length when it gave a usable one. Zero is "not reported" and is replaced
+// rather than believed: a /0 would put the whole Internet in one row. The
+// length is part of the value, so a fallback /24 is never mistaken for a
+// route the exporter actually holds.
+func subnet(a netip.Addr, mask uint8) string {
+	bits := int(mask)
+	if bits == 0 || bits > a.BitLen() {
+		bits = defaultSubnetV4
+		if a.Is6() {
+			bits = defaultSubnetV6
+		}
+	}
+	p, err := a.Prefix(bits)
+	if err != nil {
+		return a.String()
+	}
+	return p.String()
+}
+
+// tcpFlagNames is in the order an operator reads a connection: how it opened,
+// how it carried data, how it ended, then the rarer bits.
+var tcpFlagNames = []struct {
+	bit  uint8
+	name string
+}{
+	{0x02, "SYN"}, {0x10, "ACK"}, {0x08, "PSH"}, {0x01, "FIN"}, {0x04, "RST"},
+	{0x20, "URG"}, {0x40, "ECE"}, {0x80, "CWR"},
+}
+
+// tcpFlagsName renders a flag set as "SYN,ACK,FIN"; a flow with none reads
+// "none", which some exporters send when they do not track flags at all.
+func tcpFlagsName(f uint8) string {
+	if f == 0 {
+		return "none"
+	}
+	var b strings.Builder
+	for _, n := range tcpFlagNames {
+		if f&n.bit != 0 {
+			if b.Len() > 0 {
+				b.WriteByte(',')
+			}
+			b.WriteString(n.name)
+		}
+	}
+	return b.String()
 }
 
 // Interval is the aggregation window. It matches the shortest poll cadence so

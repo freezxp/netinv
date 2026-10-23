@@ -534,3 +534,37 @@ func TestV9InlineSamplingIndependentOfFieldOrder(t *testing.T) {
 		t.Errorf("tos=%d src_as=%d dst_as=%d", r.TOS, r.SrcAS, r.DstAS)
 	}
 }
+
+// IPFIX tcpControlBits is two bytes wide and the IPv6 mask fields are their
+// own IDs; both must land in the same record fields as the v4/v9 forms.
+func TestV9ReadsMasksAndTCPFlags(t *testing.T) {
+	fields := []field{
+		{fSrcAddrV6, 16}, {fDstAddrV6, 16}, {fInputSNMP, 2},
+		{fInBytes, 4}, {fInPkts, 4}, {fProtocol, 1},
+		{fTCPFlags, 2}, {fSrcMaskV6, 1}, {fDstMaskV6, 1},
+	}
+	var rec []byte
+	rec = append(rec, netip.MustParseAddr("2001:db8::1").AsSlice()...)
+	rec = append(rec, netip.MustParseAddr("2001:db8::2").AsSlice()...)
+	rec = append(rec, be(3, 2)...)
+	rec = append(rec, be(1500, 4)...)
+	rec = append(rec, be(2, 4)...)
+	rec = append(rec, 6)
+	rec = append(rec, be(0x0112, 2)...) // NS bit above the classic byte
+	rec = append(rec, 56, 64)
+
+	pkt := v9Header(2, 1)
+	pkt = append(pkt, templateFlowSet(300, fields)...)
+	pkt = append(pkt, dataFlowSet(300, rec)...)
+	p, _, err := DecodeNetFlowV9(pkt, netip.MustParseAddr("192.0.2.1"), NewTemplateCache(), time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Records) != 1 {
+		t.Fatalf("records = %d, want 1", len(p.Records))
+	}
+	r := p.Records[0]
+	if r.TCPFlags != 0x12 || r.SrcMask != 56 || r.DstMask != 64 {
+		t.Errorf("flags=%#x src_mask=%d dst_mask=%d", r.TCPFlags, r.SrcMask, r.DstMask)
+	}
+}

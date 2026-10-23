@@ -28,6 +28,14 @@ type Record struct {
 	// exporter did not know or did not say — most edge gateways never fill it.
 	SrcAS uint32
 	DstAS uint32
+	// SrcMask and DstMask are the prefix lengths of the exporter's routes to
+	// each end. Zero means not reported — or a default route, which says as
+	// little — and the subnet dimension then falls back to a fixed length.
+	SrcMask uint8
+	DstMask uint8
+	// TCPFlags is the OR of every TCP flag seen across the flow's packets;
+	// meaningless unless Protocol is 6.
+	TCPFlags uint8
 	// Bytes and Packets are already scaled by the sampling rate where the
 	// exporter reported one, so callers do not have to remember to.
 	Bytes   uint64
@@ -143,10 +151,13 @@ func DecodeNetFlowV5(b []byte, from netip.Addr) (*Packet, error) {
 			Bytes:    uint64(binary.BigEndian.Uint32(r[20:24])) * scale,
 			SrcPort:  binary.BigEndian.Uint16(r[32:34]),
 			DstPort:  binary.BigEndian.Uint16(r[34:36]),
+			TCPFlags: r[37],
 			Protocol: r[38],
 			TOS:      r[39],
 			SrcAS:    uint32(binary.BigEndian.Uint16(r[40:42])),
 			DstAS:    uint32(binary.BigEndian.Uint16(r[42:44])),
+			SrcMask:  r[44],
+			DstMask:  r[45],
 			Sampled:  sampled,
 		})
 	}

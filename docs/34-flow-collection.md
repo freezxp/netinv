@@ -53,8 +53,8 @@ VictoriaMetrics problem.
 
 ADR-020 resolves this by **aggregating at ingest**. The collector reduces every
 interval to top-N talkers, conversations and applications per interface — plus
-the protocol, DSCP class and AS dimensions of §3, which are bounded by what they
-are rather than by N — and writes only those. The cardinality is then roughly
+the protocol, DSCP, AS, subnet and TCP-flag dimensions of §3, several of which
+are bounded by what they are rather than by N — and writes only those. The cardinality is then roughly
 `N × interfaces × 3`, which the existing stack handles without a new datastore.
 
 **N is `NETINV_FLOW_TOPN`, default 25.** It began at 10, chosen against a
@@ -65,10 +65,11 @@ than the link.
 
 The right value depends on fleet size, which is why it is a setting rather than
 a constant. Cost is `N × 3 dimensions × 2 metrics` series per interface per
-exporter for the open-ended dimensions — 150 at the default. `as` adds up to
-another 50 where the exporter fills it; `protocol` and `dscp` add a handful,
-because a network carries few of either. A thousand flow-exporting devices with
-ten interfaces each would come to 1.5–2M active series, past NFR-03's ~1M
+exporter for the open-ended dimensions — 150 at the default. `subnet` adds up to
+another 50, and `as` the same where the exporter fills it; `protocol`, `dscp`
+and `tcp_flags` add a handful, because a network carries few of any of them. A
+thousand flow-exporting devices with ten interfaces each would come to 2–2.7M
+active series, past NFR-03's ~1M
 single-node target, so a fleet that size must lower it.
 
 The instantaneous count is not the whole cost, and the difference is large.
@@ -213,7 +214,7 @@ Labels:
 |---|---|
 | `exporter` | Source address of the datagram |
 | `if_index` | SNMP ifIndex the flow was attributed to |
-| `dimension` | `talker`, `conversation`, `application`, `protocol`, `dscp` or `as` |
+| `dimension` | `talker`, `conversation`, `application`, `protocol`, `dscp`, `as`, `subnet` or `tcp_flags` |
 | `value` | The talker/conversation/application itself |
 | `sampled` | `"true"` only when the export declared sampling |
 
@@ -221,7 +222,7 @@ Labels:
 NetFlow v5 carries no exporter identity, and a field that a sender controls
 would be a poor key for attributing traffic to a device in any case.
 
-The three dimensions:
+The dimensions:
 
 - **`talker`** — one host, counted in whichever direction it appeared. Both
   ends of every flow are counted, so a busy server appears once with its total.
@@ -255,9 +256,27 @@ The three dimensions:
   **AS 0 is skipped**: it means the exporter did not know, and most edge
   gateways — UniFi included — never fill it, so on such a fleet this dimension
   is simply empty rather than showing everything as one network.
+- **`subnet`** — the network each end sits in, as a prefix (`10.1.0.0/16`),
+  counted at both ends but once when both share it. The length is the
+  exporter's route to that end where it reports one (v5's mask bytes, IE 9/13,
+  IPv6 IE 29/30), otherwise **a fixed /24 or /48**. A mask of 0 is replaced
+  rather than believed: it means "not reported" or a default route, and either
+  way would put the whole Internet in one row. The length is part of the value,
+  so a fallback /24 cannot be mistaken for a route the exporter holds — but a
+  fleet mixing exporters that report masks with ones that do not will show the
+  same address space at two granularities.
+- **`tcp_flags`** — the flags a TCP flow carried, OR'd across its packets,
+  rendered `SYN,ACK,PSH,FIN` (opening, data, closing, then the rare bits);
+  `none` where the exporter sent zero. Non-TCP flows are not counted. **`SYN`
+  alone** is the row to watch: the initiator never acknowledged anything, so the
+  connection never completed — a scan, or a service not answering. `RST` marks
+  refused or torn-down connections. Each direction is its own flow record, so
+  the reply side of a failed attempt, if any, appears separately. Read from v5's
+  flags byte and IE 6 (IPFIX's 16-bit `tcpControlBits` contributes its low
+  byte). At most 256 values by construction.
 
 The protocol, DSCP and AS dimensions were added (2026-10-23) for the flow API
-(doc 09 §7.1). They are aggregates like the rest; no further v9 field is stored,
+(doc 09 §7.1), and subnet and TCP flags the same day. They are aggregates like the rest; no further v9 field is stored,
 and a field the collector does not read is skipped by its declared length.
 
 ### 3.1 Device attribution
