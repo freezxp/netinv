@@ -21,7 +21,20 @@ const (
 	// DimApplication is the well-known port and protocol, which is the
 	// closest thing to "what application" available without deep inspection.
 	DimApplication Dimension = "application"
+	// DimProtocol is the IP protocol — tcp, udp, gre, esp. A handful of
+	// values on any real network, so it costs almost nothing to keep.
+	DimProtocol Dimension = "protocol"
+	// DimDSCP is the traffic class the packets were marked with, named by
+	// per-hop behaviour (ef, af41, cs6). At most 64 values by construction.
+	DimDSCP Dimension = "dscp"
+	// DimAS is an autonomous system, counted at both ends as talkers are.
+	// Only written when the exporter fills it; AS 0 means "not known" and is
+	// skipped rather than reported as the busiest network on the Internet.
+	DimAS Dimension = "as"
 )
+
+// Dimensions lists every dimension in the order an API presents them.
+var Dimensions = []Dimension{DimTalker, DimConversation, DimApplication, DimProtocol, DimDSCP, DimAS}
 
 // Key identifies one aggregated bucket. Everything in it becomes a metric
 // label, so every field here must be bounded — which is exactly why the
@@ -69,11 +82,14 @@ const (
 	// link. 25 gives useful depth while staying inside the cardinality budget
 	// for a large fleet — see the arithmetic below.
 	//
-	// Series cost is N x 3 dimensions x 2 metrics per interface per exporter:
-	// at 25 that is 150 series per interface. A thousand flow-exporting
-	// devices with ten interfaces each comes to 1.5M active series, which is
-	// past NFR-03's ~1M single-node target, so a fleet that size must lower
-	// it — hence NETINV_FLOW_TOPN rather than a constant.
+	// Series cost is N x 3 dimensions x 2 metrics per interface per exporter
+	// for the open-ended dimensions (talker, conversation, application): at
+	// 25 that is 150 series per interface. The AS dimension adds up to 50 more
+	// where the exporter fills it; protocol and DSCP add a handful, because a
+	// network carries few of either. A thousand flow-exporting devices with
+	// ten interfaces each comes to 1.5-2M active series, which is past
+	// NFR-03's ~1M single-node target, so a fleet that size must lower it —
+	// hence NETINV_FLOW_TOPN rather than a constant.
 	//
 	// The instantaneous count is not the whole cost. Every distinct talker
 	// creates a series, and top-N membership churns, so the number of series
@@ -117,6 +133,14 @@ func (a *Aggregator) Add(p *Packet) {
 		a.add(Key{exporter, ifIndex, DimTalker, r.DstAddr.String()}, r)
 		a.add(Key{exporter, ifIndex, DimConversation, conversation(r.SrcAddr, r.DstAddr)}, r)
 		a.add(Key{exporter, ifIndex, DimApplication, application(r)}, r)
+		a.add(Key{exporter, ifIndex, DimProtocol, protoName(r.Protocol)}, r)
+		a.add(Key{exporter, ifIndex, DimDSCP, dscpName(r.TOS >> 2)}, r)
+		if r.SrcAS != 0 {
+			a.add(Key{exporter, ifIndex, DimAS, "AS" + strconv.FormatUint(uint64(r.SrcAS), 10)}, r)
+		}
+		if r.DstAS != 0 && r.DstAS != r.SrcAS {
+			a.add(Key{exporter, ifIndex, DimAS, "AS" + strconv.FormatUint(uint64(r.DstAS), 10)}, r)
+		}
 	}
 }
 
@@ -279,6 +303,26 @@ func protoName(p uint8) string {
 		return "icmp6"
 	default:
 		return "ip/" + strconv.Itoa(int(p))
+	}
+}
+
+// dscpName names a DSCP code point by its per-hop behaviour (RFC 2474, 2597,
+// 3246, 5865), which is how QoS policies are written. Unassigned values keep
+// their number.
+func dscpName(d uint8) string {
+	switch {
+	case d == 0:
+		return "be"
+	case d == 46:
+		return "ef"
+	case d == 44:
+		return "voice-admit"
+	case d&7 == 0:
+		return "cs" + strconv.Itoa(int(d>>3))
+	case d>>3 >= 1 && d>>3 <= 4 && d&1 == 0 && (d>>1)&3 >= 1:
+		return "af" + strconv.Itoa(int(d>>3)) + strconv.Itoa(int((d>>1)&3))
+	default:
+		return "dscp/" + strconv.Itoa(int(d))
 	}
 }
 

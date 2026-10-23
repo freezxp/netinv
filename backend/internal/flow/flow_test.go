@@ -39,6 +39,9 @@ func v5Packet(t *testing.T, samplingMode, samplingInterval uint16, recs ...Recor
 		binary.BigEndian.PutUint16(o[32:34], r.SrcPort)
 		binary.BigEndian.PutUint16(o[34:36], r.DstPort)
 		o[38] = r.Protocol
+		o[39] = r.TOS
+		binary.BigEndian.PutUint16(o[40:42], uint16(r.SrcAS))
+		binary.BigEndian.PutUint16(o[42:44], uint16(r.DstAS))
 	}
 	return b
 }
@@ -926,5 +929,66 @@ func TestDefaultTopN(t *testing.T) {
 		t.Errorf("DefaultTopN = %d; changing it changes every deployment's "+
 			"cardinality, so update the arithmetic in aggregate.go and doc 34 too",
 			DefaultTopN)
+	}
+}
+
+// The v5 fixed layout carries ToS and both AS numbers; they must reach the
+// record, or the dscp and as dimensions would be silently empty for every v5
+// exporter.
+func TestDecodeNetFlowV5ReadsTOSAndAS(t *testing.T) {
+	pkt := v5Packet(t, 0, 0, Record{SrcAddr: addr("10.0.0.1"), DstAddr: addr("10.0.0.2"),
+		InputIf: 1, Bytes: 100, Packets: 1, Protocol: 17, TOS: 46 << 2, SrcAS: 64512, DstAS: 15169})
+	p, err := DecodeNetFlowV5(pkt, addr("192.0.2.1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := p.Records[0]
+	if r.TOS != 46<<2 || r.SrcAS != 64512 || r.DstAS != 15169 {
+		t.Errorf("tos=%d src_as=%d dst_as=%d", r.TOS, r.SrcAS, r.DstAS)
+	}
+}
+
+func TestAggregateProtocolDSCPAndAS(t *testing.T) {
+	a := NewAggregator()
+	a.Add(&Packet{ExporterIP: addr("192.0.2.1"), Records: []Record{
+		{SrcAddr: addr("10.0.0.1"), DstAddr: addr("8.8.8.8"), Protocol: 17, TOS: 46 << 2,
+			SrcAS: 64512, DstAS: 15169, Bytes: 300, Packets: 3, InputIf: 2},
+		{SrcAddr: addr("10.0.0.1"), DstAddr: addr("10.0.0.2"), Protocol: 6, TOS: 0,
+			Bytes: 100, Packets: 1, InputIf: 2},
+	}})
+	got := map[Dimension]map[string]uint64{}
+	for _, b := range a.Drain() {
+		if got[b.Key.Dimension] == nil {
+			got[b.Key.Dimension] = map[string]uint64{}
+		}
+		got[b.Key.Dimension][b.Key.Value] = b.Bytes
+	}
+	want := map[Dimension]map[string]uint64{
+		DimProtocol: {"udp": 300, "tcp": 100},
+		DimDSCP:     {"ef": 300, "be": 100},
+		// The second flow carries no AS and must not appear as "AS0".
+		DimAS: {"AS64512": 300, "AS15169": 300},
+	}
+	for d, w := range want {
+		if len(got[d]) != len(w) {
+			t.Errorf("%s = %v, want %v", d, got[d], w)
+			continue
+		}
+		for v, n := range w {
+			if got[d][v] != n {
+				t.Errorf("%s[%s] = %d, want %d", d, v, got[d][v], n)
+			}
+		}
+	}
+}
+
+func TestDSCPNames(t *testing.T) {
+	for d, want := range map[uint8]string{
+		0: "be", 8: "cs1", 10: "af11", 18: "af21", 26: "af31", 34: "af41", 38: "af43",
+		46: "ef", 44: "voice-admit", 48: "cs6", 56: "cs7", 1: "dscp/1", 42: "dscp/42",
+	} {
+		if got := dscpName(d); got != want {
+			t.Errorf("dscpName(%d) = %q, want %q", d, got, want)
+		}
 	}
 }

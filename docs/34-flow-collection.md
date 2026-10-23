@@ -52,9 +52,10 @@ entire device fleet produces in a year. That is a columnar-store problem, not a
 VictoriaMetrics problem.
 
 ADR-020 resolves this by **aggregating at ingest**. The collector reduces every
-interval to top-N talkers, conversations and applications per interface, and
-writes only those. The cardinality is then `N × interfaces × 3`, which the
-existing stack handles without a new datastore.
+interval to top-N talkers, conversations and applications per interface — plus
+the protocol, DSCP class and AS dimensions of §3, which are bounded by what they
+are rather than by N — and writes only those. The cardinality is then roughly
+`N × interfaces × 3`, which the existing stack handles without a new datastore.
 
 **N is `NETINV_FLOW_TOPN`, default 25.** It began at 10, chosen against a
 generated exporter, and real hardware showed that to be too tight: on a pilot
@@ -64,9 +65,11 @@ than the link.
 
 The right value depends on fleet size, which is why it is a setting rather than
 a constant. Cost is `N × 3 dimensions × 2 metrics` series per interface per
-exporter — 150 at the default. A thousand flow-exporting devices with ten
-interfaces each would come to 1.5M active series, past NFR-03's ~1M single-node
-target, so a fleet that size must lower it.
+exporter for the open-ended dimensions — 150 at the default. `as` adds up to
+another 50 where the exporter fills it; `protocol` and `dscp` add a handful,
+because a network carries few of either. A thousand flow-exporting devices with
+ten interfaces each would come to 1.5–2M active series, past NFR-03's ~1M
+single-node target, so a fleet that size must lower it.
 
 The instantaneous count is not the whole cost, and the difference is large.
 Every distinct talker creates a series and top-N membership churns, so series
@@ -210,7 +213,7 @@ Labels:
 |---|---|
 | `exporter` | Source address of the datagram |
 | `if_index` | SNMP ifIndex the flow was attributed to |
-| `dimension` | `talker`, `conversation` or `application` |
+| `dimension` | `talker`, `conversation`, `application`, `protocol`, `dscp` or `as` |
 | `value` | The talker/conversation/application itself |
 | `sampled` | `"true"` only when the export declared sampling |
 
@@ -241,6 +244,20 @@ The three dimensions:
   is exactly the cardinality blow-up the heuristic exists to prevent. The
   lower-port rule only decides between two unrecognised ports, where it is
   still the better guess.
+- **`protocol`** — the IP protocol by name (`tcp`, `udp`, `gre`, `esp`,
+  `icmp6`), otherwise `ip/N`. Answers "how much of this is tunnel overhead".
+- **`dscp`** — the top six bits of the ToS byte, named by per-hop behaviour:
+  `be`, `ef`, `af11`–`af43`, `cs1`–`cs7`, `voice-admit`, otherwise `dscp/N`.
+  Whether traffic is *marked* the way the QoS policy expects is a question
+  counters cannot answer at all. Read from v5's fixed ToS field and IE 5.
+- **`as`** — `AS<n>`, counted at both ends as talkers are, but once when both
+  ends share an AS. Read from v5's 16-bit fields and IE 16/17 (16- or 32-bit).
+  **AS 0 is skipped**: it means the exporter did not know, and most edge
+  gateways — UniFi included — never fill it, so on such a fleet this dimension
+  is simply empty rather than showing everything as one network.
+
+The protocol, DSCP and AS dimensions were added on 2026-10-23. They are aggregates like the rest; no further v9 field is stored,
+and a field the collector does not read is skipped by its declared length.
 
 ### 3.1 Device attribution
 

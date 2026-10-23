@@ -494,3 +494,43 @@ func TestV9OversizedFieldsBecomeUnknownRatherThanTruncated(t *testing.T) {
 		t.Errorf("an unattributable flow produced %d buckets", len(got))
 	}
 }
+
+// Inline sampling scales the record however the template orders its fields.
+// It used to be applied on reaching the sampling field, so a template listing
+// it before the counters scaled zero and under-reported by the full rate.
+func TestV9InlineSamplingIndependentOfFieldOrder(t *testing.T) {
+	fields := []field{
+		{fSamplingInterval, 4},
+		{fSrcAddrV4, 4}, {fDstAddrV4, 4}, {fInputSNMP, 2},
+		{fInBytes, 4}, {fInPkts, 4},
+		{fTOS, 1}, {fSrcAS, 4}, {fDstAS, 4},
+	}
+	var rec []byte
+	rec = append(rec, be(100, 4)...)
+	rec = append(rec, netip.MustParseAddr("10.0.0.1").AsSlice()...)
+	rec = append(rec, netip.MustParseAddr("10.0.0.2").AsSlice()...)
+	rec = append(rec, be(3, 2)...)
+	rec = append(rec, be(1500, 4)...)
+	rec = append(rec, be(2, 4)...)
+	rec = append(rec, 34<<2)
+	rec = append(rec, be(4200000000, 4)...)
+	rec = append(rec, be(13335, 4)...)
+
+	pkt := v9Header(2, 1)
+	pkt = append(pkt, templateFlowSet(300, fields)...)
+	pkt = append(pkt, dataFlowSet(300, rec)...)
+	p, _, err := DecodeNetFlowV9(pkt, netip.MustParseAddr("192.0.2.1"), NewTemplateCache(), time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Records) != 1 {
+		t.Fatalf("records = %d, want 1", len(p.Records))
+	}
+	r := p.Records[0]
+	if r.Bytes != 150000 || r.Packets != 200 || !r.Sampled {
+		t.Errorf("bytes=%d packets=%d sampled=%v, want 150000/200/true", r.Bytes, r.Packets, r.Sampled)
+	}
+	if r.TOS != 34<<2 || r.SrcAS != 4200000000 || r.DstAS != 13335 {
+		t.Errorf("tos=%d src_as=%d dst_as=%d", r.TOS, r.SrcAS, r.DstAS)
+	}
+}

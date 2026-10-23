@@ -43,17 +43,21 @@ const (
 
 // v9 field types this decoder understands. Everything else is skipped by its
 // declared length, which is what lets an exporter send forty fields we do not
-// care about without breaking the ten we do.
+// care about without breaking the ones we do. The IDs 1-28 are shared with
+// IPFIX's information elements, so one table serves both.
 const (
 	fInBytes    = 1
 	fInPkts     = 2
 	fProtocol   = 4
+	fTOS        = 5
 	fSrcPort    = 7
 	fSrcAddrV4  = 8
 	fInputSNMP  = 10
 	fDstPort    = 11
 	fDstAddrV4  = 12
 	fOutputSNMP = 14
+	fSrcAS      = 16
+	fDstAS      = 17
 	fOutBytes   = 23
 	fOutPkts    = 24
 	fSrcAddrV6  = 27
@@ -431,6 +435,7 @@ func readFlowData(body []byte, t *template) []Record {
 	var out []Record
 	eachRecord(body, t, func(vals [][]byte) {
 		var r Record
+		var inlineSampling uint64
 		for i, f := range t.fields {
 			if f.enterprise != 0 {
 				continue // vendor-private: no registry meaning, skip by length
@@ -461,15 +466,26 @@ func readFlowData(body []byte, t *template) []Record {
 				if a, ok := netip.AddrFromSlice(val); ok {
 					r.DstAddr = a.Unmap()
 				}
+			case fTOS:
+				if len(val) > 0 {
+					r.TOS = val[len(val)-1]
+				}
+			case fSrcAS:
+				r.SrcAS = narrow32(beUint(val))
+			case fDstAS:
+				r.DstAS = narrow32(beUint(val))
 			case fSamplingInterval, fSamplerRandomInt, fSamplerInterval:
 				// Inline sampling on the flow record itself. Rare, but when it
-				// is here it is authoritative for this record.
-				if iv := beUint(val); iv > 1 {
-					r.Bytes *= iv
-					r.Packets *= iv
-					r.Sampled = true
-				}
+				// is here it is authoritative for this record. Applied after
+				// the loop: a template may list it before the counters, and
+				// scaling here would then scale zero and miss the real values.
+				inlineSampling = beUint(val)
 			}
+		}
+		if inlineSampling > 1 {
+			r.Bytes *= inlineSampling
+			r.Packets *= inlineSampling
+			r.Sampled = true
 		}
 		// A record with no addresses is not a flow — most likely a template
 		// mismatch, where the layout parsed but described something else.

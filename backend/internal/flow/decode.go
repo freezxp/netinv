@@ -22,6 +22,12 @@ type Record struct {
 	SrcPort  uint16
 	DstPort  uint16
 	Protocol uint8
+	// TOS is the IP type-of-service byte; its top six bits are the DSCP.
+	TOS uint8
+	// SrcAS and DstAS are the exporter's BGP view of each end. Zero means the
+	// exporter did not know or did not say — most edge gateways never fill it.
+	SrcAS uint32
+	DstAS uint32
 	// Bytes and Packets are already scaled by the sampling rate where the
 	// exporter reported one, so callers do not have to remember to.
 	Bytes   uint64
@@ -138,6 +144,9 @@ func DecodeNetFlowV5(b []byte, from netip.Addr) (*Packet, error) {
 			SrcPort:  binary.BigEndian.Uint16(r[32:34]),
 			DstPort:  binary.BigEndian.Uint16(r[34:36]),
 			Protocol: r[38],
+			TOS:      r[39],
+			SrcAS:    uint32(binary.BigEndian.Uint16(r[40:42])),
+			DstAS:    uint32(binary.BigEndian.Uint16(r[42:44])),
 			Sampled:  sampled,
 		})
 	}
