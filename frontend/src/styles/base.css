@@ -239,3 +239,172 @@ main h1.text-xl {
     animation: none;
   }
 }
+
+/* ---- Modern appearance --------------------------------------------------
+   PICA's softer look, chosen per browser from the account menu
+   (data-style="modern" on <html>, set by app/appearance.ts). Same idea as the
+   Legacy rules above: the scales the pages already use are re-pointed, so no
+   page is edited for it. Neutrals turn bluer, corners rounder, surfaces lift
+   off a gently lit canvas and the shell turns to frosted glass where the
+   browser can blur. Every rule is scoped to the attribute; Legacy is
+   untouched. */
+:root[data-style="modern"] {
+  --color-slate-50: #f4f7fc;
+  --color-slate-100: #e6edf7;
+  --color-slate-200: #c9d5e5;
+  --color-slate-300: #a8b9d0;
+  --color-slate-400: #7f91aa;
+  --color-slate-500: #52647c;
+  --color-slate-600: #34445c;
+  --color-slate-700: #39485f;
+  --color-slate-800: #28364b;
+  --color-slate-900: #1d293b;
+  --color-slate-950: #101620;
+
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 10px;
+  --radius-xl: 14px;
+
+  --bg: #edf2fa;
+  --surface: rgba(255, 255, 255, 0.88);
+  --surface-2: #e6edf7;
+  --ink: #172338;
+  --ink-2: #34445c;
+  --muted: #52647c;
+  --rule: #c9d5e5;
+  --rule-2: #a8b9d0;
+  --map-label-halo: #edf2fa;
+  --map-arrow-edge: #edf2fa;
+
+  --glass-shell: #f4f7fc;
+  --glass-floating: #f8faff;
+  --glass-input: rgba(255, 255, 255, 0.78);
+  --glass-highlight: rgba(255, 255, 255, 0.8);
+  --shadow-sm: 0 5px 20px rgba(30, 53, 92, 0.07), inset 0 1px 0 var(--glass-highlight);
+  --shadow-lg: 0 16px 48px rgba(24, 43, 78, 0.18), inset 0 1px 0 var(--glass-highlight);
+  --glow-a: rgba(144, 193, 255, 0.24);
+  --glow-b: rgba(191, 169, 242, 0.18);
+}
+
+:root.dark[data-style="modern"] {
+  --bg: #101620;
+  --surface: rgba(30, 40, 56, 0.94);
+  --surface-2: #28364b;
+  --ink: #eef3fc;
+  --ink-2: #c7d4e7;
+  --muted: #a4b4cb;
+  --rule: #39485f;
+  --rule-2: #536580;
+  --map-label-halo: #101620;
+  --map-arrow-edge: #101620;
+
+  --glass-shell: #182232;
+  --glass-floating: #1d293b;
+  --glass-input: rgba(17, 26, 41, 0.82);
+  --glass-highlight: rgba(216, 232, 255, 0.1);
+  --shadow-sm: 0 5px 20px rgba(0, 0, 0, 0.16), inset 0 1px 0 var(--glass-highlight);
+  --shadow-lg: 0 16px 48px rgba(0, 0, 0, 0.38), inset 0 1px 0 var(--glass-highlight);
+  --glow-a: rgba(45, 87, 151, 0.18);
+  --glow-b: rgba(94, 65, 148, 0.14);
+}
+
+/* Translucency only where what is behind can be blurred; elsewhere the
+   opaque values above stand. */
+@supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  :root[data-style="modern"] {
+    --glass-shell: rgba(247, 250, 255, 0.8);
+  }
+  :root.dark[data-style="modern"] {
+    --glass-shell: rgba(24, 34, 50, 0.86);
+  }
+  /* Menus stay solid: one opened from the top bar sits inside its blur, and
+     a nested backdrop-filter cannot reach the page, so a translucent menu
+     would show the page text through it. */
+  :root[data-style="modern"] .ni-shell {
+    -webkit-backdrop-filter: blur(18px) saturate(135%);
+    backdrop-filter: blur(18px) saturate(135%);
+  }
+}
+
+:root[data-style="modern"] body {
+  background:
+    radial-gradient(ellipse at 10% 0%, var(--glow-a), transparent 55%),
+    radial-gradient(ellipse at 95% 45%, var(--glow-b), transparent 60%),
+    var(--bg);
+  background-attachment: fixed;
+}
+
+/* Sidebar and top bar: glass, lifted, with the inner corners rounded. */
+:root[data-style="modern"] .ni-shell {
+  background: var(--glass-shell);
+  box-shadow: var(--shadow-sm);
+}
+@media (min-width: 768px) {
+  :root[data-style="modern"] aside.ni-shell {
+    border-top-right-radius: var(--radius-lg);
+    border-bottom-right-radius: var(--radius-lg);
+  }
+  :root[data-style="modern"] header.ni-shell {
+    border-bottom-left-radius: var(--radius-md);
+  }
+}
+:root[data-style="modern"] .ni-floating {
+  background: var(--glass-floating);
+  box-shadow: var(--shadow-lg);
+}
+
+/* Page surfaces — every white/slate-900 panel is a card — take the
+   translucent surface and a soft shadow instead of a flat fill. Inputs are
+   excluded and styled on their own. */
+:root[data-style="modern"] main .bg-white:is(.dark\:bg-slate-900):not(input, select, textarea) {
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+:root[data-style="modern"] main .bg-white:is(.dark\:bg-slate-900) .bg-white:is(.dark\:bg-slate-900) {
+  box-shadow: none;
+}
+:root[data-style="modern"] :is(input, select, textarea).bg-white {
+  background: var(--glass-input);
+  border-color: var(--rule-2);
+}
+:root[data-style="modern"] :is(input, select, textarea).bg-white:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
+}
+:root[data-style="modern"] table:not(.u-legend) thead {
+  background: var(--surface-2);
+}
+
+/* Filled buttons get a little depth. */
+:root[data-style="modern"] button:is(.bg-sky-600, .bg-red-600):not(:disabled) {
+  box-shadow: inset 0 1px 0 var(--glass-highlight), 0 3px 8px rgba(20, 40, 75, 0.12);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  :root[data-style="modern"] :is(.ni-shell, button, a, input, select) {
+    transition: background-color 180ms ease, border-color 180ms ease, box-shadow 180ms ease, color 180ms ease;
+  }
+}
+
+/* Increased or forced contrast: drop the glass and the glow. */
+@media (prefers-contrast: more), (forced-colors: active), (prefers-reduced-transparency: reduce) {
+  :root[data-style="modern"] {
+    --surface: #ffffff;
+    --glass-shell: #ffffff;
+    --glass-floating: #ffffff;
+  }
+  :root.dark[data-style="modern"] {
+    --surface: #161f2c;
+    --glass-shell: #161f2c;
+    --glass-floating: #161f2c;
+  }
+  :root[data-style="modern"] body {
+    background: var(--bg);
+  }
+  :root[data-style="modern"] .ni-shell {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}

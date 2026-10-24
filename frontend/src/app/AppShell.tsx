@@ -1,4 +1,4 @@
-// Application shell (doc 30 §0), laid out like PICA's Legacy appearance: a
+// Application shell (doc 30 §0), laid out like PICA's portal: a
 // full-height sidebar grouped into collapsible sections that folds to an icon
 // rail, a 52px top bar carrying the account menu, and a centred page. Auth
 // guard with silent session restore.
@@ -10,7 +10,14 @@ import { useLogout } from "../api/hooks";
 import { cx } from "../components/ui";
 import { NavIcon } from "./NavIcon";
 import { Footer } from "./Footer";
-import { applyTheme, storedTheme, type ThemeMode } from "./appearance";
+import {
+  applyStyle,
+  applyTheme,
+  storedStyle,
+  storedTheme,
+  type Style,
+  type ThemeMode,
+} from "./appearance";
 
 interface NavItem {
   to: string;
@@ -87,11 +94,24 @@ export function useTheme() {
   };
 }
 
+export function useStyle() {
+  const [style, setStyle] = useState<Style>(storedStyle);
+  return {
+    style,
+    toggle: () => {
+      const next = style === "modern" ? "legacy" : "modern";
+      applyStyle(next);
+      setStyle(next);
+    },
+  };
+}
+
 export function AppShell() {
   const user = useAuthStore((s) => s.user);
   const navigate = useNavigate();
   const logout = useLogout();
   const theme = useTheme();
+  const style = useStyle();
   const restored = useSessionRestore();
   // A NOC screen that reverts to a wide sidebar on every reload defeats the
   // point of collapsing it, so both the rail and the folded sections persist.
@@ -138,7 +158,7 @@ export function AppShell() {
       <aside
         aria-label="Main navigation"
         className={cx(
-          "flex shrink-0 flex-col border-r border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900",
+          "ni-shell flex shrink-0 flex-col border-r border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900",
           "fixed inset-y-0 left-0 z-40 w-[232px] transition-transform duration-150",
           drawer ? "translate-x-0" : "-translate-x-full",
           "md:static md:z-auto md:translate-x-0 md:transition-[width]",
@@ -261,7 +281,7 @@ export function AppShell() {
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-[52px] shrink-0 items-center justify-between border-b border-slate-200 bg-white px-4 md:px-9 dark:border-slate-800 dark:bg-slate-900">
+        <header className="ni-shell flex h-[52px] shrink-0 items-center justify-between border-b border-slate-200 bg-white px-4 md:px-9 dark:border-slate-800 dark:bg-slate-900">
           <div className="flex items-center gap-2">
             <button
               onClick={() => setDrawer(true)}
@@ -278,6 +298,8 @@ export function AppShell() {
             roles={user.roles.join(", ")}
             theme={theme.mode}
             onTheme={theme.cycle}
+            appearance={style.style}
+            onAppearance={style.toggle}
             onLogout={() => logout.mutate()}
             loggingOut={logout.isPending}
           />
@@ -303,13 +325,15 @@ export function AppShell() {
   );
 }
 
-// Account menu (top right): initials, name and roles; opens the colour theme
-// and sign-out.
+// Account menu (top right): initials, name and roles; opens the colour theme,
+// the appearance (Legacy or Modern) and sign-out.
 function UserMenu({
   name,
   roles,
   theme,
   onTheme,
+  appearance,
+  onAppearance,
   onLogout,
   loggingOut,
 }: {
@@ -317,6 +341,8 @@ function UserMenu({
   roles: string;
   theme: ThemeMode;
   onTheme: () => void;
+  appearance: Style;
+  onAppearance: () => void;
   onLogout: () => void;
   loggingOut: boolean;
 }) {
@@ -369,7 +395,7 @@ function UserMenu({
       {open && (
         <div
           role="menu"
-          className="absolute right-0 z-50 mt-1 w-[260px] rounded-sm border border-slate-200 bg-white py-1 shadow-lg dark:border-slate-700 dark:bg-slate-900"
+          className="ni-floating absolute right-0 z-50 mt-1 w-[260px] rounded-sm border border-slate-200 bg-white py-1 shadow-lg dark:border-slate-700 dark:bg-slate-900"
         >
           <div className="px-3 py-2">
             <div className="truncate text-sm font-semibold">{name}</div>
@@ -378,6 +404,9 @@ function UserMenu({
           <div className="my-1 border-t border-slate-200 dark:border-slate-700" />
           <MenuItem icon="palette" onClick={onTheme}>
             Theme: {theme}
+          </MenuItem>
+          <MenuItem icon="palette" onClick={onAppearance}>
+            Appearance: {appearance === "modern" ? "Modern" : "Legacy"}
           </MenuItem>
           <div className="my-1 border-t border-slate-200 dark:border-slate-700" />
           <MenuItem icon="signout" onClick={onLogout} disabled={loggingOut}>

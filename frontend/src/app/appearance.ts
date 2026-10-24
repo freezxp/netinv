@@ -1,6 +1,6 @@
-// Colour scheme and deployment accent (doc 30 §0). Both are applied before
-// React renders, so the sign-in page is themed too and nothing flashes in the
-// default colours first.
+// Colour scheme, appearance and deployment accent (doc 30 §0). All are
+// applied before React renders, so the sign-in page is themed too and nothing
+// flashes in the default colours first.
 
 export type ThemeMode = "light" | "system" | "dark";
 
@@ -40,6 +40,28 @@ export function applyTheme(mode: ThemeMode) {
 
 media?.addEventListener?.("change", () => {
   if (storedTheme() === "system") applyTheme("system");
+});
+
+// --- appearance ---------------------------------------------------------
+
+// Legacy is PICA's classic look; Modern its softer one — rounder corners,
+// raised translucent surfaces over a gently lit canvas. Per browser, like the
+// colour scheme: it is a matter of taste, not of the deployment.
+export type Style = "legacy" | "modern";
+const STYLE_KEY = "netinv-style";
+
+export function storedStyle(): Style {
+  return read(STYLE_KEY) === "modern" ? "modern" : "legacy";
+}
+
+export function applyStyle(style: Style) {
+  write(STYLE_KEY, style);
+  document.documentElement.dataset.style = style;
+}
+
+// Another tab changing it follows here too.
+window.addEventListener("storage", (e) => {
+  if (e.key === STYLE_KEY || e.key === null) document.documentElement.dataset.style = storedStyle();
 });
 
 // --- accent ---------------------------------------------------------------
@@ -103,6 +125,7 @@ export function applyAccent(accent: string | undefined | null) {
  *  from the server, which an admin may have changed since. */
 export function initAppearance() {
   applyTheme(storedTheme());
+  applyStyle(storedStyle());
   applyAccent(read(ACCENT_KEY));
   fetch("/api/v1/ui/appearance")
     .then((r) => (r.ok ? r.json() : null))
