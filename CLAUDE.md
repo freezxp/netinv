@@ -79,12 +79,12 @@ SCOPE (the department's tool catalog, github.com/freezxp/scope) scanned this rep
 
 **Runtime images and toolchains**
 
-- [ ] **critical** Node2Shell / HTTP2Shell (Brotli) (CVE-2026-111497) + Node.js October 2026 TLS validation flaws (CVE-2026-105482, CVE-2026-105483, CVE-2026-106069) — floating Node.js 22 in `frontend/Dockerfile`: pin 22.23.4 or later, rebuild with `--pull` (a plain rebuild reuses the cached old image) and redeploy; images built before 2026-10-21 are vulnerable (build/CI stage only, lower risk).
-- [ ] **medium** Go crypto/x509 distrusted eMudhra intermediates (CVE-2026-111943) — Go toolchain 1.26.6 in `backend/Dockerfile`: upgrade to 1.26.10 or later.
+- [x] **critical** Node2Shell / HTTP2Shell (Brotli) (CVE-2026-111497) + Node.js October 2026 TLS validation flaws (CVE-2026-105482, CVE-2026-105483, CVE-2026-106069) — floating Node.js 22 in `frontend/Dockerfile`: pin 22.23.4 or later, rebuild with `--pull` (a plain rebuild reuses the cached old image) and redeploy; images built before 2026-10-21 are vulnerable (build/CI stage only, lower risk).
+- [x] **medium** Go crypto/x509 distrusted eMudhra intermediates (CVE-2026-111943) — Go toolchain 1.26.6 in `backend/Dockerfile`: upgrade to 1.26.10 or later.
 
 **Critical/high in production dependencies**
 
-- [ ] **high** `github.com/xuri/excelize/v2` v2.11.0 → **`2.11.1-0.20261003002531-6258dcebc4e2` or a later release (fix is only in commit 6258dce)** (backend/go.mod): 9 advisories
+- [x] **high** `github.com/xuri/excelize/v2` v2.11.0 → **`2.11.1-0.20261003002531-6258dcebc4e2` or a later release (fix is only in commit 6258dce)** (backend/go.mod): 9 advisories
   - CVE-2026-107214 Excelize Decrypt: unrecoverable panics on malformed OLE/CFB encrypted workbooks
   - CVE-2026-107217 Excelize ColumnNameToNumber: int64 overflow yields an out-of-domain coordinate with nil error, causing negati…
   - CVE-2026-107223 Excelize: Unbounded <col max> attribute is loaded with no MaxColumns check and expanded per-column by flatCol…

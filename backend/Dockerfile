@@ -9,7 +9,7 @@
 # Floating on `1.26-alpine` hid that behind whenever you last pulled — CI was
 # green on a fresh pull while a five-week-old local cache could not build at
 # all. Bump this and go.work/go.mod together.
-FROM golang:1.26.6-alpine AS build
+FROM golang:1.26.10-alpine AS build
 ARG SERVICE=api
 WORKDIR /src
 COPY go.work go.work.sum* ./
