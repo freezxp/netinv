@@ -314,7 +314,8 @@ test("the sidebar collapses to icons and stays collapsed", async ({ page }) => {
   const inventory = page.getByRole("link", { name: "Inventory" });
   await expect(inventory).toBeVisible();
 
-  const aside = page.locator("aside");
+  // The dashboard has an aside of its own; the sidebar is the named one.
+  const aside = page.getByRole("complementary", { name: "Main navigation" });
   const wide = (await aside.boundingBox())!.width;
 
   await page.getByRole("button", { name: "Collapse sidebar" }).click();
@@ -326,7 +327,7 @@ test("the sidebar collapses to icons and stays collapsed", async ({ page }) => {
   await expect(inventory).toBeVisible();
   // Scoped to the sidebar: the phone topbar carries the brand too, and it is
   // in the DOM at every width, merely hidden by CSS on desktop.
-  await expect(page.locator("aside").getByText("NetInv", { exact: true })).toHaveCount(0);
+  await expect(aside.getByText("NetInv", { exact: true })).toHaveCount(0);
   await inventory.click();
   await expect(page.getByRole("heading", { name: "Inventory" })).toBeVisible();
 
@@ -338,7 +339,7 @@ test("the sidebar collapses to icons and stays collapsed", async ({ page }) => {
   expect(still).toBeLessThan(wide);
 
   await page.getByRole("button", { name: "Expand sidebar" }).click();
-  await expect(page.locator("aside").getByText("NetInv", { exact: true })).toBeVisible();
+  await expect(aside.getByText("NetInv", { exact: true })).toBeVisible();
 });
 
 // Alert rules are operator-authored now, so the two things that must hold are
@@ -492,7 +493,8 @@ test("the portal is usable at phone width", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await login(page);
 
-  const aside = page.locator("aside");
+  // The dashboard has an aside of its own; the sidebar is the named one.
+  const aside = page.getByRole("complementary", { name: "Main navigation" });
   const menu = page.getByRole("button", { name: "Open menu" });
   await expect(menu).toBeVisible();
 

@@ -44,12 +44,6 @@ func (p *stubPublisher) Publish(context.Context, string, wire.PollJob) error {
 	return nil
 }
 
-func (p *stubPublisher) setConsumers(n int) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.consumers = n
-}
-
 func (p *stubPublisher) counts() (declares, published int) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
