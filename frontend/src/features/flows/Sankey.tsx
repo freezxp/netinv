@@ -14,13 +14,16 @@ interface Props {
   links: SankeyLink[];
   leftLabel: (k: string) => string;
   rightLabel: (k: string) => string;
+  /** An image drawn between a node's bar and its label, e.g. a country flag. */
+  leftIcon?: (k: string) => string | undefined;
+  rightIcon?: (k: string) => string | undefined;
   format: (v: number) => string;
   onPick?: (side: "left" | "right", key: string) => void;
 }
 
 const palette = ["#0ea5e9", "#f59e0b", "#22c55e", "#a78bfa", "#ef4444", "#14b8a6", "#f472b6", "#eab308"];
 
-export function Sankey({ links, leftLabel, rightLabel, format, onPick }: Props) {
+export function Sankey({ links, leftLabel, rightLabel, leftIcon, rightIcon, format, onPick }: Props) {
   const [hover, setHover] = useState<number | null>(null);
   const layout = useMemo(() => {
     const height = 360;
@@ -64,8 +67,10 @@ export function Sankey({ links, leftLabel, rightLabel, format, onPick }: Props) 
 
   const W = 1000;
   const nodeW = 10;
-  const x0 = 230;
-  const x1 = W - 230;
+  const x0 = 265;
+  const x1 = W - 265;
+  const iconW = 16;
+  const iconH = 12;
   return (
     <svg
       viewBox={`0 0 ${W} ${layout.h + 10}`}
@@ -89,10 +94,13 @@ export function Sankey({ links, leftLabel, rightLabel, format, onPick }: Props) 
       ))}
       {layout.lefts.map(([k, v]) => {
         const p = layout.L.pos.get(k)!;
+        const icon = leftIcon?.(k);
+        const cy = p.y + 5 + p.h / 2;
         return (
           <g key={`l${k}`} className={onPick ? "cursor-pointer" : undefined} onClick={() => onPick?.("left", k)}>
             <rect x={x0} y={p.y + 5} width={nodeW} height={p.h} fill={layout.colour.get(k)} />
-            <text x={x0 - 8} y={p.y + 5 + p.h / 2} textAnchor="end" dominantBaseline="middle" className="fill-slate-700 text-[13px] dark:fill-slate-200">
+            {icon && <image href={icon} x={x0 - 8 - iconW} y={cy - iconH / 2} width={iconW} height={iconH} preserveAspectRatio="none" />}
+            <text x={x0 - 8 - (icon ? iconW + 6 : 0)} y={cy} textAnchor="end" dominantBaseline="middle" className="fill-slate-700 text-[13px] dark:fill-slate-200">
               {truncate(leftLabel(k))} <tspan className="fill-slate-500 dark:fill-slate-400">{format(v)}</tspan>
             </text>
           </g>
@@ -100,10 +108,13 @@ export function Sankey({ links, leftLabel, rightLabel, format, onPick }: Props) 
       })}
       {layout.rights.map(([k, v]) => {
         const p = layout.R.pos.get(k)!;
+        const icon = rightIcon?.(k);
+        const cy = p.y + 5 + p.h / 2;
         return (
           <g key={`r${k}`} className={onPick ? "cursor-pointer" : undefined} onClick={() => onPick?.("right", k)}>
             <rect x={x1} y={p.y + 5} width={nodeW} height={p.h} className="fill-slate-400 dark:fill-slate-500" />
-            <text x={x1 + nodeW + 8} y={p.y + 5 + p.h / 2} dominantBaseline="middle" className="fill-slate-700 text-[13px] dark:fill-slate-200">
+            {icon && <image href={icon} x={x1 + nodeW + 8} y={cy - iconH / 2} width={iconW} height={iconH} preserveAspectRatio="none" />}
+            <text x={x1 + nodeW + 8 + (icon ? iconW + 6 : 0)} y={cy} dominantBaseline="middle" className="fill-slate-700 text-[13px] dark:fill-slate-200">
               {truncate(rightLabel(k))} <tspan className="fill-slate-500 dark:fill-slate-400">{format(v)}</tspan>
             </text>
           </g>
@@ -114,5 +125,5 @@ export function Sankey({ links, leftLabel, rightLabel, format, onPick }: Props) 
 }
 
 function truncate(s: string) {
-  return s.length > 26 ? s.slice(0, 25) + "…" : s;
+  return s.length > 24 ? s.slice(0, 23) + "…" : s;
 }

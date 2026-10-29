@@ -25,7 +25,7 @@ import {
   type FlowLabels,
   type FlowRecord,
 } from "./api";
-import { Flag } from "./Flag";
+import { Flag, flagUrl } from "./Flag";
 import { filterValue, formatCount, fwEvent, renderValue, tcpFlags } from "./format";
 import { Sankey } from "./Sankey";
 
@@ -255,6 +255,8 @@ export function FlowsPage() {
                 links={res.groups.map((g) => ({ left: g.keys[0], right: g.keys[1], value: metricOf(g) }))}
                 leftLabel={(k) => renderValue(fieldBy.get(groupBy[0])?.kind ?? "", k, { labels, exporter: singleExporter(labels) }).text}
                 rightLabel={(k) => renderValue(fieldBy.get(groupBy[1])?.kind ?? "", k, { labels, exporter: singleExporter(labels) }).text}
+                leftIcon={fieldBy.get(groupBy[0])?.kind === "country" ? flagUrl : undefined}
+                rightIcon={fieldBy.get(groupBy[1])?.kind === "country" ? flagUrl : undefined}
                 format={totalFmt}
                 onPick={(side, k) => {
                   const f = fieldBy.get(groupBy[side === "left" ? 0 : 1]);

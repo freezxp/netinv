@@ -11,8 +11,13 @@ const byCode = new Map(
   Object.entries(flags).map(([path, url]) => [path.slice(path.lastIndexOf("/") + 1, -4).toUpperCase(), url]),
 );
 
+/** The flag's asset URL for an ISO 3166 code, or undefined for none. */
+export function flagUrl(code: string): string | undefined {
+  return code ? byCode.get(code.toUpperCase()) : undefined;
+}
+
 export function Flag({ code }: { code: string }) {
-  const url = byCode.get(code.toUpperCase());
+  const url = flagUrl(code);
   if (!url) return null;
   return (
     <img
