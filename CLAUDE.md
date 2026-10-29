@@ -80,5 +80,5 @@ SCOPE (the department's tool catalog, github.com/freezxp/scope) scanned this rep
 
 **Lower priority**
 
-- 4 medium/low/unrated advisories in production dependencies, fix in the same upgrade pass: `github.com/go-chi/chi/v5` v5.3.1 → 5.4.0, `golang.org/x/crypto` v0.57.0 → no fixed release yet, `golang.org/x/net` v0.60.0 → 0.62.0 (Go modules; `govulncheck -show verbose ./...` lists them even when the code isn't called).
+- `golang.org/x/crypto` (GO-2026-5932, now at v0.58.0) → no fixed release yet; not called by our code. `go-chi/chi/v5` 5.4.0 and `golang.org/x/net` 0.62.0 (GO-2026-6860, GO-2026-6866) were upgraded on 2026-10-29.
 <!-- SCOPE:CVE END -->
