@@ -25,6 +25,7 @@ import {
   type FlowLabels,
   type FlowRecord,
 } from "./api";
+import { Flag } from "./Flag";
 import { filterValue, formatCount, fwEvent, renderValue, tcpFlags } from "./format";
 import { Sankey } from "./Sankey";
 
@@ -495,6 +496,7 @@ function Cell({
   const hint = ctx.bare ? undefined : r.hint;
   const inner = (
     <>
+      {kind === "country" && raw !== "" && <Flag code={String(raw)} />}
       <span className={cx(kind === "addr" || kind === "mac" ? "font-mono text-[13px]" : undefined)}>{text}</span>
       {hint && <span className="ml-1.5 text-xs text-slate-500 dark:text-slate-400">{hint}</span>}
     </>

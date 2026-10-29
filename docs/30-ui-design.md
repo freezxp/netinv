@@ -150,7 +150,7 @@ The explorer over raw flow storage, under Monitoring in the sidebar.
 - **KPI tiles**: traffic with its average bit rate, packets, flows, and which store answered (raw or hourly rollup).
 - **Chart**: top groups and the total over time. **Sankey** when grouping by exactly two fields, hand-drawn SVG, nodes clickable. **Top groups** table with share bars and CSV export. **Individual flows**, newest or largest first; columns no row fills (NAT, user, application …) are omitted.
 - **Every value is a link that adds itself as a filter.** The state lives in the URL, so a view is shareable; the device Flow tab's "Explore every flow →" opens it filtered to the device.
-- Values are humanised: protocol names, DSCP names, TCP flags as `SYN,ACK`, country names, AS names with the number as a hint, interfaces by inventory name with `#ifIndex` as a hint.
+- Values are humanised: protocol names, DSCP names, TCP flags as `SYN,ACK`, country names with their flag (SVGs from `flag-icons`, MIT — emoji flags render as bare letters on Windows; each is a separate asset fetched only when shown), AS names with the number as a hint, interfaces by inventory name with `#ifIndex` as a hint.
 - When country data is loaded, the DB-IP credit required by its licence is shown under the page.
 - **Without raw storage** the page says so and how to enable it, instead of showing errors.
 
