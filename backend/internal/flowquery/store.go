@@ -92,3 +92,35 @@ func normAddr(s string) string {
 	}
 	return s
 }
+
+// InterfaceNames returns the present interfaces of the given devices by
+// ifIndex, for labelling flow results. The name falls back to the
+// description, which some agents fill where ifName is empty.
+func (s *Store) InterfaceNames(ctx context.Context, deviceIDs []string) (map[string]map[uint32]string, error) {
+	rows, err := s.Pool.Query(ctx, `
+		SELECT device_id, if_index, coalesce(nullif(name, ''), descr, '')
+		FROM inventory.interfaces
+		WHERE device_id = ANY($1) AND state = 'present'`, deviceIDs)
+	if err != nil {
+		return nil, errx.Wrap(errx.KindTransient, err, "load interface names")
+	}
+	defer rows.Close()
+	out := map[string]map[uint32]string{}
+	for rows.Next() {
+		var dev, name string
+		// pgx range-checks the scan into uint32, so a negative ifIndex
+		// (which the schema allows but no agent sends) fails loudly here
+		// rather than wrapping.
+		var idx uint32
+		if err := rows.Scan(&dev, &idx, &name); err != nil {
+			return nil, errx.Wrap(errx.KindTransient, err, "scan interface name")
+		}
+		if out[dev] == nil {
+			out[dev] = map[uint32]string{}
+		}
+		if name != "" {
+			out[dev][idx] = name
+		}
+	}
+	return out, rows.Err()
+}

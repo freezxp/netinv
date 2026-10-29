@@ -40,6 +40,7 @@ if [ ! -f "$ENV_FILE" ]; then
   cat > "$ENV_FILE" <<EOF
 PG_PASSWORD=$(openssl rand -hex 12)
 RABBIT_PASSWORD=$(openssl rand -hex 12)
+CH_PASSWORD=$(openssl rand -hex 12)
 NETINV_MASTER_KEY=$(openssl rand -base64 32)
 NETINV_JWT_SIGNING_KEY=$(openssl rand -base64 32)
 NETINV_ADMIN_PASSWORD=$ADMIN_PW
@@ -55,13 +56,19 @@ EOF
 else
   echo "==> Using existing secrets ($ENV_FILE)"
 fi
+# Secrets added after a deployment's .env was written are appended rather than
+# left to fall back to a compose default (ADR-026 added ClickHouse's).
+if ! grep -q '^CH_PASSWORD=' "$ENV_FILE"; then
+  echo "CH_PASSWORD=$(openssl rand -hex 12)" >> "$ENV_FILE"
+  echo "==> Added CH_PASSWORD to $ENV_FILE"
+fi
 ADMIN_PW="$(grep '^NETINV_ADMIN_PASSWORD=' "$ENV_FILE" | cut -d= -f2)"
 
 # 2. Data tier (bundled instances). Uses the same env file so the postgres /
 # rabbitmq passwords match the app-side DSNs.
-echo "==> Starting data tier (postgres, redis, rabbitmq, victoriametrics, snmpsim, mailhog)"
+echo "==> Starting data tier (postgres, redis, rabbitmq, victoriametrics, clickhouse, snmpsim, mailhog)"
 "${COMPOSE[@]}" up -d --wait \
-  postgres redis rabbitmq victoriametrics snmpsim mailhog
+  postgres redis rabbitmq victoriametrics clickhouse snmpsim mailhog
 
 # 3. TLS material. Generated once per host and never overwritten, so a real
 # certificate dropped in here survives every later run of this script.

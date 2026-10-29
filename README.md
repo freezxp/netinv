@@ -70,6 +70,7 @@ real network appears in them.*
 - **Reports** interface bandwidth over a period — average, 95th percentile, peak and totals per direction — filtered by customer and optionally grouped one row per customer, exportable as CSV. The aggregate is summed before the percentile is taken, so a customer's figures are of their combined traffic rather than a sum of per-circuit numbers.
 - **Alerts** via Email, Webhook, and Slack with severity-based routing, ack/silence workflow.
 - **SNMP traps** (v1/v2c, informs) received on UDP 162, attributed to devices, and alertable like any metric (doc 36).
+- **Flow** — NetFlow v5/v9, IPFIX and sFlow — summarised per interface for the dashboard, and **every flow stored** in ClickHouse for a month (hourly rollups for a year): a Flows explorer groups and filters by any field — addresses, ports, AS, country, VLAN, NAT, user, application — with a Sankey view and individual flows (doc 34).
 - **Scales** from a single site to 100k devices across multiple datacenters via site-local pollers phoning home over RabbitMQ.
 
 ## Stack (decided — see [DECISIONS.md](DECISIONS.md))
@@ -79,6 +80,7 @@ real network appears in them.*
 | Backend | Go (modular monolith, microservice-ready) |
 | Frontend | React + TypeScript + Vite, custom visualization (no Grafana) |
 | Metrics | VictoriaMetrics (PromQL/MetricsQL) |
+| Flow records | ClickHouse (ADR-026) |
 | Relational | PostgreSQL 16 |
 | Cache | Redis |
 | Queue | RabbitMQ |

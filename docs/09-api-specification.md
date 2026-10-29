@@ -254,6 +254,32 @@ These read the same `netinv_flow_*` series the metrics proxy exposes, and exist 
 - **`/flow/exporters`** lists every source that sent flow in the window with its byte volume and attribution; a row with no `device_id` is flow arriving from an address no device has claimed.
 - Every figure is a lower bound for its value: an interval in which a value fell outside the collector's per-interface top N was never written (ADR-020). SNMP counters remain the authority for volume.
 
+### 7.2 Flow explorer — `/flow/explore`, `/flow/records` (ADR-026, doc 34 §7)
+
+| Method | URI | Permission | Codes |
+|---|---|---|---|
+| GET | `/flow/explore/status` | `metrics:read` | 200 `{enabled, raw_days, rollup_days, fields:[{name,label,kind,rollup,group}], store?:{rows, bytes_on_disk, oldest, newest, rollup_rows, written, dropped, queued, geo_asn_ranges, geo_country_ranges, reported_at}, error?}` |
+| POST | `/flow/explore` | `metrics:read` | 200 `{result:{table, groups:[{keys,bytes,packets,flows}], total, series:{step,times,total,lines}}, labels:{exporters, interfaces}}`, 404 (no store configured), 422, 503 (store unreachable) |
+| POST | `/flow/records` | `metrics:read` | 200 `{records:[…], labels}`, 404, 422, 503 |
+
+These read the raw store, not the aggregates of §7.1, and answer over any field doc 34 §2.4 lists. The body:
+
+```json
+{"from": "2026-10-29T11:00:00Z", "to": "2026-10-29T12:00:00Z",
+ "group_by": ["src_addr", "dst_port"], "metric": "bytes", "limit": 10,
+ "filters": [{"field": "addr", "values": ["10.0.0.0/8"]},
+             {"field": "dst_port", "negate": true, "values": ["53"]}],
+ "devices": ["d_…"], "sites": [], "order_by": "time"}
+```
+
+- **Only names from `fields`** may appear in `group_by` (up to 4) and `filters` (up to 20, 100 values each); anything else is a 422. Every value travels to ClickHouse as a typed query parameter. Values in one filter are ORed, filters ANDed; `negate` makes one "none of these". Address values take CIDR prefixes. `addr`, `port`, `as`, `country` and `vlan` match either end.
+- `devices` and `sites` resolve to exporter addresses exactly as §7.1 does (management address plus claimed `flow_exporters`). An unknown device matches nothing, not everything.
+- `metric` (`bytes`, `packets`, `flows`) orders the groups and is the series' unit: bits/s, packets/s or flows/s. `limit` 1–100, default 10. The step is chosen for ~150 points and never finer than the table holds.
+- **`table`** says which store answered: `flows` (raw) or `flows_1h` (hourly rollup) — the rollup when the window starts before raw retention, or is over 7 days and uses only rollup fields. A raw-only field past raw retention is a 422 naming it. A window longer than the rollup retention is a 422.
+- **Group keys are display text.** Addresses lose their IPv4-mapped prefix, MACs are colon form, an AS is `"13335 CLOUDFLARENET"` (number first, so it filters back), and an interface is `"exporter|ifIndex"`, because an ifIndex names a different port on every device; `labels.interfaces` maps that key to its inventory name and `labels.exporters` maps addresses to devices.
+- **`/flow/records`** returns individual flows (raw retention only), newest or largest first (`order_by`: `time` or `bytes`), `limit` 1–1000, default 200, with times as Unix milliseconds.
+- Without `NETINV_FLOW_CH_URL` on the api, status says `enabled:false` and the other two are 404.
+
 ## 8. Dashboard — `/dashboard` (cached aggregates, doc 05 §7)
 
 | Method | URI | Permission |

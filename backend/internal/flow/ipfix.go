@@ -59,6 +59,9 @@ func DecodeIPFIX(b []byte, from netip.Addr, tc *TemplateCache, now time.Time) (*
 	}
 	b = b[:msgLen]
 	domainID := binary.BigEndian.Uint32(b[12:16])
+	// IPFIX has no uptime clock: timestamps are absolute, or relative to
+	// systemInitTimeMilliseconds carried in the record itself.
+	clock := exportClock{}
 
 	p := &Packet{ExporterIP: from}
 	awaiting := 0
@@ -87,20 +90,14 @@ func DecodeIPFIX(b []byte, from netip.Addr, tc *TemplateCache, now time.Time) (*
 				readOptionsData(body, t, from, domainID, tc)
 				break
 			}
-			p.Records = append(p.Records, readFlowData(body, t)...)
+			p.Records = append(p.Records, readFlowData(body, t, clock, "ipfix")...)
 		default:
 			// Set IDs 4-255 are reserved and carry nothing usable.
 		}
 		off += setLen
 	}
 
-	if iv := tc.getSampling(samplingKey{from, domainID}); iv > 1 {
-		for i := range p.Records {
-			p.Records[i].Bytes *= uint64(iv)
-			p.Records[i].Packets *= uint64(iv)
-			p.Records[i].Sampled = true
-		}
-	}
+	applySampling(p, tc.getSampling(samplingKey{from, domainID}))
 	return p, awaiting, nil
 }
 

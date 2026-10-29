@@ -18,6 +18,13 @@ type Writer interface {
 	WriteFlow(ctx context.Context, at time.Time, buckets []Bucket) error
 }
 
+// RawSink receives every decoded packet for per-flow storage (ADR-026). Add
+// must return at once — it is called on the receive path, and a slow store
+// may never hold up intake or the aggregates.
+type RawSink interface {
+	Add(p *Packet)
+}
+
 // Collector listens for flow exports and publishes aggregates.
 //
 // This is the first NetInv component that accepts unsolicited input from the
@@ -26,7 +33,8 @@ type Writer interface {
 // and a hard bound on how much state one interval can accumulate.
 type Collector struct {
 	// Addr is one or more comma-separated listen addresses, e.g.
-	// ":2055,:4739". NetFlow conventionally arrives on 2055 and IPFIX on 4739,
+	// ":2055,:4739,:6343". NetFlow conventionally arrives on 2055, IPFIX on
+	// 4739 and sFlow on 6343,
 	// and an exporter that cannot be told otherwise will use its convention —
 	// so the collector meets both rather than making the operator translate.
 	// Version is read from the datagram regardless of which socket it came in
@@ -35,6 +43,9 @@ type Collector struct {
 	Agg   *Aggregator
 	Write Writer
 	Log   *slog.Logger
+	// Raw, when set, also receives every decoded packet for per-flow
+	// storage. Nil keeps the collector aggregate-only, as before ADR-026.
+	Raw RawSink
 
 	// Allow restricts which sources are accepted. Empty means accept any,
 	// which is the sane default on a management network and the wrong one on
@@ -175,6 +186,18 @@ func (c *Collector) handle(b []byte, addr net.Addr) {
 		c.stats.malformed.Add(1)
 		return
 	}
+	// sFlow's version is a 32-bit 5, so its first two bytes read as 0 — the
+	// one value no NetFlow or IPFIX packet carries.
+	if version == 0 && IsSFlow(b) {
+		p, err := DecodeSFlow(b, from)
+		if err != nil {
+			c.stats.malformed.Add(1)
+			c.Log.Debug("flow decode failed", "from", from.String(), "err", err)
+			return
+		}
+		c.accept(p)
+		return
+	}
 	switch version {
 	case 5:
 		p, err := DecodeNetFlowV5(b, from)
@@ -186,9 +209,7 @@ func (c *Collector) handle(b []byte, addr net.Addr) {
 			c.Log.Debug("flow decode failed", "from", from.String(), "err", err)
 			return
 		}
-		c.stats.packets.Add(1)
-		c.stats.records.Add(uint64(len(p.Records)))
-		c.Agg.Add(p)
+		c.accept(p)
 	case 9, 10:
 		if c.Templates == nil {
 			c.Templates = NewTemplateCache()
@@ -210,14 +231,22 @@ func (c *Collector) handle(b []byte, addr net.Addr) {
 		if awaiting > 0 {
 			c.stats.awaiting.Add(uint64(awaiting))
 		}
-		c.stats.packets.Add(1)
-		c.stats.records.Add(uint64(len(p.Records)))
-		c.Agg.Add(p)
+		c.accept(p)
 	default:
-		// sFlow (version 5 on its own port, with a different datagram shape)
-		// is not decoded yet. Counted rather than logged so an operator can
-		// see that something is arriving and being ignored.
+		// Not a format this collector reads. Counted rather than logged so an
+		// operator can see that something is arriving and being ignored.
 		c.stats.malformed.Add(1)
+	}
+}
+
+// accept hands a decoded packet to the aggregator and, when configured, to
+// raw storage. The aggregator goes first: it is the path that must not miss.
+func (c *Collector) accept(p *Packet) {
+	c.stats.packets.Add(1)
+	c.stats.records.Add(uint64(len(p.Records)))
+	c.Agg.Add(p)
+	if c.Raw != nil {
+		c.Raw.Add(p)
 	}
 }
 

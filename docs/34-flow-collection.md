@@ -1,8 +1,17 @@
 # 34 — Flow collection (NetFlow / sFlow)
 
-**Status:** draft · **Depends on:** 05, 09, 13, 29 · The `netinv-flow` service:
+**Status:** draft · **Depends on:** 05, 08, 09, 13, 29 · The `netinv-flow` service:
 what it receives, what it stores, what it deliberately throws away, the
 exposure that comes with listening on a socket, and the UI that reads it.
+
+> **Two stores since ADR-026 (2026-10-29).** The top-N aggregates in
+> VictoriaMetrics (§1, §3) are unchanged and still feed the device Flow tab,
+> the dashboard panel, the stale-exporter alerts and `/flow/top|series|exporters`.
+> Alongside them, every decoded flow is now written to **ClickHouse** (§7) and
+> read by the **Flows** page (§8). §1's reasoning about cardinality explains why
+> the aggregates exist; it no longer means NetInv keeps nothing else. The raw
+> store, the extra fields (§2.4), sFlow (§2.3) and enrichment (§7.4) are
+> validated against a local generator only, like v9 and IPFIX before them.
 
 > **Validated against real hardware (2026-08-12).** UniFi gateways in the
 > reference pilot export NetFlow v5 to the collector and it decodes cleanly:
@@ -35,7 +44,7 @@ exposure that comes with listening on a socket, and the UI that reads it.
 > gap and this one would have stopped an operator from trying.
 >
 > v9, IPFIX, IPv6 flows and options-record sampling remain exercised only
-> against a generated source. §8 lists what is still unwritten.
+> against a generated source. §9 lists what is still unwritten.
 
 ## 1. Why this service exists, and why it is shaped like this
 
@@ -81,9 +90,9 @@ long the index carries it.
 
 The cost is stated plainly because it is not recoverable: **a conversation
 outside the top N for an interval was never written.** It did not go unqueried —
-it does not exist. If you need "every flow from this host last Tuesday", that is
-raw per-flow retention, it needs ClickHouse or equivalent, and it needs its own
-ADR. This service will not grow into it by accident.
+it does not exist. "Every flow from this host last Tuesday" is raw per-flow
+retention, which needed ClickHouse and its own ADR — ADR-026 added it (§7)
+beside the aggregates rather than in place of them.
 
 ## 2. What it decodes
 
@@ -92,10 +101,10 @@ ADR. This service will not grow into it by accident.
 | NetFlow v5 | 2055/udp | **Implemented** |
 | NetFlow v9 | 2055/udp | **Implemented**, including options templates and sampling (§2.1–2.2) |
 | IPFIX | 4739/udp | **Implemented**, including variable-length and enterprise fields (§2.1) |
-| sFlow v5 | 6343/udp | Not implemented — samples packet headers rather than exporting flow records, so none of this machinery transfers |
+| sFlow v5 | 6343/udp | **Implemented** (ADR-026): flow samples and expanded flow samples, with raw packet headers and the switch, router and gateway extensions (§2.3) |
 
-The collector listens on **both 2055 and 4739** and reads the version from the
-datagram, so any of the three formats works on either port. An exporter that
+The collector listens on **2055, 4739 and 6343** and reads the format from the
+datagram, so any of the four formats works on any of the ports. An exporter that
 cannot be told which port to use will use its convention, and meeting both is
 cheaper than making every operator translate.
 
@@ -199,6 +208,50 @@ what that volume consisted of. Presenting a sampled flow total beside an SNMP
 counter as though both were measured the same way is a misrepresentation, not a
 rounding difference.
 
+### 2.3 sFlow
+
+sFlow is not a flow export. An sFlow agent samples one packet in N, copies the
+first bytes of its header, and sends that sample with the interface it crossed
+and the sampling rate. NetInv turns **each sample into one record**: addresses,
+ports, protocol, TOS and TCP flags parsed from the copied Ethernet/802.1Q/IP
+header (IPv4 and IPv6), bytes = frame length × rate, packets = rate. The
+extended switch (VLANs), router (next hop, masks) and gateway (BGP next hop, AS
+path) records fill what the header cannot. An sFlow record therefore has no
+duration and no start or end time, and its TCP flags are one packet's, not the
+OR across a flow.
+
+The datagram is told apart from NetFlow by its first four bytes: sFlow's
+version is a 32-bit 5, so its first two bytes read as 0, a version no NetFlow or
+IPFIX packet carries. Counter samples are skipped — interface counters come from
+SNMP. The bounds that matter on an unauthenticated port are in the decoder: at
+most 512 samples per datagram, 64 records per sample and 256 AS-path entries,
+and every length checked against what remains.
+
+### 2.4 Fields kept for raw storage
+
+The aggregates read only addresses, ports, protocol, TOS, AS, masks, TCP flags
+and counters. Raw storage (§7) keeps everything below as well, each **zero
+when the export did not carry it** — an exporter sends what its template
+names, and most send a fraction of this.
+
+| Field | NetFlow v9 / IPFIX element | Notes |
+|---|---|---|
+| Start / end time | 22/21 (uptime-relative), 150–153 (absolute), 160 (IPFIX boot time) | v5 and v9 convert uptime with the header's own uptime/Unix pair, safe across the 49.7-day wrap |
+| Source / destination MAC | 56, 81 / 80, 57 | Stored as 48-bit integers |
+| VLAN | 58, 59, 243 | Priority bits masked off |
+| Next hop / BGP next hop | 15, 62 / 18, 63 | v5 carries the next hop too |
+| Direction | 61 | Stored 1 ingress, 2 egress, 0 unknown |
+| ICMP type/code | 32, 139 | type<<8 \| code |
+| Application | 95 (id, shown `engine:selector`), 96 (name) | NBAR, App-ID, FortiOS application control |
+| NAT translation | 225–228, 281, 282 | Post-NAT addresses and ports |
+| Firewall event | 233, Cisco ASA 40005 | 1 created, 2 deleted, 3 denied, 4 alert, 5 update |
+| User | 371, Cisco ASA 40000 | Cut at 128 bytes, kept to valid UTF-8 |
+| Sampling rate | — | The 1-in-N the counters were scaled by; 1 when unsampled |
+
+A record carrying its own inline sampling rate is scaled by it and **not** again
+by the exporter's options-template rate; before ADR-026 both applied, which
+would have reported N² times the traffic for an exporter that sent both.
+
 ## 3. What it writes
 
 Two metrics, both counters over the aggregation interval:
@@ -276,8 +329,9 @@ The dimensions:
   byte). At most 256 values by construction.
 
 The protocol, DSCP and AS dimensions were added (2026-10-23) for the flow API
-(doc 09 §7.1), and subnet and TCP flags the same day. They are aggregates like the rest; no further v9 field is stored,
-and a field the collector does not read is skipped by its declared length.
+(doc 09 §7.1), and subnet and TCP flags the same day. They are aggregates like
+the rest. The further fields of §2.4 go only to raw storage (§7), and a field
+the collector does not read at all is skipped by its declared length.
 
 ### 3.1 Device attribution
 
@@ -320,15 +374,25 @@ interval, and the two are independent on purpose.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `NETINV_FLOW_ADDR` | `:2055,:4739` | Comma-separated UDP listen addresses |
+| `NETINV_FLOW_ADDR` | `:2055,:4739,:6343` | Comma-separated UDP listen addresses |
 | `NETINV_FLOW_ALLOW` | *(empty)* | Comma-separated CIDRs or bare addresses |
 | `NETINV_FLOW_TOPN` | `25` | Buckets kept per interface per dimension per interval (§1) |
 | `NETINV_VM_URL` | — | VictoriaMetrics write endpoint |
+| `NETINV_FLOW_CH_URL` | *(empty: no raw storage)* | ClickHouse HTTP endpoint (§7); Compose sets `http://clickhouse:8123` |
+| `NETINV_FLOW_CH_USER` / `_PASSWORD` | — | Compose uses `netinv` and `CH_PASSWORD` from `.env` |
+| `NETINV_FLOW_RAW_RETENTION` | `30` | Days of raw flows (`30` or `30d`) |
+| `NETINV_FLOW_ROLLUP_RETENTION` | `365` | Days of hourly rollups |
+| `NETINV_FLOW_GEO_DIR` | `/var/lib/netinv-flow/geo` | Where the enrichment databases are read from (§7.4) |
+
+The api reads the four `NETINV_FLOW_CH_*`/retention variables as well — it
+serves the explorer and needs to know where raw data ends — so set them on
+both, as the Compose overlay does.
 
 A bare address in `NETINV_FLOW_ALLOW` becomes a `/32` or `/128`, which is what
 an operator listing a single exporter means.
 
-The Compose stack publishes `2055/udp` and `4739/udp` from the `flow` service.
+The Compose stack publishes `2055/udp`, `4739/udp` and `6343/udp` from the
+`flow` service.
 Every listed address must bind or the service fails to start: a partial bind
 would leave the collector listening on some ports and silently deaf on others,
 which looks exactly like an exporter that is not sending. If NetInv runs
@@ -353,10 +417,10 @@ everything else NetInv does.
 
 Four things apply on every platform and cause most first-attempt failures:
 
-1. **Send NetFlow or IPFIX, not sFlow.** v5, v9 and IPFIX are all decoded;
-   sFlow is not, and an exporter sending it looks exactly like one sending
-   nothing (§5 tells the two apart). Prefer **v9 or IPFIX** — they are
-   equivalent here, and both carry IPv6 where v5 cannot.
+1. **Prefer NetFlow v9 or IPFIX.** v5, v9, IPFIX and sFlow are all decoded,
+   but v9 and IPFIX carry the most (IPv6, timestamps, NAT, application, user —
+   §2.4), while sFlow is sampled headers with no duration (§2.3) and v5 is
+   IPv4-only.
 2. **Set the active timeout to 1 minute.** Defaults are typically 30 minutes:
    a long-lived transfer is then reported once per half hour, as one enormous
    record, and the chart shows a spike surrounded by nothing rather than a
@@ -681,7 +745,136 @@ rather than a note in this document:
 The read buffer is a full 65535 bytes so an oversized datagram is rejected as
 malformed rather than silently truncated into a plausible-looking short packet.
 
-## 7. The UI
+**Raw storage changes what a spoofed sender can do, not whether it can.** With
+ClickHouse configured, every accepted flow becomes a row, so a sender passing
+the allow-list can now fill disk rather than only bend the aggregates. The
+writer's queue is bounded (§7.5) and the TTL bounds how long rows live, but
+neither bounds the rate at which rows arrive — on an untrusted segment,
+`NETINV_FLOW_ALLOW` and a firewall rule matter more than they did. ClickHouse
+itself is not published outside the host: the Compose file binds 8123 to
+localhost for development, and it has its own password (`CH_PASSWORD`, generated
+by `quickstart.sh` and added by `upgrade.sh` to an older `.env`).
+
+## 7. Raw flow storage (ADR-026)
+
+### 7.1 What is stored
+
+`netinv-flow` hands every decoded packet to a raw writer after the aggregator
+(`flow.RawSink`; the aggregator goes first because it is the path that must not
+miss). The writer turns each record into one row of `netinv_flow.flows`
+(doc 08 §9): received time, start/end, exporter, format, sampling rate,
+interfaces, addresses, ports, protocol, TOS, TCP flags, AS numbers and names,
+countries, masks, MACs, VLANs, next hops, direction, ICMP type, application,
+NAT, firewall event, user, bytes and packets. Rows are partitioned by day and
+ordered by `(exporter, received)`, because nearly every question is scoped to a
+device and a window.
+
+**Time is the received time.** Exporters flush on their own timeouts — UniFi's
+active timeout is 5 minutes (§4.2) — so a long flow's bytes land at the moment
+the exporter reported them, as they do in the aggregates. Start and end are kept
+for the individual-flow view, not used to spread bytes over time.
+
+The collector owns the schema and applies it at every start
+(`flowstore.EnsureSchema`), idempotently; a changed retention is applied with
+`ALTER … MODIFY TTL` only when it differs. ClickHouse may start after the
+collector, so the schema is retried every 10 s in the background while the
+writer queues.
+
+### 7.2 The hourly rollup
+
+A materialized view sums every inserted block into `netinv_flow.flows_1h`
+(SummingMergeTree), keyed by hour, exporter, interfaces, addresses, ports,
+protocol, TOS, AS, country, VLAN, direction, application and format, with
+bytes, packets and a flow count. It **drops what makes rows unique**: MAC, NAT,
+user, TCP flags, next hop, and ephemeral ports — a port ≥ 32768 is stored as 0,
+so a client's random source port does not make every connection its own row.
+
+The explorer reads the rollup when the window starts before the raw data does,
+or is longer than 7 days and uses only rollup fields. A query that needs a
+raw-only field past the raw retention is refused with the field named, rather
+than answered from a table that does not have it. Rollup rows for one key
+arriving in different blocks are summed by merges later, so every query on it
+`sum()`s — a rollup row is never read as final.
+
+### 7.3 Sizing
+
+Raw storage grows with **flows per second**, not with devices. Measured on the
+generator with every field populated: **~46 bytes per flow** compressed in the
+raw table and ~18 per rollup row. Real exporters fill fewer fields and repeat
+more, so treat these as an upper bound:
+
+| Flows/s | Per day | 30 days raw |
+|---|---|---|
+| 10 | 0.86 M flows, ~40 MB | ~1.2 GB |
+| 100 | 8.6 M, ~400 MB | ~12 GB |
+| 1 000 | 86 M, ~4 GB | ~120 GB |
+
+The rollup is bounded by distinct host pairs × services per hour, which for
+most networks is far below the raw count; with random traffic (the generator)
+it is not, which is the case to plan for if the network is mostly scans.
+Platform → Capacity does not include ClickHouse yet; the Flows page header shows
+rows and bytes on disk from `system.parts`.
+
+`deploy/clickhouse/netinv.xml` caps the server at 2 GB of memory and switches off
+ClickHouse's own diagnostic logs (query, trace, metric, part logs), which
+otherwise write continuously and grow without a TTL. It idles at ~150 MB.
+
+### 7.4 Enrichment: country and AS name
+
+With the databases present, every row gets a source and destination country,
+AS numbers where the exporter left them zero, and AS names. The data is **not in
+the repository**: `scripts/fetch-flow-geo.sh` downloads iptoasn's
+`ip2asn-combined` (PDDL, public domain) and DB-IP's country lite (CC BY 4.0) into
+`flow-geo/`, which the Compose overlay mounts read-only. The collector reloads
+them within 5 minutes of the files changing, so the monthly refresh needs no
+restart. Both together load in ~1.3 s into ~41 MB, and a lookup takes ~66 ns.
+
+DB-IP's licence requires the visible credit "IP Geolocation by DB-IP"; the Flows
+page shows it whenever country data is loaded. Enrichment happens at write time
+and is not backfilled: rows written before the files existed stay without
+country.
+
+### 7.5 Operating it
+
+- **The writer never blocks intake.** It queues up to 1 000 000 rows; past
+  that, new flows are dropped from raw storage and counted, while the aggregates
+  carry on. An insert that fails is retried with the same deduplication token,
+  so a timeout after a successful write does not double-count — in the raw
+  table or in the rollup, which carries its own deduplication window for that
+  reason.
+- **The collector reports itself** to `netinv_flow.collector_status` every
+  minute: rows written, dropped, failed inserts, queue depth, and how many
+  enrichment ranges are loaded. The Flows page and `GET /flow/explore/status`
+  read it. `flow raw queue full` in the log is the drop warning.
+- **Raw flows are not backed up** by `scripts/backup.sh` (ADR-026). A restored
+  deployment has 2 years of aggregates and no raw flows until new ones arrive.
+- **Turning it off** is unsetting `NETINV_FLOW_CH_URL` on `flow` and `api`; the
+  page then explains how to turn it on. The `clickhouse` service still runs
+  unless removed from the stack.
+
+## 8. The UI
+
+### 8.1 The Flows page
+
+`/flows` (doc 30 §5c) is the explorer over §7. Its whole state is in the URL, so
+a view can be bookmarked or pasted; the device Flow tab links to it with the
+device already filtered.
+
+- **Group by** up to four fields, with the top 5–100 groups by bits/s,
+  packets/s or flows/s. Interfaces are keyed as `exporter|ifIndex` — an
+  ifIndex means nothing across devices — and named from inventory.
+- **Filters** on any field, `is` / `is not`, several values ORed; addresses take
+  CIDR prefixes. "Either end" fields (address, port, AS, country, VLAN) match
+  source or destination. **Clicking any value** in a table or the Sankey adds
+  it as a filter, which is how an investigation narrows.
+- **A time-series chart** of the top groups and the total; a **Sankey** when
+  grouping by exactly two fields; a **table** with share bars and CSV export;
+  and **individual flows**, newest or largest first, with columns the exporter
+  never fills left out.
+- The header states which store answered (raw or hourly rollup), how many flows
+  are stored and on how much disk, and any drops.
+
+### 8.2 The device Flow tab
 
 A **Flow** tab on device detail (doc 30) reads these series directly through the
 metrics proxy. Two things about it are worth knowing before changing it:
@@ -700,25 +893,25 @@ is labelled as such: with traffic covering only part of a long window, that
 average sits far below the peak on the chart beside it, and an unlabelled
 number invites the reader to think one of the two is wrong.
 
-## 8. What this increment does not include
+## 9. What this increment does not include
 
 Stated explicitly so nobody reads §2's table as a to-do list that is nearly
 finished:
 
-- **sFlow is not implemented.** It samples packet headers rather than exporting
-  flow records, so none of the template machinery here transfers — it needs a
-  decoder of its own.
+- **sFlow counter samples are ignored**, and sFlow from real hardware has not
+  been seen; the decoder is tested against generated datagrams and fuzzed.
+- **Raw storage is not in Platform → Capacity**, not backed up, and has no
+  alert of its own for a full queue — the log line and the Flows page header
+  are what show it.
 - **No IPv6 exporter transport.** Flow *about* IPv6 traffic works (v9 carries
   it); the collector still listens on UDP over IPv4 only.
 - **Template state is not persisted across a restart.** It could be, and that
   would remove the 10-20 minute gap after a restart, but it means writing
   attacker-influenced state to disk — see ADR-022 before deciding that is worth
   it.
-- **The UI does not use the flow API yet.** `/flow/top`, `/flow/series` and
-  `/flow/exporters` (doc 09 §7.1) exist for other applications, authenticated
-  with API tokens; the Flow tab and dashboard panel still read the series
-  through the metrics proxy, and do not offer the protocol, DSCP or AS
-  dimensions.
+- **The Flow tab and dashboard panel still read the aggregates** through the
+  metrics proxy. The Flows page (§8.1) is where the protocol, DSCP, AS and
+  every other field are.
 - **Only one real exporter, on one platform, in one format.** A UniFi gateway
   exporting v5 is now validated end to end (§4.2). v9, IPFIX, IPv6 and
   options-record sampling have been exercised only against a generated source,

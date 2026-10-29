@@ -2,7 +2,7 @@
 
 **Status:** review · **Depends on:** 05, 15, 16
 
-PostgreSQL 16. Conventions: PKs are ULIDs stored as `text` (sortable, generatable app-side, merge-safe) except append-heavy tables which use `bigint identity`. All timestamps `timestamptz` UTC. Every business table carries `tenant_id text NOT NULL DEFAULT 't_default'` (ADR-005; FK to `platform.tenants`; composite indexes lead with it only when multi-tenancy activates — v1 indexes omit it for size). Soft-state uses `status` enums (Postgres `CREATE TYPE`). Schemas per bounded context: `iam`, `platform`, `inventory`, `maps`, `alerting`, `notify`, `audit`, `config`. Migrations via `goose`, expand-migrate-contract (NFR-51). Time-series data lives in VictoriaMetrics, **not** here (doc 05 §6).
+PostgreSQL 16. Conventions: PKs are ULIDs stored as `text` (sortable, generatable app-side, merge-safe) except append-heavy tables which use `bigint identity`. All timestamps `timestamptz` UTC. Every business table carries `tenant_id text NOT NULL DEFAULT 't_default'` (ADR-005; FK to `platform.tenants`; composite indexes lead with it only when multi-tenancy activates — v1 indexes omit it for size). Soft-state uses `status` enums (Postgres `CREATE TYPE`). Schemas per bounded context: `iam`, `platform`, `inventory`, `maps`, `alerting`, `notify`, `audit`, `config`. Migrations via `goose`, expand-migrate-contract (NFR-51). Time-series data lives in VictoriaMetrics, **not** here (doc 05 §6); raw flow records live in ClickHouse (section below, ADR-026).
 
 ## Schema `iam`
 
@@ -162,6 +162,23 @@ Append-only (FR-AUD-02): `id bigint identity` PK · `tenant_id` NN · `at timest
 
 ### user_preferences
 `user_id` PK FK iam.users CASCADE · `theme` NN DEFAULT 'system' · `landing_page` · `timezone` · `prefs jsonb`.
+
+## ClickHouse database `netinv_flow` (ADR-026)
+
+Not PostgreSQL: raw flow records live in ClickHouse, because a flow is a wide
+event and the volume is per packet stream rather than per device. Owned by
+`netinv-flow`, which creates and alters it at start (`flowstore.EnsureSchema`);
+there are no goose migrations for it. Read by the api's flow explorer only.
+Doc 34 §7 has the design; this is the shape.
+
+### flows
+`received DateTime64(3)` · `time_start` / `time_end DateTime64(3)` (zero = not exported) · `exporter IPv6` · `type` (`netflow5`, `netflow9`, `ipfix`, `sflow`) · `sampling UInt32` · `in_if` / `out_if UInt32` · `src_addr` / `dst_addr IPv6` (IPv4 mapped) · `src_port` / `dst_port UInt16` · `proto` · `tos` · `tcp_flags UInt8` · `src_as` / `dst_as UInt32` · `src_as_name` / `dst_as_name` / `src_country` / `dst_country` (enrichment, doc 34 §7.4) · `src_mask` / `dst_mask` · `src_mac` / `dst_mac UInt64` · `src_vlan` / `dst_vlan UInt16` · `next_hop` / `bgp_next_hop IPv6` · `direction UInt8` (1 ingress, 2 egress) · `icmp_type UInt16` · `app_id` / `app_name` · `nat_src_addr` / `nat_dst_addr IPv6` · `nat_src_port` / `nat_dst_port` · `fw_event UInt8` · `user` · `bytes` / `packets UInt64`. MergeTree, `PARTITION BY toYYYYMMDD(received)`, `ORDER BY (exporter, received)`, `TTL received + NETINV_FLOW_RAW_RETENTION days` with `ttl_only_drop_parts`, and a deduplication window of 1000 inserts so a retried batch is not stored twice.
+
+### flows_1h
+Hourly rollup filled by the materialized view `flows_1h_mv` on every insert into `flows`. Keeps hour, exporter, format, interfaces, addresses, ports (≥ 32768 stored as 0), protocol, TOS, AS numbers and names, countries, VLANs, direction and application, with `bytes`, `packets` and `flows` summed. SummingMergeTree with all kept columns in the sorting key; `PARTITION BY toYYYYMM(hour)`, `TTL hour + NETINV_FLOW_ROLLUP_RETENTION days`, with its own deduplication window.
+
+### collector_status
+One row a minute from the collector: rows written, dropped, failed inserts, queue depth, enrichment ranges loaded. ReplacingMergeTree, 7-day TTL. Read by `GET /flow/explore/status`.
 
 ## ER diagram (core relationships)
 

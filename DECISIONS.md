@@ -122,7 +122,7 @@ Decisions ADR-001 … ADR-017 were made with the product owner on **2026-08-07**
 ---
 
 ## ADR-020: Flow collection is aggregate-only; raw per-flow storage stays deferred
-**Status:** accepted (2026-08-10, amends ADR-004's category-11 deferral)
+**Status:** accepted (2026-08-10, amends ADR-004's category-11 deferral; the "raw per-flow storage stays deferred" half is amended by ADR-026, 2026-10-29)
 **Context:** "What is actually filling this link?" is the question interface counters cannot answer, and it is the most common follow-up to a utilization alert. Flow export (NetFlow v5/v9, IPFIX, sFlow) answers it. The reason it was deferred is not that it is unwanted but that flow data is shaped nothing like the rest of the platform: a flow record is a wide event keyed by source, destination, port and protocol, and storing those as time series would multiply cardinality by every host pair on the network. A single busy link can produce more distinct series in an hour than the entire device fleet produces in a year.
 **Decision:** Add a `netinv-flow` collector that receives NetFlow and sFlow and **aggregates at ingest**, writing only bounded-cardinality series to VictoriaMetrics: top-N talkers, conversations and applications per interface per interval. Raw per-flow records are not stored. Full per-flow retention with a columnar store (ClickHouse) remains deferred and needs its own ADR.
 **Rationale:** The aggregate answers the operational question — which hosts, which conversations, which ports are consuming a link — at a cardinality the existing stack already handles, with no new datastore to run, back up or secure. That matters more here than completeness: every stateful dependency added is one an operator must understand, and ADR-013 already chose fewer of them deliberately. The forensic questions raw flows answer ("every flow from this host last Tuesday") are a different product with a different cost, and conflating the two is how a monitoring tool acquires a database it cannot justify.
@@ -162,7 +162,7 @@ Decisions ADR-001 … ADR-017 were made with the product owner on **2026-08-07**
 - **v9 carries IPv6**, so dual-stack links are reported whole for the first time. The aggregator needed no change; addresses were already strings.
 - The cache key includes the protocol version, because v9 and IPFIX number templates independently: one exporter can use ID 256 for two different layouts, and a shared key would let each overwrite the other.
 - The collector listens on 2055 and 4739 and reads the version from the datagram, so any format works on either port. Every configured address must bind or the service fails to start — a partial bind would be silently deaf on one port while looking healthy.
-- sFlow still needs a decoder of its own.
+- sFlow still needs a decoder of its own. *(Added by ADR-026, 2026-10-29.)*
 
 ---
 
@@ -207,3 +207,20 @@ Decisions ADR-001 … ADR-017 were made with the product owner on **2026-08-07**
 - **Vendor trap names are generated from MIB text, not observed.** The Fortinet and Palo Alto names (doc 36 §3) have not been compared with a real device's traps. Like the connectors in ADR-023, this is stated rather than assumed.
 - Link, restart and authentication traps duplicate what polling already alerts on, except authentication failure, which polling cannot see. The built-in rules alert on authentication failure (warning) and on everything else not already covered (info).
 - Not in the Helm chart, which is paused (ADR-024).
+
+---
+
+## ADR-026: Raw flow records are stored in ClickHouse, beside the aggregates
+**Status:** accepted (2026-10-29, amends ADR-020's "raw per-flow storage stays deferred")
+**Context:** ADR-020 answered "what is filling this link?" with top-N aggregates in VictoriaMetrics and deferred per-flow storage to its own ADR, naming ClickHouse. Using the aggregates has shown where they stop: anything outside an interval's top N was never written, so "every flow from this host on Tuesday" and "who else talked to that address" cannot be answered; every new dimension is another family of series; and the fields an operator reaches for second — MAC, VLAN, next hop, NAT translation, application, user — have nowhere to go. The owner asked for raw storage, more fields, sFlow, GeoIP/ASN naming and a dedicated page. The dev box it is built on now has 8 cores and 16 GB, so the memory argument that kept a columnar store out no longer applies there.
+**Decision:** `netinv-flow` additionally writes every decoded flow to **ClickHouse** (`clickhouse` service, Compose `app` profile, not published to the host), into a raw table kept for `NETINV_FLOW_RAW_RETENTION` (default **30 days**) and an hourly rollup kept for `NETINV_FLOW_ROLLUP_RETENTION` (default **365 days**), both enforced by ClickHouse TTL. The collector owns the schema and applies it at start. The VictoriaMetrics aggregates of ADR-020 are kept unchanged — the dashboard panel, the stale-exporter alerts and `GET /flow/top|series|exporters` keep reading them. A new explorer API and a dedicated **Flows** page read ClickHouse (doc 34). The decoders gain timestamps, MAC, VLAN, next hop, direction, ICMP type, application ID, NAT translation, firewall event and user; an **sFlow v5** decoder is added (UDP 6343); and flows are optionally enriched with country and AS name from offline databases the operator downloads.
+**Rationale:** A wide event wants a columnar store, and ClickHouse is what the open-source flow tools converged on (Akvorado, ntopng's ClickHouse mode): compressed, ~20-40 bytes a flow on disk, and fast group-bys over billions of rows. Keeping the aggregates means nothing that works today depends on the new store, and a deployment can lose or drop ClickHouse and still have the flow features it had before. TTL in the store, rather than a pruning job, means retention cannot silently stop.
+**Consequences:**
+- **A fifth stateful service** to run, secure and size — exactly the cost ADR-020 and ADR-013 weighed. It runs on the internal network only, with its own password (`CH_PASSWORD`). Its disk use is reported as raw flow volume, not series, and doc 34 carries the sizing arithmetic.
+- **The raw writer never blocks intake.** It has a bounded queue; when ClickHouse is down or slow, flows are dropped from raw storage and counted, while the aggregates continue. Raw storage is therefore best-effort, the aggregates authoritative for continuity.
+- **Raw flows and rollups are not in `scripts/backup.sh`.** They are high-volume, short-lived forensic data. A restored deployment has flow history from its aggregates (2 years, VictoriaMetrics) and none from ClickHouse until new flows arrive.
+- **The rollup drops what makes rows unique** — MAC, NAT, user, TCP flags, next hop, and ephemeral ports (≥ 32768 are recorded as 0) — so a query reaching past the raw retention can group only by the dimensions the rollup keeps, and the API says which those are.
+- **GeoIP and AS-name data are not in the repository.** `scripts/fetch-flow-geo.sh` downloads iptoasn's `ip2asn-combined` (PDDL, public domain) and DB-IP's country lite (CC BY 4.0, which requires the visible "IP Geolocation by DB-IP" credit the Flows page shows when it is loaded). Without them flows are stored without country, and AS numbers only where the exporter filled them.
+- **sFlow is sampled packet headers, not flows.** Each sample becomes one record scaled by its sampling rate; there is no duration and no TCP-flag accumulation.
+- The explorer is gated on `metrics:read`, like the aggregates. Raw flows show host-level detail; a separate permission is a possible later refinement.
+- Not in the Helm chart (ADR-024).

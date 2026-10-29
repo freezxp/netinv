@@ -49,7 +49,7 @@
 - **Frontend work:** 30, 09, 14, 02.
 - **Ops/deploy:** 18, 19, 21, 22, 25, 04; single-host installs 32 (Docker Compose) and 33 (Proxmox LXC); Kubernetes 35 (procedure) on top of 19 (design).
 - **Product/management:** 01, 02, 26, 27, 28, 29.
-- **Flow (NetFlow/sFlow):** 34, then ADR-020 in `/DECISIONS.md` for why it aggregates rather than stores.
+- **Flow (NetFlow/IPFIX/sFlow):** 34, then ADR-020 in `/DECISIONS.md` for why it aggregates, and ADR-026 for why it now also stores every flow in ClickHouse.
 - **SNMP traps:** 36, then ADR-025 for why traps are in and syslog is not.
 
 ## Conventions

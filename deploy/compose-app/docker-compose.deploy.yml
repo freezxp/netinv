@@ -33,6 +33,13 @@ services:
       # cookies would never be sent back and login would appear to succeed and
       # then immediately fail.
       NETINV_INSECURE_COOKIES: ${NETINV_INSECURE_COOKIES:-0}
+      # The flow explorer reads the raw store (ADR-026) and needs the same
+      # retention the collector applies, to know where raw data ends.
+      NETINV_FLOW_CH_URL: http://clickhouse:8123
+      NETINV_FLOW_CH_USER: netinv
+      NETINV_FLOW_CH_PASSWORD: ${CH_PASSWORD:-netinv-dev}
+      NETINV_FLOW_RAW_RETENTION: ${NETINV_FLOW_RAW_RETENTION:-30}
+      NETINV_FLOW_ROLLUP_RETENTION: ${NETINV_FLOW_ROLLUP_RETENTION:-365}
 
   scheduler:
     restart: unless-stopped
@@ -94,10 +101,19 @@ services:
   flow:
     restart: unless-stopped
     profiles: [app]
-    ports: ["2055:2055/udp", "4739:4739/udp"]
+    ports: ["2055:2055/udp", "4739:4739/udp", "6343:6343/udp"]
     environment:
       NETINV_VM_URL: http://victoriametrics:8428
-      NETINV_FLOW_ADDR: ":2055,:4739"
+      # NetFlow, IPFIX and sFlow on their conventional ports.
+      NETINV_FLOW_ADDR: ":2055,:4739,:6343"
+      # Raw per-flow storage (ADR-026). Unset NETINV_FLOW_CH_URL to keep the
+      # collector aggregate-only.
+      NETINV_FLOW_CH_URL: http://clickhouse:8123
+      NETINV_FLOW_CH_USER: netinv
+      NETINV_FLOW_CH_PASSWORD: ${CH_PASSWORD:-netinv-dev}
+      # Days of raw flows, and of hourly rollups (doc 34 §7.3 sizes them).
+      NETINV_FLOW_RAW_RETENTION: ${NETINV_FLOW_RAW_RETENTION:-30}
+      NETINV_FLOW_ROLLUP_RETENTION: ${NETINV_FLOW_ROLLUP_RETENTION:-365}
       # Buckets kept per interface per dimension per interval. Unset uses the
       # built-in default; raise it for more depth on a small fleet, lower it on
       # a large one — the cost is series (doc 34 §1).
@@ -107,6 +123,12 @@ services:
       # it mirrors too — otherwise a backup holds everything except the
       # traffic composition.
       NETINV_VM_MIRROR_URL: ${NETINV_VM_MIRROR_URL:-}
+    # Country and AS-name data for enrichment, downloaded by
+    # scripts/fetch-flow-geo.sh into flow-geo/ at the repository root (not
+    # committed: the databases have their own licences). Empty is fine —
+    # flows are then stored without country or AS name.
+    volumes:
+      - ${NETINV_FLOW_GEO_DIR:-./flow-geo}:/var/lib/netinv-flow/geo:ro
 
   # SNMP trap intake (ADR-025, doc 36) — the second service that accepts
   # unsolicited network input. v1/v2c carry only a community string, which

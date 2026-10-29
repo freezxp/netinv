@@ -31,6 +31,9 @@ frontend/playwright-report/
 # deploy/compose-app/make-cert.sh, or replaced with a real certificate. A
 # private key must never reach this repository — it is public (ADR-019).
 deploy/compose-app/certs/
+# Flow enrichment databases (scripts/fetch-flow-geo.sh): third-party data
+# under its own licences, downloaded per deployment, never committed.
+flow-geo/
 *.key
 *.pem
 

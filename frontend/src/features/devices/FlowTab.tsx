@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 
 import {
   flowRateExpr,
@@ -197,6 +198,14 @@ export function FlowTab({
             sampled — estimated
           </span>
         )}
+        {/* The summaries here are top-N per interface; the explorer has
+            every flow this device exported, any field, any filter. */}
+        <Link
+          to={`/flows?d=${encodeURIComponent(deviceID)}&g=src_addr,dst_addr${ifIndex ? `&f=in_if~${ifIndex}` : ""}`}
+          className="ml-auto text-sm text-sky-700 hover:underline dark:text-sky-300"
+        >
+          Explore every flow →
+        </Link>
       </div>
 
       <p className="text-xs text-slate-500 dark:text-slate-400">

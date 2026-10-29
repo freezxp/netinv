@@ -59,6 +59,29 @@ services:
       timeout: 3s
       retries: 10
 
+  # Raw flow records (ADR-026, doc 34 §7). Part of the data tier like the
+  # other stores; only netinv-flow writes to it and only the api reads it.
+  # Published on localhost only, for `make dev` — nothing outside the host
+  # needs it.
+  clickhouse:
+    restart: unless-stopped
+    image: clickhouse/clickhouse-server:26.3.50.11
+    environment:
+      CLICKHOUSE_USER: netinv
+      CLICKHOUSE_PASSWORD: ${CH_PASSWORD:-netinv-dev}
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "0"
+    ports: ["127.0.0.1:8123:8123"]
+    volumes:
+      - chdata:/var/lib/clickhouse
+      - ./deploy/clickhouse/netinv.xml:/etc/clickhouse-server/config.d/netinv.xml:ro
+    ulimits:
+      nofile: { soft: 262144, hard: 262144 }
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8123/ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
   snmpsim:
     restart: unless-stopped
     image: tandrup/snmpsim
@@ -103,7 +126,7 @@ services:
     profiles: [app]
     build: { context: ., dockerfile: backend/Dockerfile, args: { SERVICE: flow } }
     environment: *appenv
-    ports: ["2055:2055/udp", "4739:4739/udp"]
+    ports: ["2055:2055/udp", "4739:4739/udp", "6343:6343/udp"]
   events:
     restart: unless-stopped
     profiles: [app]
@@ -126,3 +149,4 @@ services:
 volumes:
   pgdata:
   vmdata:
+  chdata:

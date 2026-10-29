@@ -35,6 +35,7 @@ const nav: { section: string; items: NavItem[] }[] = [
     items: [
       { to: "/inventory", label: "Inventory", icon: "inventory" },
       { to: "/interfaces", label: "Interfaces", icon: "ports" },
+      { to: "/flows", label: "Flows", icon: "flows" },
       { to: "/maps", label: "Weathermaps", icon: "maps" },
       { to: "/alerts", label: "Alerts", icon: "alerts" },
       { to: "/traps", label: "Traps", icon: "traps" },

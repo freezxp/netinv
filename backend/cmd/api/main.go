@@ -13,6 +13,7 @@ import (
 	"os"
 	"time"
 
+	"strconv"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -33,6 +34,7 @@ import (
 	eventhttp "github.com/freezxp/netinv/backend/internal/events/adapters/httpapi"
 	eventpg "github.com/freezxp/netinv/backend/internal/events/adapters/postgres"
 	"github.com/freezxp/netinv/backend/internal/flowquery"
+	"github.com/freezxp/netinv/backend/internal/flowstore"
 	"github.com/freezxp/netinv/backend/internal/iam/adapters/httpapi"
 	"github.com/freezxp/netinv/backend/internal/iam/adapters/lockout"
 	iampg "github.com/freezxp/netinv/backend/internal/iam/adapters/postgres"
@@ -409,12 +411,20 @@ func main() {
 					Checker: checker,
 				}).Register(g)
 				reportVM := reports.NewVMReader(vmURL)
+				flowBook := &flowquery.Store{Pool: pool}
 				(&flowquery.Handler{
 					Svc: &flowquery.Service{
-						Book: &flowquery.Store{Pool: pool}, Metrics: reportVM,
+						Book: flowBook, Metrics: reportVM,
 						MaxRange: config.Retention(),
 					},
 					Checker: checker,
+				}).Register(g)
+				// The raw flow explorer (ADR-026). Registered either way: with
+				// no ClickHouse its status endpoint says so, and the Flows page
+				// explains how to turn it on.
+				(&flowquery.Explorer{
+					CH: flowCH(), Book: flowBook, Ifaces: flowBook,
+					Checker: checker, Retention: flowRetention(),
 				}).Register(g)
 				(&reports.Handler{
 					Svc: &reports.Service{
@@ -562,4 +572,31 @@ func connectorMatcher(pool *pgxpool.Pool) colapp.ConnectorMatcher {
 		}
 		return best
 	}
+}
+
+// flowCH returns the raw flow store client, or nil when none is configured.
+// The api reads the same variables as netinv-flow, so both sides agree on
+// where the store is and how long it keeps data.
+func flowCH() *flowstore.Client {
+	u := os.Getenv("NETINV_FLOW_CH_URL")
+	if u == "" {
+		return nil
+	}
+	return flowstore.NewClient(u, os.Getenv("NETINV_FLOW_CH_USER"), os.Getenv("NETINV_FLOW_CH_PASSWORD"))
+}
+
+// flowRetention reads the retention netinv-flow applies, for the explorer to
+// know where raw data ends. A malformed value falls back to the default here:
+// the collector is the one that refuses to start on it.
+func flowRetention() flowstore.Retention {
+	r := flowstore.DefaultRetention
+	for env, dst := range map[string]*int{
+		"NETINV_FLOW_RAW_RETENTION":    &r.RawDays,
+		"NETINV_FLOW_ROLLUP_RETENTION": &r.RollupDays,
+	} {
+		if n, err := strconv.Atoi(strings.TrimSuffix(strings.TrimSpace(os.Getenv(env)), "d")); err == nil && n > 0 {
+			*dst = n
+		}
+	}
+	return r
 }

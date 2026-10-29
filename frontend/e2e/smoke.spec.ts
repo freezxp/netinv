@@ -992,3 +992,13 @@ test("parallel links between the same nodes are drawn apart", async ({
 
   await deleteMap(request, created.id);
 });
+
+// The Flows page must explain itself on a deployment without raw flow
+// storage (ADR-026) rather than show query errors: CI's stack runs no
+// ClickHouse, which is exactly that deployment.
+test("the Flows page says when raw flow storage is not configured", async ({ page }) => {
+  await login(page);
+  await page.getByRole("link", { name: "Flows", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Flows" })).toBeVisible();
+  await expect(page.getByText("Raw flow storage is not configured")).toBeVisible();
+});

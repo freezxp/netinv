@@ -13,7 +13,11 @@ supported deployment for production too. See also the
 ## Prerequisites
 
 - **Docker** with the **Compose v2** plugin (`docker compose version` works).
-- ~4 GB RAM free and ports `8090, 5672, 15672, 8428, 8025, 1161/udp` available.
+- ~4 GB RAM free and ports `8090, 5672, 15672, 8428, 8025, 1161/udp` available
+  (plus `2055, 4739, 6343/udp` for flow and `127.0.0.1:8123` for ClickHouse, the raw flow store).
+- Optional: `./scripts/fetch-flow-geo.sh` downloads the country and AS-name
+  databases the Flows page uses (doc 34 §7.4); without them flows are stored
+  unenriched.
 - `git` and `openssl` (openssl ships with most systems).
 
 That's it — no Go, Node, or database install needed. The images build from

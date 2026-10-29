@@ -83,6 +83,14 @@ const paths: Record<string, React.ReactNode> = {
       <path d="M4 20V10M10 20V4M16 20v-7M22 20H2" />
     </>
   ),
+  flows: (
+    <>
+      <path d="M3 7h11" />
+      <path d="M11 4l3 3-3 3" />
+      <path d="M21 17H10" />
+      <path d="M13 14l-3 3 3 3" />
+    </>
+  ),
   traps: (
     <>
       <path d="M5 12a7 7 0 0 1 14 0" />

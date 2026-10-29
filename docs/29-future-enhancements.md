@@ -25,7 +25,7 @@ MAC table size, STP topology changes, errdisabled/storm-control (L2) · route/AR
 ## v1.3 — Events & early flow
 - **SNMP traps: delivered 2026-10-21** (ADR-025, doc 36) — v1/v2c traps and informs, stored per device and alerted through `netinv_snmp_trap`. Still deferred from this item: SNMPv3 traps, syslog, and correlation with alerts.
 - **Syslog + SNMP trap ingestion** (deferred C4, traps now delivered above): new intake service (`netinv-events`) → RabbitMQ → PG events store + correlation with alerts ("what changed when the graph bent" — PRD dashboard g). Seam: events.domain bus + recent-events panel already exist.
-- **Flows-lite:** sFlow/NetFlow v5 top-talkers only (category 11's highest-value slice) via a dedicated `netinv-flow` collector writing aggregated (not per-flow) series to VM — full IPFIX with raw-flow storage (ClickHouse) is a separate later ADR; do not let flow storage decisions leak into v1.x.
+- **Flows-lite: delivered** (ADR-020/022), and then **raw flow storage: delivered 2026-10-29** (ADR-026, doc 34 §7) — every flow in ClickHouse with hourly rollups, sFlow, country/AS enrichment and the Flows page. Still open from this item: a flow-side alert (e.g. "new top talker"), Platform → Capacity for ClickHouse, and validation against real v9/IPFIX/sFlow exporters.
 
 ## v2.0 — Enterprise
 - **Keycloak/OIDC** (ADR-010 seam: `TokenVerifier` swap + SPA redirect flow; local accounts remain as break-glass).

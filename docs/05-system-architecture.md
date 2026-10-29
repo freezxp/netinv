@@ -30,7 +30,7 @@ Dependency rule: source arrows point inward only. DI is constructor injection wi
 | **Ingester** | `netinv-ingester` | Consumes metric batches: validates, enriches with inventory labels, computes derived metrics, writes VM; emits state-transition events | stateless | horizontal |
 | **Alerter** | `netinv-alerter` | Evaluates alert rules against VM (MetricsQL), manages alert lifecycle in PG, emits `alert.*` events; leader-elected | leader lease | active/standby |
 | **Notifier** | `netinv-notifier` | Consumes `alert.*` + routing policies → Email/Webhook/Slack, retries, delivery log | stateless | horizontal |
-| **Flow** | `netinv-flow` | Receives NetFlow v5/v9 and IPFIX on UDP 2055/4739, aggregates each interval to top-N talkers/conversations/applications and writes them to VM (ADR-020, doc 34) | v9/IPFIX template cache, in memory | **single replica** |
+| **Flow** | `netinv-flow` | Receives NetFlow v5/v9, IPFIX and sFlow on UDP 2055/4739/6343, aggregates each interval to top-N per interface and writes them to VM (ADR-020), and writes every flow to ClickHouse when configured (ADR-026, doc 34) | v9/IPFIX template cache and the raw-row queue, in memory | **single replica** |
 | **Events** | `netinv-events` | Receives SNMP v1/v2c traps and informs on UDP 162, attributes each to a device, stores it in PG and publishes a `netinv_snmp_trap` sample to `metrics.raw` for alerting (ADR-025, doc 36) | per-source rate buckets, in memory | **single replica** |
 
 The flow collector is the one service that does not scale horizontally, and the
@@ -49,7 +49,8 @@ Sync logic (doc 11) lives as an application service inside the API's Inventory c
 | Store | Owner(s) | Content |
 |---|---|---|
 | PostgreSQL 16 | API (sole writer for config/inventory), Alerter (alert state), Notifier (delivery log) | Everything in doc 08; schema-per-context (`iam`, `inventory`, `alerting`, `audit`, `platform`) |
-| VictoriaMetrics | Ingester (sole writer), Alerter+API (readers) | All time series; label schema §6 |
+| VictoriaMetrics | Ingester and `netinv-flow` (writers), Alerter+API (readers) | All time series; label schema §6 |
+| ClickHouse | `netinv-flow` (sole writer, owns the schema), API (reader) | Raw flow records and their hourly rollup (ADR-026, doc 08, doc 34 §7); optional |
 | Redis | shared, namespaced | dashboard aggregate cache, query cache, rate limits, login lockouts, distributed locks (`SET NX PX`), leader leases, refresh-token denylist |
 | RabbitMQ | topology below | jobs, metric batches, domain events, notifications |
 | Poller local disk | each poller | bounded overflow buffer (FR-COLL-08) |

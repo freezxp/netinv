@@ -1,18 +1,21 @@
-// Package flow decodes exported flow records and reduces them to the few
-// bounded-cardinality series NetInv keeps (ADR-020).
+// Package flow decodes exported flow records and delivers them two ways: as
+// the few bounded-cardinality series NetInv keeps in VictoriaMetrics
+// (ADR-020), and — when a ClickHouse store is configured — one row per flow
+// (ADR-026).
 //
-// Nothing here stores a flow. A flow record is a wide event keyed by source,
-// destination, port and protocol, and one busy link produces more distinct
-// keys in an hour than the whole device fleet produces series in a year. The
-// aggregator cuts to top-N before anything is written, which is why this
-// package can exist alongside VictoriaMetrics rather than needing a columnar
-// store of its own.
+// The two paths are deliberately independent. A flow record is a wide event
+// keyed by source, destination, port and protocol, and one busy link produces
+// more distinct keys in an hour than the whole device fleet produces series in
+// a year, so the aggregator cuts to top-N before anything reaches the metric
+// store; the raw rows go to a columnar store built for exactly that width.
+// Losing the raw store never touches the aggregates.
 package flow
 
 import (
 	"encoding/binary"
 	"fmt"
 	"net/netip"
+	"time"
 )
 
 // Record is one decoded flow, normalised across export formats.
@@ -47,6 +50,48 @@ type Record struct {
 	// Sampled is true when the numbers are an extrapolation rather than a
 	// count. It travels with the record so the UI can say so.
 	Sampled bool
+	// SamplingRate is the 1-in-N the counters were scaled by; 1 when the
+	// record is a full count.
+	SamplingRate uint32
+
+	// The fields below feed raw storage (ADR-026) only; the aggregator does
+	// not read them. Each is the zero value when the export did not carry it,
+	// which is the common case — an exporter sends what its template names.
+
+	// Start and End are the flow's first and last packet in wall-clock time,
+	// converted from the exporter's uptime-relative clock where that is how
+	// the format carries them. Zero when not exported.
+	Start, End time.Time
+	// SrcMAC and DstMAC as 48-bit integers, the form ClickHouse stores.
+	SrcMAC, DstMAC uint64
+	SrcVLAN        uint16
+	DstVLAN        uint16
+	// NextHop is the IP next hop; BGPNextHop the BGP one.
+	NextHop    netip.Addr
+	BGPNextHop netip.Addr
+	// Direction is 1 for ingress and 2 for egress as the exporter saw the
+	// flow, 0 when it did not say. (The wire value is 0/1; shifting it keeps
+	// "unknown" distinguishable from "ingress".)
+	Direction uint8
+	// ICMPType is type<<8 | code for ICMP and ICMPv6 flows.
+	ICMPType uint16
+	// AppID is the exporter's application classification as
+	// "engine:selector" (NBAR, App-ID, FortiOS application control);
+	// AppName its name when the exporter sends one inline.
+	AppID   string
+	AppName string
+	// Post-NAT addresses and ports, from firewalls that export translation.
+	NATSrcAddr netip.Addr
+	NATDstAddr netip.Addr
+	NATSrcPort uint16
+	NATDstPort uint16
+	// FWEvent is the firewall event code (IPFIX firewallEvent: 1 created,
+	// 2 deleted, 3 denied, 4 alert, 5 update).
+	FWEvent uint8
+	// User is the authenticated user the firewall attributed the flow to.
+	User string
+	// Type names the export format: netflow5, netflow9, ipfix or sflow.
+	Type string
 }
 
 // Packet is a decoded export packet.
@@ -117,12 +162,18 @@ func DecodeNetFlowV5(b []byte, from netip.Addr) (*Packet, error) {
 	// Bits 14-15 select the sampling mode; the low 14 bits are the interval.
 	// Mode 0 means no sampling, and an interval of 0 or 1 means one-for-one —
 	// treating either as a multiplier would zero or double every byte count.
+	clock := exportClock{
+		uptimeMs: binary.BigEndian.Uint32(b[4:8]),
+		unix:     time.Unix(int64(binary.BigEndian.Uint32(b[8:12])), int64(binary.BigEndian.Uint32(b[12:16]))),
+	}
 	samplingInterval := binary.BigEndian.Uint16(b[22:24]) & 0x3FFF
 	samplingMode := binary.BigEndian.Uint16(b[22:24]) >> 14
 	scale := uint64(1)
+	rate := uint32(1)
 	sampled := false
 	if samplingMode != 0 && samplingInterval > 1 {
 		scale = uint64(samplingInterval)
+		rate = uint32(samplingInterval)
 		sampled = true
 	}
 
@@ -142,24 +193,55 @@ func DecodeNetFlowV5(b []byte, from netip.Addr) (*Packet, error) {
 		if !okS || !okD {
 			continue
 		}
+		hop, _ := netip.AddrFromSlice(r[8:12])
+		if hop.IsUnspecified() {
+			hop = netip.Addr{}
+		}
 		p.Records = append(p.Records, Record{
-			SrcAddr:  src,
-			DstAddr:  dst,
-			InputIf:  uint32(binary.BigEndian.Uint16(r[12:14])),
-			OutputIf: uint32(binary.BigEndian.Uint16(r[14:16])),
-			Packets:  uint64(binary.BigEndian.Uint32(r[16:20])) * scale,
-			Bytes:    uint64(binary.BigEndian.Uint32(r[20:24])) * scale,
-			SrcPort:  binary.BigEndian.Uint16(r[32:34]),
-			DstPort:  binary.BigEndian.Uint16(r[34:36]),
-			TCPFlags: r[37],
-			Protocol: r[38],
-			TOS:      r[39],
-			SrcAS:    uint32(binary.BigEndian.Uint16(r[40:42])),
-			DstAS:    uint32(binary.BigEndian.Uint16(r[42:44])),
-			SrcMask:  r[44],
-			DstMask:  r[45],
-			Sampled:  sampled,
+			SrcAddr:      src,
+			DstAddr:      dst,
+			InputIf:      uint32(binary.BigEndian.Uint16(r[12:14])),
+			OutputIf:     uint32(binary.BigEndian.Uint16(r[14:16])),
+			Packets:      uint64(binary.BigEndian.Uint32(r[16:20])) * scale,
+			Bytes:        uint64(binary.BigEndian.Uint32(r[20:24])) * scale,
+			SrcPort:      binary.BigEndian.Uint16(r[32:34]),
+			DstPort:      binary.BigEndian.Uint16(r[34:36]),
+			TCPFlags:     r[37],
+			Protocol:     r[38],
+			TOS:          r[39],
+			SrcAS:        uint32(binary.BigEndian.Uint16(r[40:42])),
+			DstAS:        uint32(binary.BigEndian.Uint16(r[42:44])),
+			SrcMask:      r[44],
+			DstMask:      r[45],
+			Sampled:      sampled,
+			SamplingRate: rate,
+			Start:        clock.at(binary.BigEndian.Uint32(r[24:28])),
+			End:          clock.at(binary.BigEndian.Uint32(r[28:32])),
+			NextHop:      hop,
+			Type:         "netflow5",
 		})
 	}
 	return p, nil
+}
+
+// exportClock converts the uptime-relative timestamps of NetFlow v5 and v9
+// (milliseconds since the exporter booted) to wall-clock time, using the
+// export packet's own pairing of uptime and Unix time.
+type exportClock struct {
+	uptimeMs uint32
+	unix     time.Time
+}
+
+// at returns the wall-clock time of an uptime reading, or zero for a zero
+// reading — "not exported" — and for a clock the packet never set.
+func (c exportClock) at(uptimeMs uint32) time.Time {
+	if uptimeMs == 0 || c.unix.IsZero() || c.unix.Unix() == 0 {
+		return time.Time{}
+	}
+	// Subtract in uint32 and read the result as signed. That is right across
+	// the 49.7-day uptime wrap, and for a last packet stamped a moment after
+	// the header's uptime was read (a small negative age), where plain
+	// unsigned arithmetic would put it 49 days in the past.
+	age := int32(c.uptimeMs - uptimeMs) //nolint:gosec // wrap is the intent
+	return c.unix.Add(-time.Duration(age) * time.Millisecond).UTC()
 }

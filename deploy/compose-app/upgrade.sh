@@ -169,6 +169,15 @@ if [ -n "$ENV_FILE" ] && ! grep -q '^NETINV_MASTER_KEY=' "$ENV_FILE"; then
 	echo "If the services get a fresh key, stored credentials become undecryptable." >&2
 fi
 
+# Secrets introduced after this deployment's .env was written. Without one the
+# compose file falls back to a development default, which is a known password
+# on a store holding every flow the network exported (ADR-026). Appended once,
+# never rotated: the store keeps the password it was first created with.
+if [ -n "$ENV_FILE" ] && [ -f "$ENV_FILE" ] && ! grep -q '^CH_PASSWORD=' "$ENV_FILE"; then
+	echo "CH_PASSWORD=$(openssl rand -hex 12)" >>"$ENV_FILE"
+	echo "  added CH_PASSWORD to $ENV_FILE (raw flow storage, ADR-026)"
+fi
+
 SKIP_BUILD=0
 if [ "$RECOVER" = 1 ]; then
 	# Recovery is deliberately the smallest possible action: start what is

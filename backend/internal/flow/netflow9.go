@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"net/netip"
+	"strings"
 	"sync"
 	"time"
 )
@@ -72,6 +73,43 @@ const (
 	fSamplingInterval = 34
 	fSamplerRandomInt = 50
 	fSamplerInterval  = 305 // IPFIX samplingPacketInterval, seen from some v9 exporters
+
+	// Fields kept for raw storage only (ADR-026). Shared numbering between v9
+	// and IPFIX up to 127; the higher ones are IPFIX elements that v9
+	// exporters reuse, and the 40000s are Cisco ASA's v9 extensions.
+	fNextHopV4     = 15
+	fBGPNextHopV4  = 18
+	fLastSwitched  = 21
+	fFirstSwitched = 22
+	fICMPTypeV4    = 32
+	fInSrcMAC      = 56
+	fOutDstMAC     = 57
+	fSrcVLAN       = 58
+	fDstVLAN       = 59
+	fDirection     = 61
+	fNextHopV6     = 62
+	fBGPNextHopV6  = 63
+	fInDstMAC      = 80
+	fOutSrcMAC     = 81
+	fApplicationID = 95
+	fAppName       = 96
+	fICMPTypeV6    = 139
+	fStartSeconds  = 150
+	fEndSeconds    = 151
+	fStartMillis   = 152
+	fEndMillis     = 153
+	fSysInitMillis = 160
+	fNATSrcV4      = 225
+	fNATDstV4      = 226
+	fNATSrcPort    = 227
+	fNATDstPort    = 228
+	fFirewallEvent = 233
+	fDot1qVLAN     = 243
+	fNATSrcV6      = 281
+	fNATDstV6      = 282
+	fUserName      = 371
+	fASAUserName   = 40000
+	fASAFWEvent    = 40005
 )
 
 type templateField struct {
@@ -262,6 +300,10 @@ func DecodeNetFlowV9(b []byte, from netip.Addr, tc *TemplateCache, now time.Time
 		return nil, 0, fmt.Errorf("flow: not a NetFlow v9 packet (version %d)", v)
 	}
 	sourceID := binary.BigEndian.Uint32(b[16:20])
+	clock := exportClock{
+		uptimeMs: binary.BigEndian.Uint32(b[4:8]),
+		unix:     time.Unix(int64(binary.BigEndian.Uint32(b[8:12])), 0),
+	}
 	p := &Packet{ExporterIP: from}
 	awaiting := 0
 
@@ -291,7 +333,7 @@ func DecodeNetFlowV9(b []byte, from netip.Addr, tc *TemplateCache, now time.Time
 				readOptionsData(body, t, from, sourceID, tc)
 				break
 			}
-			p.Records = append(p.Records, readFlowData(body, t)...)
+			p.Records = append(p.Records, readFlowData(body, t, clock, "netflow9")...)
 		default:
 			// FlowSet IDs 2-255 are reserved and carry nothing we can use.
 		}
@@ -300,14 +342,28 @@ func DecodeNetFlowV9(b []byte, from netip.Addr, tc *TemplateCache, now time.Time
 
 	// Sampling is applied after decoding, because the options record that
 	// declares it may arrive in the same packet as the flows it describes.
-	if iv := tc.getSampling(samplingKey{from, sourceID}); iv > 1 {
-		for i := range p.Records {
-			p.Records[i].Bytes *= uint64(iv)
-			p.Records[i].Packets *= uint64(iv)
-			p.Records[i].Sampled = true
+	applySampling(p, tc.getSampling(samplingKey{from, sourceID}))
+	return p, awaiting, nil
+}
+
+// applySampling scales a packet's records by the exporter's announced
+// interval. A record that carried its own inline rate was already scaled by
+// readFlowData and is left alone — scaling it twice would multiply by N².
+func applySampling(p *Packet, iv uint32) {
+	for i := range p.Records {
+		r := &p.Records[i]
+		if r.SamplingRate > 1 {
+			continue
+		}
+		if iv > 1 {
+			r.Bytes *= uint64(iv)
+			r.Packets *= uint64(iv)
+			r.Sampled = true
+			r.SamplingRate = iv
+		} else {
+			r.SamplingRate = 1
 		}
 	}
-	return p, awaiting, nil
 }
 
 func parseTemplates(body []byte, from netip.Addr, sourceID uint32, tc *TemplateCache, now time.Time) {
@@ -435,12 +491,16 @@ func eachRecord(body []byte, t *template, fn func(vals [][]byte)) {
 	}
 }
 
-// readFlowData turns a data set into records using its template.
-func readFlowData(body []byte, t *template) []Record {
+// readFlowData turns a data set into records using its template. clock
+// converts v9's uptime-relative timestamps; typ names the format for storage.
+func readFlowData(body []byte, t *template, clock exportClock, typ string) []Record {
 	var out []Record
 	eachRecord(body, t, func(vals [][]byte) {
-		var r Record
+		r := Record{Type: typ}
 		var inlineSampling uint64
+		// Relative timestamps are resolved after the loop, because IPFIX's
+		// systemInitTimeMilliseconds may come after them in the template.
+		var firstUp, lastUp, sysInit uint64
 		for i, f := range t.fields {
 			if f.enterprise != 0 {
 				continue // vendor-private: no registry meaning, skip by length
@@ -495,12 +555,29 @@ func readFlowData(body []byte, t *template) []Record {
 				// the loop: a template may list it before the counters, and
 				// scaling here would then scale zero and miss the real values.
 				inlineSampling = beUint(val)
+			default:
+				readRawField(&r, f.typ, val, &firstUp, &lastUp, &sysInit)
 			}
 		}
-		if inlineSampling > 1 {
+		if inlineSampling > 1 && inlineSampling <= 0xFFFFFFFF {
 			r.Bytes *= inlineSampling
 			r.Packets *= inlineSampling
 			r.Sampled = true
+			r.SamplingRate = uint32(inlineSampling)
+		}
+		switch {
+		case sysInit > 0:
+			// IPFIX: relative times count from the exporter's boot instant.
+			boot := time.UnixMilli(int64(sysInit)) //nolint:gosec // ms since 1970 fits
+			if firstUp > 0 {
+				r.Start = boot.Add(time.Duration(narrow32(firstUp)) * time.Millisecond).UTC()
+			}
+			if lastUp > 0 {
+				r.End = boot.Add(time.Duration(narrow32(lastUp)) * time.Millisecond).UTC()
+			}
+		case r.Start.IsZero() && r.End.IsZero():
+			r.Start = clock.at(narrow32(firstUp))
+			r.End = clock.at(narrow32(lastUp))
 		}
 		// A record with no addresses is not a flow — most likely a template
 		// mismatch, where the layout parsed but described something else.
@@ -574,4 +651,112 @@ func beUint(b []byte) uint64 {
 		v = v<<8 | uint64(c)
 	}
 	return v
+}
+
+// readRawField fills the fields only raw storage uses (ADR-026). Kept apart
+// from readFlowData's switch so that one stays about what the aggregates need.
+// Relative timestamps are returned through the pointers, because what they
+// are relative to is only known once the whole record has been read.
+func readRawField(r *Record, typ uint16, val []byte, firstUp, lastUp, sysInit *uint64) {
+	switch typ {
+	case fFirstSwitched:
+		*firstUp = beUint(val)
+	case fLastSwitched:
+		*lastUp = beUint(val)
+	case fSysInitMillis:
+		*sysInit = beUint(val)
+	case fStartSeconds:
+		r.Start = unixAt(beUint(val), time.Second)
+	case fEndSeconds:
+		r.End = unixAt(beUint(val), time.Second)
+	case fStartMillis:
+		r.Start = unixAt(beUint(val), time.Millisecond)
+	case fEndMillis:
+		r.End = unixAt(beUint(val), time.Millisecond)
+	case fInSrcMAC, fOutSrcMAC:
+		if len(val) == 6 && r.SrcMAC == 0 {
+			r.SrcMAC = beUint(val)
+		}
+	case fInDstMAC, fOutDstMAC:
+		if len(val) == 6 && r.DstMAC == 0 {
+			r.DstMAC = beUint(val)
+		}
+	case fSrcVLAN, fDot1qVLAN:
+		r.SrcVLAN = narrow16(beUint(val)) & 0x0FFF
+	case fDstVLAN:
+		r.DstVLAN = narrow16(beUint(val)) & 0x0FFF
+	case fNextHopV4, fNextHopV6:
+		r.NextHop = addrOrZero(val)
+	case fBGPNextHopV4, fBGPNextHopV6:
+		r.BGPNextHop = addrOrZero(val)
+	case fDirection:
+		if len(val) > 0 && val[len(val)-1] <= 1 {
+			r.Direction = val[len(val)-1] + 1
+		}
+	case fICMPTypeV4, fICMPTypeV6:
+		r.ICMPType = narrow16(beUint(val))
+	case fApplicationID:
+		r.AppID = appID(val)
+	case fAppName:
+		r.AppName = text(val)
+	case fNATSrcV4, fNATSrcV6:
+		r.NATSrcAddr = addrOrZero(val)
+	case fNATDstV4, fNATDstV6:
+		r.NATDstAddr = addrOrZero(val)
+	case fNATSrcPort:
+		r.NATSrcPort = narrow16(beUint(val))
+	case fNATDstPort:
+		r.NATDstPort = narrow16(beUint(val))
+	case fFirewallEvent, fASAFWEvent:
+		r.FWEvent = narrow8(beUint(val))
+	case fUserName, fASAUserName:
+		r.User = text(val)
+	}
+}
+
+// unixAt reads an absolute timestamp in the given unit; zero stays zero.
+func unixAt(v uint64, unit time.Duration) time.Time {
+	if v == 0 || v > uint64(1<<62)/uint64(unit) { //nolint:gosec // unit is a positive constant
+		return time.Time{}
+	}
+	return time.Unix(0, int64(v)*int64(unit)).UTC() //nolint:gosec // bounded above
+}
+
+// addrOrZero reads a 4- or 16-byte address; anything else, or the unspecified
+// address an exporter sends for "none", is no address.
+func addrOrZero(b []byte) netip.Addr {
+	a, ok := netip.AddrFromSlice(b)
+	if !ok || a.IsUnspecified() {
+		return netip.Addr{}
+	}
+	return a.Unmap()
+}
+
+// appID renders RFC 6759's applicationId: one byte naming the classification
+// engine, then the selector. A selector up to 8 bytes is a number; a longer
+// one is shown in hex rather than guessed at.
+func appID(b []byte) string {
+	if len(b) < 2 {
+		return ""
+	}
+	if len(b) <= 9 {
+		return fmt.Sprintf("%d:%d", b[0], beUint(b[1:]))
+	}
+	return fmt.Sprintf("%d:%x", b[0], b[1:])
+}
+
+// text reads a fixed- or variable-width string field: exporters pad fixed
+// widths with NULs, and the value comes off an unauthenticated socket, so it
+// is cut at 128 bytes and kept to valid UTF-8.
+func text(b []byte) string {
+	for i, c := range b {
+		if c == 0 {
+			b = b[:i]
+			break
+		}
+	}
+	if len(b) > 128 {
+		b = b[:128]
+	}
+	return strings.ToValidUTF8(string(b), "")
 }
