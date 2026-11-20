@@ -92,7 +92,7 @@ Run against the pilot over TLS. This closes the *TLS config scan* line below; §
 |---|---|---|
 | Go dependencies | `govulncheck` | 0 called vulnerabilities, both modules. One advisory in a *required but never imported* module (`x/crypto/openpgp`, no fix published) — confirmed absent from the dependency graph |
 | Frontend dependencies | `npm audit` | **3 advisories fixed** — `react-router` open redirect → XSS (CVSS 6.9) and SSR constructor injection. Upgraded 6.30.4 → 7.18.2; there is no patched 6.x |
-| Container images | `trivy` HIGH+CRITICAL | **35 → 0.** The `nginx:1.27-alpine` base carried 2 CRITICAL OpenSSL CVEs, which matters directly because that container terminates TLS. Bumped to 1.29-alpine plus `apk upgrade` at build. Backend images were already 0 |
+| Container images | `trivy` HIGH+CRITICAL | **35 → 0.** The `nginx:1.27-alpine` base carried 2 CRITICAL OpenSSL CVEs, which matters directly because that container terminates TLS. Bumped to 1.29-alpine plus `apk upgrade` at build; pinned to 1.30.7-alpine on 2026-11-20 for NGINX2Root (CVE-2026-123007, HTTP/2 RCE — both frontend modes serve 443 with `http2 on`). Backend images were already 0 |
 | Secrets in repo | `gitleaks` | No leaks across 115 commits |
 | TLS configuration | `testssl.sh` | TLS 1.0/1.1/SSLv2/SSLv3 not offered; not vulnerable to Heartbleed, CCS, Ticketbleed, ROBOT, CRIME, BREACH, POODLE, SWEET32, FREAK, DROWN, LOGJAM, BEAST, LUCKY13, Winshock; no RC4. Certificate is self-signed, so chain-of-trust and OCSP are expected failures until a real one is installed |
 | Authentication | manual | Every protected endpoint 401s unauthenticated. Forged bearer and `alg=none` JWT both rejected |
